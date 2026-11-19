@@ -124,7 +124,7 @@ function systemName(cost: number, index: number): string {
 export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   if (matches.length === 0) return [];
 
-  const preferred = [96, 144, 288, 48, 432, 72, 192, 576];
+  const preferred = [48, 96, 144, 288, 432, 72, 192, 576];
   const systems: GeneratedSystem[] = [];
   const used = new Set<number>();
 
@@ -154,7 +154,7 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
       risk: riskFromCost(cost),
     });
 
-    if (systems.length >= 3) break;
+    if (systems.length >= 4) break;
   }
 
   // Fallback: build closest valid cost in range
