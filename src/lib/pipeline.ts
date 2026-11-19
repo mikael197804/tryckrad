@@ -11,31 +11,39 @@ function parseRowPrice(value: string): number {
 
 export async function buildAllDrawBundles(): Promise<DrawBundle[]> {
   const draws = await fetchPowerplayDraws();
-  const bundles: DrawBundle[] = [];
 
-  for (const draw of draws) {
-    const { matches, fatigueAlerts, leagueSummary } = analyzeDraw(draw, draws);
-    const articles = await fetchArticlesForMatches(matches, draw.drawNumber);
-    const systems = generateSystems(matches);
+  const bundles = await Promise.all(
+    draws.map(async (draw) => {
+      const { matches, fatigueAlerts, leagueSummary } = analyzeDraw(
+        draw,
+        draws
+      );
+      const [articles, systems] = await Promise.all([
+        fetchArticlesForMatches(matches, draw.drawNumber),
+        Promise.resolve(generateSystems(matches)),
+      ]);
 
-    bundles.push({
-      drawNumber: draw.drawNumber,
-      productName: draw.productName,
-      closeDescription: draw.regCloseDescription,
-      closeTime: draw.regCloseTime,
-      openTime: draw.regOpenTime,
-      rowPrice: parseRowPrice(draw.rowPrice),
-      netSale: draw.currentNetSale ?? null,
-      sport: draw.sport?.name ?? "Ishockey",
-      leagueSummary,
-      matches,
-      articles,
-      systems,
-      fatigueAlerts,
-    });
-  }
+      return {
+        drawNumber: draw.drawNumber,
+        productName: draw.productName,
+        closeDescription: draw.regCloseDescription,
+        closeTime: draw.regCloseTime,
+        openTime: draw.regOpenTime,
+        rowPrice: parseRowPrice(draw.rowPrice),
+        netSale: draw.currentNetSale ?? null,
+        sport: draw.sport?.name ?? "Ishockey",
+        leagueSummary,
+        matches,
+        articles,
+        systems,
+        fatigueAlerts,
+      } satisfies DrawBundle;
+    })
+  );
 
-  return bundles;
+  return bundles.sort(
+    (a, b) => new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime()
+  );
 }
 
 export async function buildDrawBundle(

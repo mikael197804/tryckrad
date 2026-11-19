@@ -49,20 +49,28 @@ function parseRssItems(xml: string, source: string): FeedItem[] {
   return items;
 }
 
+const textCache = new Map<string, Promise<string | null>>();
+
 async function fetchText(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "TryckRad/1.0 (nyhetsanalys)",
-        Accept: "application/rss+xml, application/xml, text/xml, */*",
-      },
-      next: { revalidate: 300 },
-    });
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    return null;
-  }
+  const cached = textCache.get(url);
+  if (cached) return cached;
+  const pending = (async () => {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "TryckRad/1.0 (nyhetsanalys)",
+          Accept: "application/rss+xml, application/xml, text/xml, */*",
+        },
+        next: { revalidate: 300 },
+      });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch {
+      return null;
+    }
+  })();
+  textCache.set(url, pending);
+  return pending;
 }
 
 function normalizeTeam(name: string): string {
