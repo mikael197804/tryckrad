@@ -1,28 +1,20 @@
 # TryckRad
 
-Webbapp som analyserar **Svenska Spels Powerplay** (ishockey) **per speltillfälle** – matcher blandas aldrig mellan omgångar.
+Analyserar Svenska Spels Powerplay **per speltillfälle** – odds, matchbelastning, artiklar och system 48–720 kr.
 
-## Vad den gör
+## Live
 
-1. Hämtar alla öppna Powerplay-omgångar från Svenska Spel  
-2. Visar varje speltillfälle för sig (SHL, NHL, HA, …)  
-3. Bedömer odds + svenska folket  
-4. Flaggar lag med tuff **matchbelastning** (matcher tätt inpå)  
-5. Läser artiklar/nyheter kopplade till lagen  
-6. Genererar **systemrader i kupongformat** för **48–720 kr**
+- GitHub: https://github.com/mikael197804/tryckrad
 
-## Kör lokalt
+### Deploya gratis (Vercel)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/mikael197804/tryckrad)
+
+### Lokalt
 
 ```bash
-cd tryckrad
 npm install
 npm run dev
 ```
 
-Öppna [http://127.0.0.1:3000](http://127.0.0.1:3000).
-
-API: `GET /api/draws` returnerar analys + system + artiklar för alla öppna speltillfällen.
-
-## Ansvar
-
-Analysverktyg utan vinstgaranti. 18+. Spela ansvarsfullt via Svenska Spel.
+18+. Spela ansvarsfullt.
