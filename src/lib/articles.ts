@@ -8,15 +8,22 @@ type FeedItem = {
   snippet: string;
 };
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
     .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&amp;/gi, "&");
+}
+
+function stripHtml(html: string): string {
+  const once = decodeEntities(html);
+  const noTags = once.replace(/<[^>]+>/g, " ");
+  return decodeEntities(noTags).replace(/\s+/g, " ").trim();
 }
 
 function parseRssItems(xml: string, source: string): FeedItem[] {
