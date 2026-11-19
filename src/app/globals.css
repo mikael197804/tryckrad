@@ -56,6 +56,10 @@ select {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
   padding: 1.5rem 0 4rem;
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-bottom: max(4rem, calc(2rem + env(safe-area-inset-bottom)));
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
 }
 
 .brand-bar {
@@ -115,6 +119,9 @@ select {
   padding: 0.85rem 0.9rem;
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
+  min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .draw-tab:hover {
@@ -166,20 +173,71 @@ select {
 
 .grid-2 {
   display: grid;
-  grid-template-columns: 1.4fr 1fr;
+  grid-template-columns: 1.35fr 1fr;
   gap: 1rem;
+  align-items: start;
 }
 
-@media (max-width: 900px) {
-  .grid-2 {
-    grid-template-columns: 1fr;
-  }
+.grid-2 > .panel-systems {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.grid-2 > .panel:not(.panel-systems):not(.panel-articles) {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.grid-2 > .panel-articles {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.match-cards {
+  display: none;
+}
+
+.match-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .match-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+}
+
+.match-card {
+  border: 1px solid var(--line);
+  padding: 0.85rem 0.9rem;
+  margin-bottom: 0.65rem;
+  background: rgba(7, 19, 31, 0.35);
+}
+
+.match-card-top {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.match-num {
+  font-family: var(--font-display);
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+
+.match-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+  margin-top: 0.55rem;
+  font-size: 0.82rem;
+}
+
+.match-card-flags {
+  margin-top: 0.45rem;
 }
 
 .match-table th,
@@ -338,13 +396,129 @@ select {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text);
-  padding: 0.45rem 0.7rem;
+  padding: 0.65rem 0.85rem;
+  min-height: 44px;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .system-btn.active {
   border-color: var(--accent-2);
   background: rgba(240, 180, 41, 0.12);
+}
+
+/* iPhone 16 / small phones: 393×852 CSS px */
+@media (max-width: 900px) {
+  .grid-2,
+  .grid-2.mobile-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .grid-2 > .panel-systems,
+  .grid-2 > .panel:not(.panel-systems):not(.panel-articles),
+  .grid-2 > .panel-articles {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .match-table-wrap {
+    display: none;
+  }
+
+  .match-cards {
+    display: block;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-shell {
+    width: 100%;
+    padding-left: max(0.85rem, env(safe-area-inset-left));
+    padding-right: max(0.85rem, env(safe-area-inset-right));
+  }
+
+  .brand-bar {
+    margin-bottom: 1rem;
+    padding-bottom: 0.9rem;
+  }
+
+  .brand-mark {
+    font-size: 2.2rem;
+  }
+
+  .brand-tag {
+    font-size: 0.9rem;
+  }
+
+  .draw-tabs {
+    display: flex;
+    overflow-x: auto;
+    gap: 0.55rem;
+    padding-bottom: 0.35rem;
+    margin: 0 -0.85rem 1.1rem;
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .draw-tab {
+    flex: 0 0 68%;
+    max-width: 260px;
+    scroll-snap-align: start;
+    padding: 0.9rem;
+  }
+
+  .draw-tab .sub {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .panel {
+    padding: 0.95rem;
+    border-radius: 0;
+  }
+
+  .panel h2 {
+    font-size: 1.1rem;
+  }
+
+  .system-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem;
+  }
+
+  .system-btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .coupon-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .coupon-cost {
+    font-size: 1.6rem;
+  }
+
+  .pick-cell,
+  .mark {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.85rem;
+  }
+
+  .coupon-row {
+    grid-template-columns: 1.4rem minmax(0, 1fr) 6.4rem;
+  }
+
+  .alert-list {
+    font-size: 0.88rem;
+  }
 }
 
 .article-list {

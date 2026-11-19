@@ -5,6 +5,25 @@ export const metadata: Metadata = {
   title: "TryckRad – Powerplay-analys",
   description:
     "Analyserar Svenska Spels Powerplay per speltillfälle med matchbelastning, artiklar och systemrader 48–720 kr.",
+  appleWebApp: {
+    capable: true,
+    title: "TryckRad",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
+  themeColor: "#07131f",
 };
 
 export default function RootLayout({

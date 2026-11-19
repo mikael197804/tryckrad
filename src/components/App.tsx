@@ -198,14 +198,85 @@ export default function App() {
                 )}
               </section>
 
-              <div className="grid-2">
+              <div className="grid-2 mobile-stack">
+                <section className="panel panel-systems">
+                  <h2>System 48–720 kr</h2>
+                  <p className="panel-lead">
+                    Kupongen speglar Powerplay-raden på Svenska Spel. Kostnad =
+                    antal kombinationer × 1 kr.
+                  </p>
+                  <div className="system-switch">
+                    {draw.systems.map((s, i) => (
+                      <button
+                        key={s.name}
+                        type="button"
+                        className={`system-btn ${selectedSystem === i ? "active" : ""}`}
+                        onClick={() => setSelectedSystem(i)}
+                      >
+                        {s.costKr} kr · {s.risk}
+                      </button>
+                    ))}
+                  </div>
+                  {draw.systems[selectedSystem] && (
+                    <CouponView system={draw.systems[selectedSystem]} />
+                  )}
+                </section>
+
                 <section className="panel">
                   <h2>Matcher & tipsläge</h2>
                   <p className="panel-lead">
                     Baserat på odds, svenska folket och schema. Garderingar
                     läggs där osäkerhet eller trötthet är högst.
                   </p>
-                  <div style={{ overflowX: "auto" }}>
+
+                  <div className="match-cards">
+                    {draw.matches.map((m) => (
+                      <article className="match-card" key={m.eventNumber}>
+                        <div className="match-card-top">
+                          <span className="match-num">{m.eventNumber}</span>
+                          <div>
+                            <strong>{m.description}</strong>
+                            <div className="reason">
+                              {fmtTime(m.matchStart)} · {m.league}
+                            </div>
+                          </div>
+                          <div className="pick-cells">
+                            {(["1", "X", "2"] as Outcome[]).map((o) => (
+                              <span
+                                key={o}
+                                className={`pick-cell ${m.pick.includes(o) ? "on" : ""}`}
+                              >
+                                {o}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="match-card-meta">
+                          <span className="odds">
+                            Odds {fmtOdds(m.odds.one)} / {fmtOdds(m.odds.x)} /{" "}
+                            {fmtOdds(m.odds.two)}
+                          </span>
+                          <span className="odds">
+                            Folk {m.svenskaFolket.one}-{m.svenskaFolket.x}-
+                            {m.svenskaFolket.two}
+                          </span>
+                        </div>
+                        <div className="match-card-flags">
+                          <Fatigue
+                            level={m.homeFatigue.level}
+                            label={m.home.name}
+                          />
+                          <Fatigue
+                            level={m.awayFatigue.level}
+                            label={m.away.name}
+                          />
+                        </div>
+                        <div className="reason">{m.pickReason}</div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="match-table-wrap">
                     <table className="match-table">
                       <thead>
                         <tr>
@@ -264,73 +335,48 @@ export default function App() {
                   </div>
                 </section>
 
-                <div>
-                  <section className="panel">
-                    <h2>System 48–720 kr</h2>
-                    <p className="panel-lead">
-                      Kupongen speglar Powerplay-raden på Svenska Spel. Kostnad
-                      = antal kombinationer × 1 kr.
-                    </p>
-                    <div className="system-switch">
-                      {draw.systems.map((s, i) => (
-                        <button
-                          key={s.name}
-                          type="button"
-                          className={`system-btn ${selectedSystem === i ? "active" : ""}`}
-                          onClick={() => setSelectedSystem(i)}
-                        >
-                          {s.costKr} kr · {s.risk}
-                        </button>
+                <section className="panel panel-articles">
+                  <h2>Artiklar & tips</h2>
+                  <p className="panel-lead">
+                    Nyheter kopplade till lagen i just det här speltillfället.
+                  </p>
+                  {draw.articles.length === 0 ? (
+                    <p className="panel-lead">Inga träffar just nu.</p>
+                  ) : (
+                    <ul className="article-list">
+                      {draw.articles.map((a) => (
+                        <li key={a.url + a.title}>
+                          <span className="source">
+                            {a.source}
+                            {a.publishedAt
+                              ? ` · ${fmtTime(a.publishedAt)}`
+                              : ""}
+                          </span>
+                          <a
+                            className="title"
+                            href={a.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {a.title}
+                          </a>
+                          {a.snippet && (
+                            <div className="snippet">{a.snippet}</div>
+                          )}
+                          {a.matchedTeams.length > 0 && (
+                            <div className="tags">
+                              {a.matchedTeams.map((t) => (
+                                <span className="tag" key={t}>
+                                  {t}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </li>
                       ))}
-                    </div>
-                    {draw.systems[selectedSystem] && (
-                      <CouponView system={draw.systems[selectedSystem]} />
-                    )}
-                  </section>
-
-                  <section className="panel">
-                    <h2>Artiklar & tips</h2>
-                    <p className="panel-lead">
-                      Nyheter kopplade till lagen i just det här speltillfället.
-                    </p>
-                    {draw.articles.length === 0 ? (
-                      <p className="panel-lead">Inga träffar just nu.</p>
-                    ) : (
-                      <ul className="article-list">
-                        {draw.articles.map((a) => (
-                          <li key={a.url + a.title}>
-                            <span className="source">
-                              {a.source}
-                              {a.publishedAt
-                                ? ` · ${fmtTime(a.publishedAt)}`
-                                : ""}
-                            </span>
-                            <a
-                              className="title"
-                              href={a.url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {a.title}
-                            </a>
-                            {a.snippet && (
-                              <div className="snippet">{a.snippet}</div>
-                            )}
-                            {a.matchedTeams.length > 0 && (
-                              <div className="tags">
-                                {a.matchedTeams.map((t) => (
-                                  <span className="tag" key={t}>
-                                    {t}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-                </div>
+                    </ul>
+                  )}
+                </section>
               </div>
 
               <p className="disclaimer">{data.disclaimer}</p>
