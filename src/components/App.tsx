@@ -29,6 +29,46 @@ function fmtTime(iso: string): string {
   }
 }
 
+function stockholmYmd(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Stockholm",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/** T.ex. "Imorgon 00:59" / "Idag 20:29" för tydliga omgångsflikar. */
+function fmtCloseLabel(iso: string): string {
+  try {
+    const target = new Date(iso);
+    const now = new Date();
+    const today = stockholmYmd(now);
+    // mer exakt morgondag: stega tills datum byts
+    let probe = new Date(now.getTime());
+    let tomorrowIso = today;
+    for (let i = 0; i < 48; i++) {
+      probe = new Date(probe.getTime() + 60 * 60 * 1000);
+      const ymd = stockholmYmd(probe);
+      if (ymd !== today) {
+        tomorrowIso = ymd;
+        break;
+      }
+    }
+    const ymd = stockholmYmd(target);
+    const clock = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Stockholm",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(target);
+    if (ymd === today) return `Idag ${clock}`;
+    if (ymd === tomorrowIso) return `Imorgon ${clock}`;
+    return fmtTime(iso);
+  } catch {
+    return fmtTime(iso);
+  }
+}
+
 function fmtOdds(n: number | null): string {
   if (n == null) return "–";
   return n.toFixed(2).replace(".", ",");
@@ -302,13 +342,16 @@ export default function App() {
       try {
         setLoading(true);
         setError(null);
+        // Rensa gammal produkt så tipset inte blir blankt vid byte
+        setData(null);
+        setOddset(null);
+        setSelectedDraw(null);
         if (product === "oddset") {
           const res = await fetch("/api/oddset", { cache: "no-store" });
           const json = (await res.json()) as OddsetDayTip & { error?: string };
           if (!res.ok) throw new Error(json.error || "Kunde inte hämta Oddset");
           if (cancelled) return;
           setOddset(json);
-          setData(null);
         } else {
           const res = await fetch(`/api/draws?product=${product}`, {
             cache: "no-store",
@@ -316,8 +359,7 @@ export default function App() {
           const json = (await res.json()) as ApiResponse;
           if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
           if (cancelled) return;
-          setData(json);
-          setOddset(null);
+          setData({ ...json, product });
           setSelectedDraw(json.draws[0]?.drawNumber ?? null);
           setSelectedSystem(0);
         }
@@ -334,10 +376,14 @@ export default function App() {
     };
   }, [product]);
 
-  const draw = useMemo(
-    () => data?.draws.find((d) => d.drawNumber === selectedDraw) ?? null,
-    [data, selectedDraw]
-  );
+  const draw = useMemo(() => {
+    if (!data || data.product !== product) return null;
+    return (
+      data.draws.find((d) => d.drawNumber === selectedDraw) ??
+      data.draws[0] ??
+      null
+    );
+  }, [data, selectedDraw, product]);
 
   useEffect(() => {
     setSelectedSystem(0);
@@ -402,19 +448,23 @@ export default function App() {
         <OddsetView tip={oddset} />
       )}
 
-      {data && product !== "oddset" && (
+      {data && data.product === product && product !== "oddset" && (
         <>
           <nav className="draw-tabs" aria-label="Speltillfällen">
             {data.draws.map((d) => (
               <button
                 key={d.drawNumber}
                 type="button"
-                className={`draw-tab ${d.drawNumber === selectedDraw ? "active" : ""}`}
+                className={`draw-tab ${
+                  (selectedDraw ?? data.draws[0]?.drawNumber) === d.drawNumber
+                    ? "active"
+                    : ""
+                }`}
                 onClick={() => setSelectedDraw(d.drawNumber)}
               >
-                <span className="label">#{d.drawNumber}</span>
+                <span className="label">{fmtCloseLabel(d.closeTime)}</span>
                 <span className="sub">
-                  Stänger {fmtTime(d.closeTime)}
+                  #{d.drawNumber} · stänger {fmtTime(d.closeTime)}
                   <br />
                   {d.leagueSummary || d.sport}
                 </span>
@@ -425,15 +475,27 @@ export default function App() {
           {draw && (
             <div className="rise">
               <section className="panel">
-                <h2>{draw.closeDescription}</h2>
+                <h2>{draw.closeDescription || `Omgång #${draw.drawNumber}`}</h2>
                 <p className="panel-lead">
-                  Öppen omgång nu (inte nästa dag) · speltillfälle{" "}
+                  Öppen omgång · {fmtCloseLabel(draw.closeTime)} · #
                   {draw.drawNumber} · {draw.matches.length} matcher ·{" "}
                   {draw.leagueSummary} · stänger {fmtTime(draw.closeTime)}
                   {draw.netSale ? ` · omsättning ${draw.netSale} kr` : ""}
                 </p>
 
-                {draw.fatigueAlerts.length > 0 && (
+                <div className="tip-strip" aria-label="Tipprad">
+                  <strong>Tipprad</strong>
+                  <div className="tip-strip-picks">
+                    {draw.matches.map((m) => (
+                      <span key={m.eventNumber} className="tip-strip-pick">
+                        <em>{m.eventNumber}</em>
+                        {m.pick.join("")}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {(draw.fatigueAlerts?.length ?? 0) > 0 && (
                   <>
                     <h2 style={{ fontSize: "1.05rem" }}>Matchbelastning</h2>
                     <ul className="alert-list">
@@ -443,7 +505,7 @@ export default function App() {
                     </ul>
                   </>
                 )}
-                {draw.tableAlerts.length > 0 && (
+                {(draw.tableAlerts?.length ?? 0) > 0 && (
                   <>
                     <h2 style={{ fontSize: "1.05rem" }}>Tabell & poängställning</h2>
                     <ul className="alert-list table-alerts">
@@ -453,7 +515,7 @@ export default function App() {
                     </ul>
                   </>
                 )}
-                {draw.restAlerts.length > 0 && (
+                {(draw.restAlerts?.length ?? 0) > 0 && (
                   <>
                     <h2 style={{ fontSize: "1.05rem" }}>Vila inför viktigare match</h2>
                     <ul className="alert-list rest-alerts">

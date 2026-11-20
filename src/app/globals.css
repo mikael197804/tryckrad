@@ -351,6 +351,48 @@ select {
   color: #ffc48a;
 }
 
+.tip-strip {
+  margin: 0.85rem 0 0.35rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(223, 247, 234, 0.18);
+  border-radius: 12px;
+  background: rgba(7, 28, 40, 0.45);
+}
+
+.tip-strip strong {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(223, 247, 234, 0.7);
+  margin-bottom: 0.45rem;
+}
+
+.tip-strip-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.tip-strip-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(120, 200, 255, 0.12);
+  border: 1px solid rgba(120, 200, 255, 0.28);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.tip-strip-pick em {
+  font-style: normal;
+  opacity: 0.65;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
 .oddset-pick-line {
   display: flex;
   flex-wrap: wrap;

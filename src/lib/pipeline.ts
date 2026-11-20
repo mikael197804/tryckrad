@@ -12,42 +12,65 @@ function parseRowPrice(value: string): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
+function isStillOpen(closeTime: string, graceMs = 2 * 60 * 1000): boolean {
+  return new Date(closeTime).getTime() + graceMs >= Date.now();
+}
+
 export async function buildAllDrawBundles(
   product: ProductKind = "powerplay"
 ): Promise<DrawBundle[]> {
-  const draws = await fetchDrawsForProduct(product);
+  const draws = (await fetchDrawsForProduct(product)).filter((d) =>
+    isStillOpen(d.regCloseTime)
+  );
   const defaultSport = product === "topptipset" ? "Fotboll" : "Ishockey";
 
   const bundles = await Promise.all(
     draws.map(async (draw) => {
-      const { matches, fatigueAlerts, tableAlerts, restAlerts, leagueSummary } =
-        await analyzeDraw(draw, draws);
-      const [articles, systems] = await Promise.all([
-        fetchArticlesForMatches(matches, draw.drawNumber, product),
-        Promise.resolve(generateSystems(matches)),
-      ]);
+      try {
+        const {
+          matches,
+          fatigueAlerts,
+          tableAlerts,
+          restAlerts,
+          leagueSummary,
+        } = await analyzeDraw(draw, draws);
+        const [articles, systems] = await Promise.all([
+          fetchArticlesForMatches(matches, draw.drawNumber, product).catch(
+            () => []
+          ),
+          Promise.resolve(generateSystems(matches)),
+        ]);
 
-      return {
-        drawNumber: draw.drawNumber,
-        productName: draw.productName,
-        closeDescription: draw.regCloseDescription,
-        closeTime: draw.regCloseTime,
-        openTime: draw.regOpenTime,
-        rowPrice: parseRowPrice(draw.rowPrice),
-        netSale: draw.currentNetSale ?? null,
-        sport: draw.sport?.name ?? defaultSport,
-        leagueSummary,
-        matches,
-        articles,
-        systems,
-        fatigueAlerts,
-        tableAlerts,
-        restAlerts,
-      } satisfies DrawBundle;
+        return {
+          drawNumber: draw.drawNumber,
+          productName: draw.productName,
+          closeDescription: draw.regCloseDescription,
+          closeTime: draw.regCloseTime,
+          openTime: draw.regOpenTime,
+          rowPrice: parseRowPrice(draw.rowPrice),
+          netSale: draw.currentNetSale ?? null,
+          sport: draw.sport?.name ?? defaultSport,
+          leagueSummary,
+          matches,
+          articles,
+          systems,
+          fatigueAlerts: fatigueAlerts ?? [],
+          tableAlerts: tableAlerts ?? [],
+          restAlerts: restAlerts ?? [],
+        } satisfies DrawBundle;
+      } catch (error) {
+        console.error(
+          `Hoppar omgång ${draw.drawNumber}:`,
+          error instanceof Error ? error.message : error
+        );
+        return null;
+      }
     })
   );
 
-  return bundles.sort(
-    (a, b) => new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime()
-  );
+  return bundles
+    .filter((b): b is DrawBundle => b != null && b.matches.length > 0)
+    .sort(
+      (a, b) => new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime()
+    );
 }
