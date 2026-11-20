@@ -697,9 +697,9 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Alla spel uppdateras automatiskt 12 minuter före spelstopp. Stryk/Mål
-            väger även in lagnyheter ca 15 min före avspark. Oddset: fem Över
-            2,5 för dagen efter.
+            Alla spel uppdateras 12 min före spelstopp. Powerplay/Topptipset lär
+            av förra omgångens missar automatiskt. Stryk/Mål: lagnyheter ca 15
+            min före avspark. Oddset: fem Över 2,5 dagen efter.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
             {DRAW_PRODUCTS.map((p) => (
@@ -895,6 +895,23 @@ export default function App() {
                     </ul>
                   </>
                 )}
+                {(product === "powerplay" || product === "topptipset") &&
+                  (draw.learningAlerts?.length ?? 0) > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>
+                      Lärdomar från förra omgången
+                    </h2>
+                    <p className="panel-lead">
+                      Efter varje avslutad omgång analyseras missar automatiskt
+                      och vägs in i nästa tipprad (unikt per omgång).
+                    </p>
+                    <ul className="alert-list learning-alerts">
+                      {draw.learningAlerts.map((a) => (
+                        <li key={a}>{a}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </section>
 
               <div className="grid-2 mobile-stack">
@@ -1074,6 +1091,11 @@ export default function App() {
                           )}
                         </div>
                         <div className="reason">{m.pickReason}</div>
+                        {(m.learningNotes?.length ?? 0) > 0 && (
+                          <div className="learning-note">
+                            {m.learningNotes.join(" · ")}
+                          </div>
+                        )}
                       </article>
                     ))}
                   </div>
@@ -1188,6 +1210,11 @@ export default function App() {
                                 </div>
                               )}
                               <div className="reason">{m.pickReason}</div>
+                              {(m.learningNotes?.length ?? 0) > 0 && (
+                                <div className="learning-note">
+                                  {m.learningNotes.join(" · ")}
+                                </div>
+                              )}
                             </td>
                             <td className="odds">
                               {fmtOdds(m.odds.one)} / {fmtOdds(m.odds.x)} /{" "}

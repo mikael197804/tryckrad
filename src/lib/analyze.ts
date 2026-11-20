@@ -33,6 +33,10 @@ import type {
   ValueOddsInfo,
 } from "./types";
 import {
+  learningAdjustForMatch,
+  type LearningMemory,
+} from "./learning";
+import {
   analyzeValueOdds,
   applyValueOddsToScores,
   overMarketValue,
@@ -368,7 +372,8 @@ function buildPick(
 export async function analyzeDraw(
   draw: RawDraw,
   allDraws: RawDraw[],
-  product: ProductKind = "powerplay"
+  product: ProductKind = "powerplay",
+  learning: LearningMemory | null = null
 ): Promise<{
   matches: MatchAnalysis[];
   fatigueAlerts: string[];
@@ -377,6 +382,7 @@ export async function analyzeDraw(
   goalAlerts: string[];
   lineupAlerts: string[];
   valueAlerts: string[];
+  learningAlerts: string[];
   malTip: number[];
   leagueSummary: string;
 }> {
@@ -395,6 +401,12 @@ export async function analyzeDraw(
   const goalAlerts: string[] = [];
   const lineupAlerts: string[] = [];
   const valueAlerts: string[] = [];
+  const learningAlerts: string[] = learning?.lastRoundSummary?.length
+    ? [...learning.lastRoundSummary]
+    : [];
+  if (learning?.biases?.note) {
+    learningAlerts.push(`Bias till denna omgång: ${learning.biases.note}`);
+  }
   const leagues = new Set<string>();
   const kambiByEvent = new Map<number, string | null>();
   const football = isFootballProduct(product);
@@ -516,7 +528,7 @@ export async function analyzeDraw(
       dist: scored.dist,
       sport: goalSport,
     });
-    const adjusted = applyValueOddsToScores(
+    let adjusted = applyValueOddsToScores(
       {
         score1: scored.score1,
         scoreX: scored.scoreX,
@@ -524,6 +536,19 @@ export async function analyzeDraw(
       },
       valueRaw
     );
+    const learnAdj = learningAdjustForMatch({
+      memory: learning,
+      home,
+      away,
+    });
+    if (learnAdj.d1 || learnAdj.dX || learnAdj.d2) {
+      let s1 = adjusted.score1 + learnAdj.d1;
+      let sX = adjusted.scoreX + learnAdj.dX;
+      let s2 = adjusted.score2 + learnAdj.d2;
+      const sum = Math.max(s1 + sX + s2, 0.01);
+      adjusted = { score1: s1 / sum, scoreX: sX / sum, score2: s2 / sum };
+    }
+    const learningNotes = learnAdj.notes;
     const valueOdds: ValueOddsInfo = {
       outcomes: valueRaw.outcomes.map((o) => ({
         outcome: o.outcome,
@@ -553,6 +578,9 @@ export async function analyzeDraw(
       awayRest,
       valueOdds
     );
+    const pickReason = learningNotes.length
+      ? `${reason}. ${learningNotes[0]}`
+      : reason;
 
     drafts.push({
       eventNumber: event.eventNumber,
@@ -574,8 +602,9 @@ export async function analyzeDraw(
       homeRest,
       awayRest,
       valueOdds,
+      learningNotes,
       pick,
-      pickReason: reason,
+      pickReason,
       score1: adjusted.score1,
       scoreX: adjusted.scoreX,
       score2: adjusted.score2,
@@ -682,6 +711,7 @@ export async function analyzeDraw(
         score2,
         goals,
         lineup,
+        learningNotes: base.learningNotes || [],
         goalRank: null,
         malSelected: false,
       };
@@ -746,6 +776,7 @@ export async function analyzeDraw(
     goalAlerts,
     lineupAlerts,
     valueAlerts,
+    learningAlerts,
     malTip,
     leagueSummary: [...leagues].join(", "),
   };

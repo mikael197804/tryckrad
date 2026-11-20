@@ -1,5 +1,6 @@
 import { analyzeDraw } from "./analyze";
 import { fetchArticlesForMatches } from "./articles";
+import { loadLearningMemory } from "./learning";
 import { generateMaltipsetSystems, generateSystems } from "./systems";
 import {
   fetchDrawsForProduct,
@@ -24,9 +25,12 @@ function defaultSport(product: ProductKind): string {
 export async function buildAllDrawBundles(
   product: ProductKind = "powerplay"
 ): Promise<DrawBundle[]> {
-  const draws = (await fetchDrawsForProduct(product)).filter((d) =>
-    isStillOpen(d.regCloseTime)
-  );
+  const [draws, learning] = await Promise.all([
+    fetchDrawsForProduct(product).then((d) =>
+      d.filter((x) => isStillOpen(x.regCloseTime))
+    ),
+    loadLearningMemory(product),
+  ]);
 
   const bundles = await Promise.all(
     draws.map(async (draw) => {
@@ -39,9 +43,10 @@ export async function buildAllDrawBundles(
           goalAlerts,
           lineupAlerts,
           valueAlerts,
+          learningAlerts,
           malTip,
           leagueSummary,
-        } = await analyzeDraw(draw, draws, product);
+        } = await analyzeDraw(draw, draws, product, learning);
         const rowPrice = parseRowPrice(draw.rowPrice);
         const [articles, systems] = await Promise.all([
           fetchArticlesForMatches(matches, draw.drawNumber, product).catch(
@@ -74,6 +79,7 @@ export async function buildAllDrawBundles(
           goalAlerts: goalAlerts ?? [],
           lineupAlerts: lineupAlerts ?? [],
           valueAlerts: valueAlerts ?? [],
+          learningAlerts: learningAlerts ?? [],
           malTip: malTip ?? [],
         } satisfies DrawBundle;
       } catch (error) {

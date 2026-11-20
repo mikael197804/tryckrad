@@ -132,6 +132,7 @@ export type MatchAnalysis = {
   goals: GoalAnalysis;
   lineup: LateLineupAnalysis;
   valueOdds: ValueOddsInfo;
+  learningNotes: string[];
   /** Måltipset: rank 1 = högst förväntat målantal */
   goalRank: number | null;
   malSelected: boolean;
@@ -162,6 +163,7 @@ export type DrawBundle = {
   goalAlerts: string[];
   lineupAlerts: string[];
   valueAlerts: string[];
+  learningAlerts: string[];
   /** Måltipset: de 8 högst rankade matchnumren */
   malTip: number[];
 };

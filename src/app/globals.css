@@ -403,6 +403,17 @@ select {
   color: #c9b6ff;
 }
 
+.alert-list.learning-alerts {
+  color: #9fd6ff;
+}
+
+.learning-note {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: #9fd6ff;
+  line-height: 1.35;
+}
+
 .ctx-pill.value-over {
   border-color: rgba(180, 150, 255, 0.55);
   color: #c9b6ff;
