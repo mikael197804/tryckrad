@@ -129,8 +129,86 @@ export async function fetchPowerplayDraws(): Promise<RawDraw[]> {
   );
 }
 
-/** Topptipset list kräver accesskey – öppna omgångar via Stryk/Europa relatedDraws. */
-export async function fetchTopptipsetDraws(): Promise<RawDraw[]> {
+async function fetchOptionalDraw(
+  slug: string,
+  drawNumber: number
+): Promise<RawDraw | null> {
+  try {
+    const detail = (await fetchJson(
+      `https://api.www.svenskaspel.se/draw/1/${slug}/draws/${drawNumber}`
+    )) as { draw?: RawDraw };
+    return detail.draw ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Hitta högsta befintliga Topptipset-drawNumber (list-API kräver nyckel). */
+async function findLatestTopptipsetDrawNumber(): Promise<number> {
+  // Expansiv sökning uppåt, sedan binärsök i sista fönstret
+  let step = 64;
+  let probe = 4400;
+  let best = 4400;
+  const first = await fetchOptionalDraw("topptipset", probe);
+  if (!first) {
+    probe = 1;
+    step = 256;
+  } else {
+    best = probe;
+  }
+
+  while (probe < 20000) {
+    const next = probe + step;
+    const draw = await fetchOptionalDraw("topptipset", next);
+    if (draw) {
+      best = next;
+      probe = next;
+      step = Math.min(step * 2, 512);
+    } else {
+      break;
+    }
+  }
+
+  let lo = best + 1;
+  let hi = probe + step;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const draw = await fetchOptionalDraw("topptipset", mid);
+    if (draw) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/** Dagliga Topptipset-omgångar (productId 25) – t.ex. fredag 20:29. */
+async function fetchDailyTopptipsetDraws(): Promise<RawDraw[]> {
+  const latest = await findLatestTopptipsetDrawNumber();
+  const start = Math.max(1, latest - 18);
+  const end = latest + 4;
+  const numbers: number[] = [];
+  for (let n = start; n <= end; n++) numbers.push(n);
+
+  const draws = (
+    await Promise.all(numbers.map((n) => fetchOptionalDraw("topptipset", n)))
+  ).filter((d): d is RawDraw => {
+    if (!d?.drawEvents?.length) return false;
+    if (d.drawState && d.drawState !== "Open") return false;
+    // Hoppa över redan stängda (säkerhetsnät om state släpar)
+    if (new Date(d.regCloseTime).getTime() < Date.now() - 5 * 60 * 1000) {
+      return false;
+    }
+    return true;
+  });
+
+  return draws;
+}
+
+/** Topptipset via Stryk/Europa relatedDraws (helgkuponger). */
+async function fetchRelatedTopptipsetDraws(): Promise<RawDraw[]> {
   const parents: { slug: string; toppSlug: string; productId: number }[] = [
     { slug: "stryktipset", toppSlug: "topptipsetstryk", productId: 23 },
     { slug: "europatipset", toppSlug: "topptipsetextra", productId: 24 },
@@ -151,15 +229,34 @@ export async function fetchTopptipsetDraws(): Promise<RawDraw[]> {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const detail = (await fetchJson(
-          `https://api.www.svenskaspel.se/draw/1/${meta.toppSlug}/draws/${rel.drawNumber}`
-        )) as { draw?: RawDraw };
-        const draw = detail.draw;
+        const draw = await fetchOptionalDraw(meta.toppSlug, rel.drawNumber);
         if (!draw?.drawEvents?.length) continue;
         if (draw.drawState && draw.drawState !== "Open") continue;
         found.push(draw);
       }
     }
+  }
+
+  return found;
+}
+
+/**
+ * Topptipset list kräver accesskey.
+ * Hämtar: (1) dagliga topptipset-omgångar + (2) Stryk/Europa-relaterade.
+ */
+export async function fetchTopptipsetDraws(): Promise<RawDraw[]> {
+  const [daily, related] = await Promise.all([
+    fetchDailyTopptipsetDraws(),
+    fetchRelatedTopptipsetDraws(),
+  ]);
+
+  const found: RawDraw[] = [];
+  const seen = new Set<string>();
+  for (const draw of [...daily, ...related]) {
+    const key = `${draw.productId ?? draw.productName}:${draw.drawNumber}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push(draw);
   }
 
   return found.sort(
