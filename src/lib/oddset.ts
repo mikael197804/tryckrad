@@ -14,10 +14,16 @@ import {
   type OddsetLearningMemory,
   type OddsetLesson,
 } from "./oddsetLearning";
+import {
+  fetchForbiddenClosetTips,
+  sharpsAdjustForMatch,
+  type SharpsTipsterFeed,
+} from "./sharps";
 import { overMarketValue } from "./valueOdds";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
+export type { SharpsTipsterFeed } from "./sharps";
 export type OddsetMarket = "over_2_5";
 
 export type RivalryInfo = {
@@ -81,6 +87,8 @@ export type OddsetDayTip = {
     biasesNote: string;
     lessons: OddsetLesson[];
   };
+  /** Tippsignaler från Sharps (forbidden_closet), om inloggning är konfigurerad. */
+  sharps: SharpsTipsterFeed;
 };
 
 const PICKS_PER_DAY = 5;
@@ -737,7 +745,10 @@ export async function buildOddsetDayTip(opts?: {
     await importOddsetTips(opts.clientTips);
   }
   await settleOddsetTips();
-  const learning = await loadOddsetLearning();
+  const [learning, sharps] = await Promise.all([
+    loadOddsetLearning(),
+    fetchForbiddenClosetTips(),
+  ]);
   const recentTracked = await listTrackedOddsetTips();
   const recentEventIds = new Set(recentTracked.map((t) => t.eventId));
   const recentTeams = new Set<string>();
@@ -842,9 +853,21 @@ export async function buildOddsetDayTip(opts?: {
       recentLeagues,
     });
     c.score += adj.scoreDelta;
-    if (adj.notes.length) {
-      c.learningNotes = adj.notes;
-      c.reason = `${c.reason}. ${adj.notes[0]}`;
+    const notes = [...adj.notes];
+
+    const sharpsAdj = sharpsAdjustForMatch({
+      feed: sharps,
+      home: c.home,
+      away: c.away,
+    });
+    if (sharpsAdj.scoreDelta) {
+      c.score += sharpsAdj.scoreDelta;
+      notes.push(...sharpsAdj.notes);
+    }
+
+    if (notes.length) {
+      c.learningNotes = notes;
+      c.reason = `${c.reason}. ${notes[0]}`;
     }
     candidates.push(c);
   }
@@ -886,6 +909,7 @@ export async function buildOddsetDayTip(opts?: {
       biasesNote: learningAfter.biases.note,
       lessons: learningAfter.lessons.slice(0, 12),
     },
+    sharps,
     rules: [
       `${PICKS_PER_DAY} unika öppna Oddset-matcher (Över 2,5) som går att spela nu.`,
       `Fönster: ${windowNote}.`,
@@ -894,6 +918,9 @@ export async function buildOddsetDayTip(opts?: {
       "Efter slutsignal: grönt = Över 2,5 rätt, rött = fel.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
       `Sannolikhetsgolv nu: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
+      sharps.ok
+        ? `Sharps/${sharps.tipster}: ${sharps.tips.length} tippsignaler vävs in när matchen overlappar.`
+        : `Sharps/${sharps.tipster}: ${sharps.note}`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
       "Uppdateras automatiskt 12 min före avspark och när resultat kommer in.",
     ],
