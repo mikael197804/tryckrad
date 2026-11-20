@@ -599,7 +599,6 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
   const won = tracked.filter((t) => t.outcome === "won").length;
   const lost = tracked.filter((t) => t.outcome === "lost").length;
   const learning = tip.learning;
-  const sharps = tip.sharps;
   const missLessons = (learning?.lessons || []).filter((l) => !l.hit).slice(0, 6);
   const hitLessons = (learning?.lessons || []).filter((l) => l.hit).slice(0, 3);
 
@@ -621,45 +620,6 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
           ))}
         </ul>
       </section>
-
-      {sharps && (
-        <section className="panel">
-          <h2>Sharps · {sharps.tipster}</h2>
-          <p className="panel-lead">
-            {sharps.note}{" "}
-            <a
-              className="oddset-link"
-              href={sharps.profileUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{ marginTop: 0, display: "inline-block" }}
-            >
-              Öppna profil
-            </a>
-          </p>
-          {!sharps.configured && (
-            <p className="panel-lead">
-              Lägg hemligheterna <code>SHARPS_USERNAME</code> och{" "}
-              <code>SHARPS_PASSWORD</code> (Vercel/Cursor) så hämtas tipparna
-              automatiskt. Klistra aldrig lösenord i chatten.
-            </p>
-          )}
-          {sharps.ok && sharps.tips.length > 0 && (
-            <ul className="alert-list learning-alerts">
-              {sharps.tips.slice(0, 10).map((t, i) => (
-                <li key={`sharps-${i}-${t.summary.slice(0, 24)}`}>
-                  {t.home && t.away ? `${t.home}–${t.away}: ` : ""}
-                  {t.selection}
-                  {t.odds != null
-                    ? ` @ ${t.odds.toFixed(2).replace(".", ",")}`
-                    : ""}
-                  {t.threadTitle ? ` · ${t.threadTitle}` : ""}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
 
       {learning && learning.summary.length > 0 && (
         <section className="panel">
