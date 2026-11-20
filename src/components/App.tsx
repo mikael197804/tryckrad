@@ -171,14 +171,73 @@ function RedCardPill({
   );
 }
 
+function OddsetPickCard({
+  c,
+  index,
+}: {
+  c: OddsetCandidate;
+  index: number;
+}) {
+  return (
+    <article className="match-card">
+      <div className="match-card-top">
+        <span className="match-num">{index}</span>
+        <div>
+          <strong>
+            {c.home} – {c.away}
+          </strong>
+          <div className="reason">
+            {fmtTime(c.kickoff)} · {c.league}
+            {c.country ? ` · ${c.country}` : ""}
+          </div>
+        </div>
+        <div className="pick-cells">
+          <span className="pick-cell on">{c.over25ProbPct.toFixed(0)}%</span>
+        </div>
+      </div>
+      <div className="oddset-pick-line">
+        <span className="ctx-pill table-comfortable">Över 2,5 mål</span>
+        <span className="odds">
+          Odds {fmtOdds(c.odds)} · xG≈
+          {c.expectedGoals != null
+            ? c.expectedGoals.toFixed(2).replace(".", ",")
+            : "–"}
+        </span>
+      </div>
+      <div className="match-card-meta">
+        <span className="odds">Ö1,5 {fmtOdds(c.odds15)}</span>
+        <span className="odds">Ö3,5 {fmtOdds(c.odds35)}</span>
+      </div>
+      <div className="match-card-flags">
+        <RivalryPill level={c.rivalry.level} note={c.rivalry.note} />
+        <RedCardPill
+          level={c.redCard.level}
+          note={c.redCard.note}
+          probabilityPct={c.redCard.probabilityPct}
+        />
+      </div>
+      <div className="reason">{c.reason}</div>
+      <a
+        className="oddset-link"
+        href={c.url}
+        target="_blank"
+        rel="noreferrer"
+      >
+        Öppna på Oddset
+      </a>
+    </article>
+  );
+}
+
 function OddsetView({ tip }: { tip: OddsetDayTip }) {
-  const selected = tip.selected;
+  const picks = tip.selected;
+  const picksPerDay = tip.picksPerDay ?? 5;
   return (
     <div className="rise">
       <section className="panel">
         <h2>Dagens Oddset · {tip.playDateLabel}</h2>
         <p className="panel-lead">
-          En match per svenskt dygn. Tipset gäller{" "}
+          {picksPerDay} matcher per svenskt dygn. Tipset gäller{" "}
           <strong>dagen efter</strong>. Matcher visas bara om modellen bedömer
           minst 55% chans till Över 2,5 mål. Analyserat {tip.analyzedCount} ·{" "}
           {tip.eligibleCount} klarade sannolikhetsfiltret.
@@ -191,112 +250,37 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
       </section>
 
       <section className="panel panel-systems">
-        <h2>Spela denna · Över 2,5</h2>
-        {!selected ? (
+        <h2>Spela dessa · Över 2,5 ({picks.length}/{picksPerDay})</h2>
+        {picks.length === 0 ? (
           <p className="panel-lead">
             Ingen match nådde 55% modell-sannolikhet för Över 2,5 just nu.
           </p>
         ) : (
-          <div className="coupon rise">
-            <div className="coupon-head">
-              <div>
-                <h3>
-                  {selected.home} – {selected.away}
-                </h3>
-                <div
-                  style={{
-                    color: "rgba(223,247,234,0.75)",
-                    fontSize: "0.85rem",
-                  }}
-                >
-                  {selected.league}
-                  {selected.country ? ` · ${selected.country}` : ""} ·{" "}
-                  {fmtTime(selected.kickoff)}
-                </div>
-              </div>
-              <div className="coupon-cost">
-                {selected.over25ProbPct.toFixed(0)}%
-              </div>
-            </div>
-            <div className="oddset-pick-line">
-              <span className="ctx-pill table-comfortable">Över 2,5 mål</span>
-              <span className="odds">
-                Odds {fmtOdds(selected.odds)} · xG≈
-                {selected.expectedGoals != null
-                  ? selected.expectedGoals.toFixed(2).replace(".", ",")
-                  : "–"}
-              </span>
-            </div>
-            <div className="match-card-flags" style={{ marginTop: "0.55rem" }}>
-              <RivalryPill
-                level={selected.rivalry.level}
-                note={selected.rivalry.note}
-              />
-              <RedCardPill
-                level={selected.redCard.level}
-                note={selected.redCard.note}
-                probabilityPct={selected.redCard.probabilityPct}
-              />
-            </div>
-            <div className="reason" style={{ marginTop: "0.65rem" }}>
-              {selected.reason}
-            </div>
-            <a
-              className="oddset-link"
-              href={selected.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Öppna på Oddset
-            </a>
+          <div className="match-cards">
+            {picks.map((c, i) => (
+              <OddsetPickCard key={c.eventId} c={c} index={i + 1} />
+            ))}
           </div>
         )}
       </section>
 
-      <section className="panel">
-        <h2>Godkända matcher (≥55% Över 2,5)</h2>
-        <p className="panel-lead">
-          Filtrerade innan visning. Endast den översta ska spelas i dag.
-        </p>
-        <div className="match-cards">
-          {tip.candidates.map((c, i) => (
-            <article className="match-card" key={c.eventId}>
-              <div className="match-card-top">
-                <span className="match-num">{i + 1}</span>
-                <div>
-                  <strong>
-                    {c.home} – {c.away}
-                  </strong>
-                  <div className="reason">
-                    {fmtTime(c.kickoff)} · {c.league}
-                    {c.country ? ` · ${c.country}` : ""}
-                  </div>
-                </div>
-                <div className="pick-cells">
-                  <span className="pick-cell on">
-                    {c.over25ProbPct.toFixed(0)}%
-                  </span>
-                </div>
-              </div>
-              <div className="match-card-meta">
-                <span className="odds">Ö2,5 {fmtOdds(c.odds)}</span>
-                <span className="odds">
-                  Ö1,5 {fmtOdds(c.odds15)} · Ö3,5 {fmtOdds(c.odds35)}
-                </span>
-              </div>
-              <div className="match-card-flags">
-                <RivalryPill level={c.rivalry.level} note={c.rivalry.note} />
-                <RedCardPill
-                  level={c.redCard.level}
-                  note={c.redCard.note}
-                  probabilityPct={c.redCard.probabilityPct}
-                />
-              </div>
-              <div className="reason">{c.reason}</div>
-            </article>
-          ))}
-        </div>
-      </section>
+      {tip.candidates.length > picks.length && (
+        <section className="panel">
+          <h2>Fler godkända (≥55%)</h2>
+          <p className="panel-lead">
+            Extra kandidater utöver dagens {picksPerDay} tips.
+          </p>
+          <div className="match-cards">
+            {tip.candidates.slice(picks.length).map((c, i) => (
+              <OddsetPickCard
+                key={c.eventId}
+                c={c}
+                index={picks.length + i + 1}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       <p className="disclaimer">{tip.disclaimer}</p>
     </div>
@@ -367,8 +351,8 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Powerplay, Topptipset och Oddset – en målmatch per svenskt dygn
-            plus omgångstips med tabell, vila och schema.
+            Powerplay, Topptipset och Oddset – fem Över 2,5-tips per svenskt
+            dygn plus omgångstips med tabell, vila och schema.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
             <button

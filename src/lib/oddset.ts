@@ -41,13 +41,17 @@ export type OddsetDayTip = {
   playDate: string;
   playDateLabel: string;
   generatedAt: string;
-  selected: OddsetCandidate | null;
+  /** Upp till 5 matcher att spela detta svenska dygn. */
+  selected: OddsetCandidate[];
   candidates: OddsetCandidate[];
   analyzedCount: number;
   eligibleCount: number;
+  picksPerDay: number;
   rules: string[];
   disclaimer: string;
 };
+
+const PICKS_PER_DAY = 5;
 
 const KAMBI_BASE =
   "https://eu.offering-api.kambicdn.com/offering/v2018/svenskaspel";
@@ -670,18 +674,19 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
   }
 
   candidates.sort((a, b) => b.score - a.score || b.over25ProbPct - a.over25ProbPct);
-  const selected = candidates[0] ?? null;
+  const selected = candidates.slice(0, PICKS_PER_DAY);
 
   return {
     playDate: play.isoDate,
     playDateLabel: play.label,
     generatedAt: new Date().toISOString(),
     selected,
-    candidates: candidates.slice(0, 10),
+    candidates: candidates.slice(0, 12),
     analyzedCount: toAnalyze.length,
     eligibleCount: candidates.length,
+    picksPerDay: PICKS_PER_DAY,
     rules: [
-      "En match per 24 timmar (svenskt dygn).",
+      `${PICKS_PER_DAY} matcher per svenskt dygn.`,
       "Speldatum = dagen efter (morgondagens svenska kalenderdag).",
       "Bara matcher där modellen bedömer ≥ 55% chans till Över 2,5 mål visas.",
       "Sannolikhet beräknas innan listning (Poisson + Odds Ö/U-stege).",
