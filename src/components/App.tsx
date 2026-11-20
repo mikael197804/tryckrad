@@ -756,7 +756,58 @@ export default function App() {
                                   note={m.awayRest.note}
                                   label={m.away.name}
                                 />
+                                {product === "powerplay" && m.goals && (
+                                  <>
+                                    <GoalNeedPill
+                                      need={m.goals.homeAttackNeed}
+                                      note={m.goals.homeNeedNote}
+                                      label={m.home.name}
+                                    />
+                                    <GoalNeedPill
+                                      need={m.goals.awayAttackNeed}
+                                      note={m.goals.awayNeedNote}
+                                      label={m.away.name}
+                                    />
+                                  </>
+                                )}
                               </div>
+                              {product === "powerplay" && m.goals && (
+                                <div className="goal-block">
+                                  <div className="goal-line">
+                                    <strong>Mål</strong>
+                                    {m.goals.expectedGoals != null ? (
+                                      <span>
+                                        ca{" "}
+                                        {m.goals.expectedGoals
+                                          .toFixed(1)
+                                          .replace(".", ",")}{" "}
+                                        totalt · {m.goals.likelyRange}
+                                        {m.goals.over45ProbPct != null
+                                          ? ` · Ö4,5 ${String(m.goals.over45ProbPct).replace(".", ",")}%`
+                                          : ""}
+                                        {m.goals.over55ProbPct != null
+                                          ? ` · Ö5,5 ${String(m.goals.over55ProbPct).replace(".", ",")}%`
+                                          : ""}
+                                      </span>
+                                    ) : (
+                                      <span>
+                                        {m.goals.note || "målanalys saknas"}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {(m.goals.homeNeedNote ||
+                                    m.goals.awayNeedNote) && (
+                                    <div className="goal-need">
+                                      {[
+                                        m.goals.homeNeedNote,
+                                        m.goals.awayNeedNote,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ")}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                               <div className="reason">{m.pickReason}</div>
                             </td>
                             <td className="odds">
