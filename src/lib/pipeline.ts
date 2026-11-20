@@ -32,6 +32,7 @@ export async function buildAllDrawBundles(
           fatigueAlerts,
           tableAlerts,
           restAlerts,
+          goalAlerts,
           leagueSummary,
         } = await analyzeDraw(draw, draws);
         const [articles, systems] = await Promise.all([
@@ -57,6 +58,7 @@ export async function buildAllDrawBundles(
           fatigueAlerts: fatigueAlerts ?? [],
           tableAlerts: tableAlerts ?? [],
           restAlerts: restAlerts ?? [],
+          goalAlerts: goalAlerts ?? [],
         } satisfies DrawBundle;
       } catch (error) {
         console.error(

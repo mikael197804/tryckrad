@@ -53,6 +53,20 @@ export type RestSignal = {
   hoursUntilNext: number | null;
 };
 
+export type GoalAnalysis = {
+  expectedGoals: number | null;
+  likelyRange: string;
+  over45ProbPct: number | null;
+  over55ProbPct: number | null;
+  mainLine: number | null;
+  mainLineOverOdds: number | null;
+  homeAttackNeed: "low" | "medium" | "high";
+  awayAttackNeed: "low" | "medium" | "high";
+  homeNeedNote: string;
+  awayNeedNote: string;
+  note: string;
+};
+
 export type MatchAnalysis = {
   eventNumber: number;
   description: string;
@@ -72,6 +86,7 @@ export type MatchAnalysis = {
   awayTable: TableContext;
   homeRest: RestSignal;
   awayRest: RestSignal;
+  goals: GoalAnalysis;
   pick: Outcome[];
   pickReason: string;
   score1: number;
@@ -95,6 +110,7 @@ export type DrawBundle = {
   fatigueAlerts: string[];
   tableAlerts: string[];
   restAlerts: string[];
+  goalAlerts: string[];
 };
 
 export type Article = {

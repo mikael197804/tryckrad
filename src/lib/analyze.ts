@@ -6,6 +6,7 @@ import {
   loadLeagueTables,
   type LeagueTable,
 } from "./context";
+import { analyzeMatchGoals, kambiIdFromProviders } from "./goals";
 import {
   favouriteFromDist,
   parseDistribution,
@@ -332,14 +333,17 @@ export async function analyzeDraw(
   fatigueAlerts: string[];
   tableAlerts: string[];
   restAlerts: string[];
+  goalAlerts: string[];
   leagueSummary: string;
 }> {
   const schedule = buildTeamSchedule(allDraws);
-  const matches: MatchAnalysis[] = [];
+  const drafts: Omit<MatchAnalysis, "goals">[] = [];
   const fatigueAlerts: string[] = [];
   const tableAlerts: string[] = [];
   const restAlerts: string[] = [];
+  const goalAlerts: string[] = [];
   const leagues = new Set<string>();
+  const kambiByEvent = new Map<number, string | null>();
 
   for (const event of draw.drawEvents) {
     if (event.cancelled) continue;
@@ -353,6 +357,7 @@ export async function analyzeDraw(
     const { home, away } = participants(event);
     const league = event.match.league.name;
     const table: LeagueTable | null = tables.get(league) ?? null;
+    kambiByEvent.set(event.eventNumber, kambiIdFromProviders(event.providerIds));
 
     let homeFatigue = fatigueForTeam(home.id, event.match.matchStart, schedule);
     let awayFatigue = fatigueForTeam(away.id, event.match.matchStart, schedule);
@@ -460,7 +465,7 @@ export async function analyzeDraw(
       awayRest
     );
 
-    matches.push({
+    drafts.push({
       eventNumber: event.eventNumber,
       description: event.eventDescription,
       league,
@@ -487,6 +492,31 @@ export async function analyzeDraw(
     });
   }
 
+  // Målanalys efter helhetsbilden (tabell/vila/1X2)
+  const matches: MatchAnalysis[] = await Promise.all(
+    drafts.map(async (draft) => {
+      const goals = await analyzeMatchGoals({
+        kambiEventId: kambiByEvent.get(draft.eventNumber) ?? null,
+        home: draft.home,
+        away: draft.away,
+        homeTable: draft.homeTable,
+        awayTable: draft.awayTable,
+        homeFatigue: draft.homeFatigue,
+        awayFatigue: draft.awayFatigue,
+        homeRest: draft.homeRest,
+        awayRest: draft.awayRest,
+        score1: draft.score1,
+        score2: draft.score2,
+      });
+      if (goals.expectedGoals != null) {
+        goalAlerts.push(
+          `Match ${draft.eventNumber}: ca ${goals.expectedGoals.toFixed(1).replace(".", ",")} mål (${goals.likelyRange}) · ${goals.homeNeedNote} · ${goals.awayNeedNote}`
+        );
+      }
+      return { ...draft, goals };
+    })
+  );
+
   matches.sort((a, b) => a.eventNumber - b.eventNumber);
 
   return {
@@ -494,6 +524,7 @@ export async function analyzeDraw(
     fatigueAlerts,
     tableAlerts,
     restAlerts,
+    goalAlerts,
     leagueSummary: [...leagues].join(", "),
   };
 }

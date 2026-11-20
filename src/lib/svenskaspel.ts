@@ -33,6 +33,7 @@ export type RawEvent = {
     x?: string;
     two?: string;
   } | null;
+  providerIds?: Array<{ provider?: string; type?: string; id?: string }> | null;
   match: {
     matchId: number;
     matchStart: string;

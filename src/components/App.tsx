@@ -123,6 +123,23 @@ function RestPill({
   );
 }
 
+function GoalNeedPill({
+  need,
+  note,
+  label,
+}: {
+  need: "low" | "medium" | "high";
+  note: string;
+  label: string;
+}) {
+  if (need === "medium") return null;
+  return (
+    <span className={`ctx-pill goal-${need}`} title={note}>
+      {need === "high" ? "jagar mål" : "mindre målhunger"} · {label}
+    </span>
+  );
+}
+
 function CouponView({
   system,
   product,
@@ -525,6 +542,17 @@ export default function App() {
                     </ul>
                   </>
                 )}
+                {product === "powerplay" &&
+                  (draw.goalAlerts?.length ?? 0) > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>Mål per match</h2>
+                    <ul className="alert-list goal-alerts">
+                      {draw.goalAlerts.map((a) => (
+                        <li key={a}>{a}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </section>
 
               <div className="grid-2 mobile-stack">
@@ -559,7 +587,11 @@ export default function App() {
                   <h2>Matcher & tipsläge</h2>
                   <p className="panel-lead">
                     Baserat på odds, svenska folket, tabelläge, vilomotiv och
-                    schema. Garderingar läggs där osäkerhet, trygg tabell eller
+                    schema
+                    {product === "powerplay"
+                      ? ", plus förväntat antal mål"
+                      : ""}
+                    . Garderingar läggs där osäkerhet, trygg tabell eller
                     trötthet är högst.
                   </p>
 
@@ -595,6 +627,37 @@ export default function App() {
                             {m.svenskaFolket.two}
                           </span>
                         </div>
+                        {product === "powerplay" && m.goals && (
+                          <div className="goal-block">
+                            <div className="goal-line">
+                              <strong>Mål</strong>
+                              {m.goals.expectedGoals != null ? (
+                                <span>
+                                  ca{" "}
+                                  {m.goals.expectedGoals
+                                    .toFixed(1)
+                                    .replace(".", ",")}{" "}
+                                  totalt · {m.goals.likelyRange}
+                                  {m.goals.over45ProbPct != null
+                                    ? ` · Ö4,5 ${String(m.goals.over45ProbPct).replace(".", ",")}%`
+                                    : ""}
+                                  {m.goals.over55ProbPct != null
+                                    ? ` · Ö5,5 ${String(m.goals.over55ProbPct).replace(".", ",")}%`
+                                    : ""}
+                                </span>
+                              ) : (
+                                <span>{m.goals.note || "målanalys saknas"}</span>
+                              )}
+                            </div>
+                            {(m.goals.homeNeedNote || m.goals.awayNeedNote) && (
+                              <div className="goal-need">
+                                {[m.goals.homeNeedNote, m.goals.awayNeedNote]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div className="match-card-flags">
                           <Fatigue
                             level={m.homeFatigue.level}
@@ -624,6 +687,20 @@ export default function App() {
                             note={m.awayRest.note}
                             label={m.away.name}
                           />
+                          {product === "powerplay" && m.goals && (
+                            <>
+                              <GoalNeedPill
+                                need={m.goals.homeAttackNeed}
+                                note={m.goals.homeNeedNote}
+                                label={m.home.name}
+                              />
+                              <GoalNeedPill
+                                need={m.goals.awayAttackNeed}
+                                note={m.goals.awayNeedNote}
+                                label={m.away.name}
+                              />
+                            </>
+                          )}
                         </div>
                         <div className="reason">{m.pickReason}</div>
                       </article>
