@@ -437,6 +437,17 @@ select {
   margin-right: 0.35rem;
 }
 
+.preclose-banner {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(255, 210, 138, 0.35);
+  border-radius: 12px;
+  background: rgba(40, 28, 7, 0.45);
+  color: #ffd28a;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
 .tip-strip {
   margin: 0.85rem 0 0.35rem;
   padding: 0.7rem 0.85rem;

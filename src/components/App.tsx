@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OddsetCandidate, OddsetDayTip } from "../lib/oddset";
+import {
+  formatPreCloseLabel,
+  isInPreCloseWindow,
+  nextPreCloseRefreshAt,
+} from "../lib/refresh";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 
 type ProductKind =
@@ -39,6 +44,8 @@ type ApiResponse = {
   draws: DrawBundle[];
   disclaimer: string;
   error?: string;
+  preCloseRefreshMinutes?: number;
+  fresh?: boolean;
 };
 
 function fmtTime(iso: string): string {
@@ -463,48 +470,83 @@ export default function App() {
   const [oddset, setOddset] = useState<OddsetDayTip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedDraw, setSelectedDraw] = useState<number | null>(null);
   const [selectedSystem, setSelectedSystem] = useState(0);
+  const [preCloseNote, setPreCloseNote] = useState<string | null>(null);
+  const [lastFreshAt, setLastFreshAt] = useState<string | null>(null);
+  const selectedDrawRef = useRef<number | null>(null);
+  const preCloseStartedRef = useRef(false);
+  selectedDrawRef.current = selectedDraw;
+
+  const loadProduct = useCallback(
+    async (opts: { fresh?: boolean; silent?: boolean; resetSelection?: boolean }) => {
+      const fresh = opts.fresh === true;
+      const silent = opts.silent === true;
+      try {
+        if (!silent) {
+          setLoading(true);
+          setError(null);
+          setData(null);
+          setOddset(null);
+          if (opts.resetSelection !== false) setSelectedDraw(null);
+        } else {
+          setRefreshing(true);
+        }
+
+        if (product === "oddset") {
+          const res = await fetch(
+            `/api/oddset${fresh ? "?fresh=1" : ""}`,
+            { cache: "no-store" }
+          );
+          const json = (await res.json()) as OddsetDayTip & {
+            error?: string;
+            fresh?: boolean;
+          };
+          if (!res.ok) throw new Error(json.error || "Kunde inte hämta Oddset");
+          setOddset(json);
+          if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
+        } else {
+          const res = await fetch(
+            `/api/draws?product=${product}${fresh ? "&fresh=1" : ""}`,
+            { cache: "no-store" }
+          );
+          const json = (await res.json()) as ApiResponse;
+          if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
+          const keep = selectedDrawRef.current;
+          setData({ ...json, product });
+          if (opts.resetSelection === false && keep != null) {
+            const still =
+              json.draws.some((d) => d.drawNumber === keep) ? keep : json.draws[0]?.drawNumber ?? null;
+            setSelectedDraw(still);
+          } else {
+            setSelectedDraw(json.draws[0]?.drawNumber ?? null);
+            setSelectedSystem(0);
+          }
+          if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
+        }
+      } catch (e) {
+        if (!silent) {
+          setError(e instanceof Error ? e.message : "Nätverksfel");
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [product]
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        // Rensa gammal produkt så tipset inte blir blankt vid byte
-        setData(null);
-        setOddset(null);
-        setSelectedDraw(null);
-        if (product === "oddset") {
-          const res = await fetch("/api/oddset", { cache: "no-store" });
-          const json = (await res.json()) as OddsetDayTip & { error?: string };
-          if (!res.ok) throw new Error(json.error || "Kunde inte hämta Oddset");
-          if (cancelled) return;
-          setOddset(json);
-        } else {
-          const res = await fetch(`/api/draws?product=${product}`, {
-            cache: "no-store",
-          });
-          const json = (await res.json()) as ApiResponse;
-          if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
-          if (cancelled) return;
-          setData({ ...json, product });
-          setSelectedDraw(json.draws[0]?.drawNumber ?? null);
-          setSelectedSystem(0);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Nätverksfel");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      if (cancelled) return;
+      await loadProduct({ resetSelection: true });
     })();
     return () => {
       cancelled = true;
     };
-  }, [product]);
+  }, [loadProduct]);
 
   const draw = useMemo(() => {
     if (!data || data.product !== product) return null;
@@ -514,6 +556,104 @@ export default function App() {
       null
     );
   }, [data, selectedDraw, product]);
+
+  const closeTimes = useMemo(() => {
+    if (product === "oddset" && oddset) {
+      const list = oddset.selected?.length
+        ? oddset.selected
+        : oddset.candidates || [];
+      return list.map((c) => c.kickoff).filter(Boolean);
+    }
+    return (data?.draws || []).map((d) => d.closeTime).filter(Boolean);
+  }, [product, data, oddset]);
+
+  // Schemalägg uppdatering 12 min före spelstopp (alla produkter)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    let noteTimer: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+
+    const clear = () => {
+      if (timer) clearTimeout(timer);
+      if (poll) clearInterval(poll);
+      if (noteTimer) clearInterval(noteTimer);
+      timer = null;
+      poll = null;
+      noteTimer = null;
+    };
+
+    if (!closeTimes.length) {
+      setPreCloseNote(null);
+      preCloseStartedRef.current = false;
+      return;
+    }
+
+    const activeClose = () => {
+      const now = Date.now();
+      if (product !== "oddset" && draw?.closeTime) return draw.closeTime;
+      return (
+        closeTimes
+          .map((t) => ({ t, ms: new Date(t).getTime() }))
+          .filter((x) => Number.isFinite(x.ms) && x.ms > now - 60_000)
+          .sort((a, b) => a.ms - b.ms)[0]?.t ?? null
+      );
+    };
+
+    const updateNote = () => {
+      const c = activeClose();
+      setPreCloseNote(c ? formatPreCloseLabel(c) : null);
+    };
+    updateNote();
+    noteTimer = setInterval(updateNote, 30_000);
+
+    const arm = () => {
+      if (timer) clearTimeout(timer);
+      if (poll) clearInterval(poll);
+      timer = null;
+      poll = null;
+
+      const now = Date.now();
+      const inWindow = closeTimes.some((t) => isInPreCloseWindow(t, now));
+      if (inWindow) {
+        if (!preCloseStartedRef.current) {
+          preCloseStartedRef.current = true;
+          void loadProduct({ fresh: true, silent: true, resetSelection: false });
+        }
+        poll = setInterval(() => {
+          if (cancelled) return;
+          const still = closeTimes.some((t) => isInPreCloseWindow(t));
+          if (!still) {
+            preCloseStartedRef.current = false;
+            arm();
+            return;
+          }
+          void loadProduct({ fresh: true, silent: true, resetSelection: false });
+        }, 90_000);
+        return;
+      }
+
+      preCloseStartedRef.current = false;
+      const nextAt = nextPreCloseRefreshAt(closeTimes, now);
+      if (nextAt == null) return;
+      const delay = Math.max(1_000, Math.min(nextAt - now, 2_147_000_000));
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        preCloseStartedRef.current = false;
+        void loadProduct({ fresh: true, silent: true, resetSelection: false }).then(
+          () => {
+            if (!cancelled) arm();
+          }
+        );
+      }, delay);
+    };
+
+    arm();
+    return () => {
+      cancelled = true;
+      clear();
+    };
+  }, [product, closeTimes, draw?.closeTime, loadProduct]);
 
   useEffect(() => {
     setSelectedSystem(0);
@@ -527,8 +667,8 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Öppna omgångar för Topptipset, Stryktipset, Måltipset och Powerplay.
-            Stryk/Mål får sen laganalys ca 15 min före avspark. Oddset: fem Över
+            Alla spel uppdateras automatiskt 12 minuter före spelstopp. Stryk/Mål
+            väger även in lagnyheter ca 15 min före avspark. Oddset: fem Över
             2,5 för dagen efter.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
@@ -559,8 +699,16 @@ export default function App() {
             : data
               ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
               : "Hämtar Svenska Spel…"}
+          {refreshing ? " · uppdaterar…" : ""}
+          {lastFreshAt ? ` · färsk före stopp ${fmtTime(lastFreshAt)}` : ""}
         </div>
       </header>
+
+      {preCloseNote && (
+        <div className="preclose-banner" role="status">
+          {preCloseNote}
+        </div>
+      )}
 
       {loading && (
         <div className="loading">

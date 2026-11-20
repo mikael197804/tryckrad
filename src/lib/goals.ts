@@ -1,3 +1,4 @@
+import { upstreamFetchInit } from "./fetch-mode";
 import type {
   FatigueInfo,
   GoalAnalysis,
@@ -194,7 +195,7 @@ async function fetchKambiOffers(eventId: string): Promise<KambiBetOffer[]> {
     try {
       const res = await fetch(
         `${KAMBI_BASE}/betoffer/event/${eventId}.json?lang=sv_SE&market=SE`,
-        {
+        upstreamFetchInit({
           headers: {
             Accept: "application/json",
             "User-Agent": "MikaelsTips/1.0",
@@ -202,7 +203,7 @@ async function fetchKambiOffers(eventId: string): Promise<KambiBetOffer[]> {
             Referer: "https://www.svenskaspel.se/oddset",
           },
           next: { revalidate: 120 },
-        }
+        })
       );
       if (res.status === 410 || res.status >= 500) {
         await new Promise((r) => setTimeout(r, 200 * (i + 1)));

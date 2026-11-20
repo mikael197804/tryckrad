@@ -1,3 +1,4 @@
+import { upstreamFetchInit } from "./fetch-mode";
 import type { Odds, TeamInfo } from "./types";
 
 export type LineupImpactItem = {
@@ -70,10 +71,10 @@ async function fetchLeagueNews(espnLeague: string): Promise<NewsArticle[]> {
   try {
     const res = await fetch(
       `https://site.api.espn.com/apis/site/v2/sports/soccer/${espnLeague}/news?limit=50`,
-      {
+      upstreamFetchInit({
         headers: { Accept: "application/json", "User-Agent": "MikaelsTips/1.0" },
         next: { revalidate: 120 },
-      }
+      })
     );
     if (!res.ok) return cached?.articles ?? [];
     const data = (await res.json()) as { articles?: NewsArticle[] };

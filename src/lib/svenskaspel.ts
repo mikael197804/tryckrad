@@ -1,3 +1,4 @@
+import { upstreamFetchInit } from "./fetch-mode";
 import type { Distribution, Odds, Outcome, TeamInfo } from "./types";
 
 const DRAWS_URL = "https://api.www.svenskaspel.se/draw/1/powerplay/draws";
@@ -111,13 +112,16 @@ export function participants(
 }
 
 async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "TryckRad/1.0 (analysverktyg)",
-    },
-    next: { revalidate: 60 },
-  });
+  const res = await fetch(
+    url,
+    upstreamFetchInit({
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "TryckRad/1.0 (analysverktyg)",
+      },
+      next: { revalidate: 60 },
+    })
+  );
   if (!res.ok) {
     throw new Error(`Kunde inte hämta ${url} (${res.status})`);
   }

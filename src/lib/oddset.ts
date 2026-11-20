@@ -1,3 +1,5 @@
+import { upstreamFetchInit } from "./fetch-mode";
+
 export type OddsetMarket = "over_2_5";
 
 export type RivalryInfo = {
@@ -132,16 +134,19 @@ async function kambiFetch(path: string, tries = 4): Promise<unknown> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await fetch(`${KAMBI_BASE}${path}`, {
-        headers: {
-          Accept: "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (compatible; MikaelsTips/1.0; +https://tryckrad.vercel.app)",
-          Origin: "https://www.svenskaspel.se",
-          Referer: "https://www.svenskaspel.se/oddset/fotboll",
-        },
-        next: { revalidate: 120 },
-      });
+      const res = await fetch(
+        `${KAMBI_BASE}${path}`,
+        upstreamFetchInit({
+          headers: {
+            Accept: "application/json",
+            "User-Agent":
+              "Mozilla/5.0 (compatible; MikaelsTips/1.0; +https://tryckrad.vercel.app)",
+            Origin: "https://www.svenskaspel.se",
+            Referer: "https://www.svenskaspel.se/oddset/fotboll",
+          },
+          next: { revalidate: 120 },
+        })
+      );
       if (res.status === 410 || res.status === 429 || res.status >= 500) {
         last = new Error(`Kambi ${res.status}`);
         await new Promise((r) => setTimeout(r, 250 * (i + 1)));
