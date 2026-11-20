@@ -91,6 +91,25 @@ export type LateLineupAnalysis = {
   analyzedAt: string;
 };
 
+export type OutcomeValueInfo = {
+  outcome: Outcome;
+  odds: number | null;
+  folkPct: number;
+  isOverOdds: boolean;
+  isValue: boolean;
+  isTrashLongshot: boolean;
+  scoreBoost: number;
+  note: string;
+};
+
+export type ValueOddsInfo = {
+  outcomes: OutcomeValueInfo[];
+  bestValue: Outcome | null;
+  overOddsOutcomes: Outcome[];
+  folkOddsDisagree: boolean;
+  note: string;
+};
+
 export type MatchAnalysis = {
   eventNumber: number;
   description: string;
@@ -112,6 +131,7 @@ export type MatchAnalysis = {
   awayRest: RestSignal;
   goals: GoalAnalysis;
   lineup: LateLineupAnalysis;
+  valueOdds: ValueOddsInfo;
   /** Måltipset: rank 1 = högst förväntat målantal */
   goalRank: number | null;
   malSelected: boolean;
@@ -141,6 +161,7 @@ export type DrawBundle = {
   restAlerts: string[];
   goalAlerts: string[];
   lineupAlerts: string[];
+  valueAlerts: string[];
   /** Måltipset: de 8 högst rankade matchnumren */
   malTip: number[];
 };

@@ -38,6 +38,7 @@ export async function buildAllDrawBundles(
           restAlerts,
           goalAlerts,
           lineupAlerts,
+          valueAlerts,
           malTip,
           leagueSummary,
         } = await analyzeDraw(draw, draws, product);
@@ -72,6 +73,7 @@ export async function buildAllDrawBundles(
           restAlerts: restAlerts ?? [],
           goalAlerts: goalAlerts ?? [],
           lineupAlerts: lineupAlerts ?? [],
+          valueAlerts: valueAlerts ?? [],
           malTip: malTip ?? [],
         } satisfies DrawBundle;
       } catch (error) {

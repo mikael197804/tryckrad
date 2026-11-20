@@ -399,6 +399,20 @@ select {
   color: #ffd28a;
 }
 
+.alert-list.value-alerts {
+  color: #c9b6ff;
+}
+
+.ctx-pill.value-over {
+  border-color: rgba(180, 150, 255, 0.55);
+  color: #c9b6ff;
+}
+
+.ctx-pill.value-disagree {
+  border-color: rgba(255, 200, 120, 0.5);
+  color: #ffd28a;
+}
+
 .ctx-pill.lineup-worse {
   border-color: rgba(255, 140, 140, 0.55);
   color: #ffb0b0;

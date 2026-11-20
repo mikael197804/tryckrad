@@ -265,6 +265,36 @@ function LineupPill({
   );
 }
 
+function ValueOddsPill({
+  valueOdds,
+}: {
+  valueOdds?: DrawBundle["matches"][number]["valueOdds"] | null;
+}) {
+  if (!valueOdds) return null;
+  if (valueOdds.overOddsOutcomes?.length) {
+    return (
+      <span className="ctx-pill value-over" title={valueOdds.note}>
+        överodds {valueOdds.overOddsOutcomes.join("/")}
+      </span>
+    );
+  }
+  if (valueOdds.folkOddsDisagree) {
+    return (
+      <span className="ctx-pill value-disagree" title={valueOdds.note}>
+        folk ≠ odds
+      </span>
+    );
+  }
+  if (valueOdds.bestValue) {
+    return (
+      <span className="ctx-pill value-over" title={valueOdds.note}>
+        värde {valueOdds.bestValue}
+      </span>
+    );
+  }
+  return null;
+}
+
 function GoalBlock({
   goals,
   malSelected,
@@ -849,6 +879,22 @@ export default function App() {
                     eller sämre för laget.
                   </p>
                 )}
+                {(draw.valueAlerts?.length ?? 0) > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>
+                      Överodds & värde
+                    </h2>
+                    <p className="panel-lead">
+                      Historik: överodds mot svenska folket har haft positiv EV
+                      (~+5–13%). Extremodds 8+ undviks.
+                    </p>
+                    <ul className="alert-list value-alerts">
+                      {draw.valueAlerts.map((a) => (
+                        <li key={a}>{a}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </section>
 
               <div className="grid-2 mobile-stack">
@@ -993,6 +1039,7 @@ export default function App() {
                             note={m.awayRest.note}
                             label={m.away.name}
                           />
+                          <ValueOddsPill valueOdds={m.valueOdds} />
                           {(product === "powerplay" ||
                             product === "maltipset") &&
                             m.goals && (
@@ -1080,6 +1127,7 @@ export default function App() {
                                   note={m.awayRest.note}
                                   label={m.away.name}
                                 />
+                                <ValueOddsPill valueOdds={m.valueOdds} />
                                 {(product === "powerplay" ||
                                   product === "maltipset") &&
                                   m.goals && (

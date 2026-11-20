@@ -1,4 +1,5 @@
 import { upstreamFetchInit } from "./fetch-mode";
+import { overMarketValue } from "./valueOdds";
 
 export type OddsetMarket = "over_2_5";
 
@@ -564,6 +565,19 @@ function buildCandidate(
 
   // Preferera kortare odds bland hög-sannolikhet (säkrare träff)
   score += Math.max(0, 12 - Math.abs(markets.odds25 - 1.7) * 4);
+
+  // Överodds/värde: modellens p högre än oddsimplicit
+  const ov = overMarketValue({
+    overOdds: markets.odds25,
+    modelProb: p25,
+  });
+  if (ov.isValue) {
+    score += 8;
+    if (ov.note) reasons.push(ov.note);
+  } else if (ov.edgePct != null && ov.edgePct < -5) {
+    score -= 4;
+    if (ov.note) reasons.push(ov.note);
+  }
 
   return {
     eventId: event.id,

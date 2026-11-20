@@ -30,7 +30,13 @@ import type {
   RestSignal,
   TableContext,
   UpcomingMatch,
+  ValueOddsInfo,
 } from "./types";
+import {
+  analyzeValueOdds,
+  applyValueOddsToScores,
+  overMarketValue,
+} from "./valueOdds";
 
 const MS_HOUR = 1000 * 60 * 60;
 
@@ -263,7 +269,8 @@ function buildPick(
   homeTable: TableContext,
   awayTable: TableContext,
   homeRest: RestSignal,
-  awayRest: RestSignal
+  awayRest: RestSignal,
+  valueOdds?: ValueOddsInfo | null
 ): { pick: Outcome[]; reason: string; valueOutcomes: Outcome[] } {
   const ranked = (
     [
@@ -321,14 +328,39 @@ function buildPick(
     }
   }
 
+  if (valueOdds?.overOddsOutcomes.length) {
+    reasons.push(`överodds ${valueOdds.overOddsOutcomes.join("/")}`);
+    for (const o of valueOdds.overOddsOutcomes) {
+      if (!pick.includes(o) && pick.length < 2) {
+        const s =
+          o === "1" ? scores.score1 : o === "X" ? scores.scoreX : scores.score2;
+        if (s >= 0.18) pick = [...pick, o];
+      }
+    }
+  } else if (valueOdds?.bestValue && !pick.includes(valueOdds.bestValue)) {
+    const o = valueOdds.bestValue;
+    const s =
+      o === "1" ? scores.score1 : o === "X" ? scores.scoreX : scores.score2;
+    if (s >= 0.2 && pick.length < 2) {
+      pick = [...pick, o];
+      reasons.push(`värde på ${o}`);
+    }
+  }
+
+  if (valueOdds?.folkOddsDisagree) {
+    reasons.push("folk och odds favorit skiljer");
+  }
+
   // Deduplicate pick order 1-X-2
   const order: Outcome[] = ["1", "X", "2"];
   pick = order.filter((o) => pick.includes(o));
 
-  const valueOutcomes = ranked
-    .filter((r) => r.s >= 0.22)
-    .map((r) => r.o)
-    .slice(0, 2);
+  const valueOutcomes = [
+    ...new Set([
+      ...ranked.filter((r) => r.s >= 0.22).map((r) => r.o),
+      ...(valueOdds?.overOddsOutcomes ?? []),
+    ]),
+  ].slice(0, 3) as Outcome[];
 
   return { pick, reason: reasons.join(". "), valueOutcomes };
 }
@@ -344,12 +376,16 @@ export async function analyzeDraw(
   restAlerts: string[];
   goalAlerts: string[];
   lineupAlerts: string[];
+  valueAlerts: string[];
   malTip: number[];
   leagueSummary: string;
 }> {
   const schedule = buildTeamSchedule(allDraws);
   const drafts: Array<
-    Omit<MatchAnalysis, "goals" | "lineup" | "goalRank" | "malSelected"> & {
+    Omit<
+      MatchAnalysis,
+      "goals" | "lineup" | "goalRank" | "malSelected"
+    > & {
       startOdds: ReturnType<typeof parseOdds>;
     }
   > = [];
@@ -358,6 +394,7 @@ export async function analyzeDraw(
   const restAlerts: string[] = [];
   const goalAlerts: string[] = [];
   const lineupAlerts: string[] = [];
+  const valueAlerts: string[] = [];
   const leagues = new Set<string>();
   const kambiByEvent = new Map<number, string | null>();
   const football = isFootballProduct(product);
@@ -474,14 +511,47 @@ export async function analyzeDraw(
       homeRest,
       awayRest
     );
+    const valueRaw = analyzeValueOdds({
+      odds: scored.odds,
+      dist: scored.dist,
+      sport: goalSport,
+    });
+    const adjusted = applyValueOddsToScores(
+      {
+        score1: scored.score1,
+        scoreX: scored.scoreX,
+        score2: scored.score2,
+      },
+      valueRaw
+    );
+    const valueOdds: ValueOddsInfo = {
+      outcomes: valueRaw.outcomes.map((o) => ({
+        outcome: o.outcome,
+        odds: o.odds,
+        folkPct: o.folkPct,
+        isOverOdds: o.isOverOdds,
+        isValue: o.isValue,
+        isTrashLongshot: o.isTrashLongshot,
+        scoreBoost: o.scoreBoost,
+        note: o.note,
+      })),
+      bestValue: valueRaw.bestValue,
+      overOddsOutcomes: valueRaw.overOddsOutcomes,
+      folkOddsDisagree: valueRaw.folkOddsDisagree,
+      note: valueRaw.note,
+    };
+    if (valueOdds.overOddsOutcomes.length || valueOdds.folkOddsDisagree) {
+      valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.note}`);
+    }
     const { pick, reason, valueOutcomes } = buildPick(
-      scored,
+      adjusted,
       homeFatigue,
       awayFatigue,
       homeTable,
       awayTable,
       homeRest,
-      awayRest
+      awayRest,
+      valueOdds
     );
 
     drafts.push({
@@ -503,11 +573,12 @@ export async function analyzeDraw(
       awayTable,
       homeRest,
       awayRest,
+      valueOdds,
       pick,
       pickReason: reason,
-      score1: scored.score1,
-      scoreX: scored.scoreX,
-      score2: scored.score2,
+      score1: adjusted.score1,
+      scoreX: adjusted.scoreX,
+      score2: adjusted.score2,
       startOdds,
     });
   }
@@ -527,6 +598,7 @@ export async function analyzeDraw(
           })
         : emptyLineup(draft.matchStart, "laganalys gäller fotbollstips");
 
+      // draft.score* är redan värdeodds-justerade
       const adj = football ? lineupScoreAdjust(lineup) : { d1: 0, dX: 0, d2: 0 };
       let score1 = draft.score1 + adj.d1;
       let scoreX = draft.scoreX + adj.dX;
@@ -538,7 +610,7 @@ export async function analyzeDraw(
 
       let pick = draft.pick;
       let pickReason = draft.pickReason;
-      if (football && (adj.d1 !== 0 || adj.dX !== 0 || adj.d2 !== 0)) {
+      if (adj.d1 !== 0 || adj.dX !== 0 || adj.d2 !== 0) {
         const rebuilt = buildPick(
           { score1, scoreX, score2 },
           draft.homeFatigue,
@@ -546,10 +618,15 @@ export async function analyzeDraw(
           draft.homeTable,
           draft.awayTable,
           draft.homeRest,
-          draft.awayRest
+          draft.awayRest,
+          draft.valueOdds
         );
         pick = rebuilt.pick;
-        pickReason = `${rebuilt.reason}. ${lineup.windowActive ? "Sen laganalys inräknad" : "Lagnyhet/oddsrörelse vägd in"}`;
+        pickReason = `${rebuilt.reason}. ${
+          lineup.windowActive
+            ? "Sen laganalys inräknad"
+            : "Lagnyhet/oddsrörelse vägd in"
+        }`;
       }
 
       if (
@@ -614,9 +691,19 @@ export async function analyzeDraw(
   // Måltipset: rangordna efter förväntat målantal, tippa topp 8
   let malTip: number[] = [];
   if (product === "maltipset") {
+    const malScore = (m: MatchAnalysis) => {
+      let s = m.goals.expectedGoals ?? 0;
+      const ov = overMarketValue({
+        overOdds: m.goals.mainLineOverOdds,
+        modelProb:
+          m.goals.over25ProbPct != null ? m.goals.over25ProbPct / 100 : null,
+      });
+      if (ov.isValue) s += 0.18;
+      return s;
+    };
     const ranked = [...matches].sort((a, b) => {
-      const ga = a.goals.expectedGoals ?? -1;
-      const gb = b.goals.expectedGoals ?? -1;
+      const ga = malScore(a);
+      const gb = malScore(b);
       if (gb !== ga) return gb - ga;
       const oa = a.goals.over25ProbPct ?? 0;
       const ob = b.goals.over25ProbPct ?? 0;
@@ -631,13 +718,19 @@ export async function analyzeDraw(
     matches = matches
       .map((m) => {
         const r = ranked.find((x) => x.eventNumber === m.eventNumber)!;
+        const ov = overMarketValue({
+          overOdds: r.goals.mainLineOverOdds,
+          modelProb:
+            r.goals.over25ProbPct != null ? r.goals.over25ProbPct / 100 : null,
+        });
+        const valueBit = ov.note ? ` · ${ov.note}` : "";
         return {
           ...m,
           goalRank: r.goalRank,
           malSelected: r.malSelected,
           pickReason: r.malSelected
-            ? `Måltips #${r.goalRank}: ${r.goals.note}`
-            : `Ej bland topp 8 (rank ${r.goalRank}): ${r.goals.note}`,
+            ? `Måltips #${r.goalRank}: ${r.goals.note}${valueBit}`
+            : `Ej bland topp 8 (rank ${r.goalRank}): ${r.goals.note}${valueBit}`,
         };
       })
       .sort((a, b) => a.eventNumber - b.eventNumber);
@@ -652,6 +745,7 @@ export async function analyzeDraw(
     restAlerts,
     goalAlerts,
     lineupAlerts,
+    valueAlerts,
     malTip,
     leagueSummary: [...leagues].join(", "),
   };
