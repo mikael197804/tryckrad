@@ -1,14 +1,19 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { buildAllDrawBundles } from "../../../lib/pipeline";
+import type { ProductKind } from "../../../lib/svenskaspel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const draws = await buildAllDrawBundles();
+    const raw = req.nextUrl.searchParams.get("product") ?? "powerplay";
+    const product: ProductKind =
+      raw === "topptipset" ? "topptipset" : "powerplay";
+    const draws = await buildAllDrawBundles(product);
     return NextResponse.json({
       generatedAt: new Date().toISOString(),
+      product,
       count: draws.length,
       draws,
       disclaimer:

@@ -145,7 +145,8 @@ function articleMatchesTeams(
 
 export async function fetchArticlesForMatches(
   matches: MatchAnalysis[],
-  drawNumber: number
+  drawNumber: number,
+  product: "powerplay" | "topptipset" = "powerplay"
 ): Promise<Article[]> {
   const teamQuery = [
     ...new Set(matches.flatMap((m) => [m.home.name, m.away.name])),
@@ -153,25 +154,45 @@ export async function fetchArticlesForMatches(
     .slice(0, 6)
     .join(" OR ");
 
-  const feeds: { url: string; source: string }[] = [
-    { url: "https://hockeysverige.se/feed/", source: "Hockeysverige" },
-    {
-      url: "https://www.shl.se/api/articles?take=20",
-      source: "SHL",
-    },
-    {
-      url: `https://news.google.com/rss/search?q=${encodeURIComponent(
-        `ishockey (${teamQuery || "SHL"})`
-      )}&hl=sv&gl=SE&ceid=SE:sv`,
-      source: "Google Nyheter",
-    },
-    {
-      url: `https://news.google.com/rss/search?q=${encodeURIComponent(
-        "Powerplay tips ishockey Svenska Spel"
-      )}&hl=sv&gl=SE&ceid=SE:sv`,
-      source: "Powerplay-tips",
-    },
-  ];
+  const feeds: { url: string; source: string }[] =
+    product === "topptipset"
+      ? [
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(
+              `fotboll (${teamQuery || "Premier League"})`
+            )}&hl=sv&gl=SE&ceid=SE:sv`,
+            source: "Google Nyheter",
+          },
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(
+              "Topptipset tips Svenska Spel"
+            )}&hl=sv&gl=SE&ceid=SE:sv`,
+            source: "Topptipset-tips",
+          },
+          {
+            url: "https://www.fotbollskanalen.se/rss/",
+            source: "Fotbollskanalen",
+          },
+        ]
+      : [
+          { url: "https://hockeysverige.se/feed/", source: "Hockeysverige" },
+          {
+            url: "https://www.shl.se/api/articles?take=20",
+            source: "SHL",
+          },
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(
+              `ishockey (${teamQuery || "SHL"})`
+            )}&hl=sv&gl=SE&ceid=SE:sv`,
+            source: "Google Nyheter",
+          },
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(
+              "Powerplay tips ishockey Svenska Spel"
+            )}&hl=sv&gl=SE&ceid=SE:sv`,
+            source: "Powerplay-tips",
+          },
+        ];
 
   const collected: FeedItem[] = [];
 
@@ -219,8 +240,13 @@ export async function fetchArticlesForMatches(
     // Keep general hockey/powerplay articles too, but prioritize match hits
     if (teams.length === 0) {
       const general =
-        /powerplay|shl|hockeyallsvenskan|nhl|tips|match/i.test(item.title) ||
-        /powerplay|shl|tips/i.test(item.snippet);
+        (product === "topptipset"
+          ? /topptipset|premier|champions|allsvenskan|tips|match/i.test(
+              item.title
+            ) || /topptipset|tips/i.test(item.snippet)
+          : /powerplay|shl|hockeyallsvenskan|nhl|tips|match/i.test(
+              item.title
+            ) || /powerplay|shl|tips/i.test(item.snippet));
       if (!general) continue;
     }
     articles.push({

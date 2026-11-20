@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 
+type ProductKind = "powerplay" | "topptipset";
+
 type ApiResponse = {
   generatedAt: string;
+  product?: ProductKind;
   draws: DrawBundle[];
   disclaimer: string;
   error?: string;
@@ -45,7 +48,13 @@ function Fatigue({
   );
 }
 
-function CouponView({ system }: { system: GeneratedSystem }) {
+function CouponView({
+  system,
+  product,
+}: {
+  system: GeneratedSystem;
+  product: ProductKind;
+}) {
   return (
     <div className="coupon rise">
       <div className="coupon-head">
@@ -86,13 +95,16 @@ function CouponView({ system }: { system: GeneratedSystem }) {
         }}
       >
         <span>{system.rows} rader × 1 kr</span>
-        <span>Powerplay-kupong</span>
+        <span>
+          {product === "topptipset" ? "Topptipset-kupong" : "Powerplay-kupong"}
+        </span>
       </div>
     </div>
   );
 }
 
 export default function App() {
+  const [product, setProduct] = useState<ProductKind>("topptipset");
   const [data, setData] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -104,12 +116,15 @@ export default function App() {
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch("/api/draws", { cache: "no-store" });
+        const res = await fetch(`/api/draws?product=${product}`, {
+          cache: "no-store",
+        });
         const json = (await res.json()) as ApiResponse;
         if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
         if (cancelled) return;
         setData(json);
         setSelectedDraw(json.draws[0]?.drawNumber ?? null);
+        setSelectedSystem(0);
         setError(null);
       } catch (e) {
         if (!cancelled) {
@@ -122,7 +137,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [product]);
 
   const draw = useMemo(
     () => data?.draws.find((d) => d.drawNumber === selectedDraw) ?? null,
@@ -141,19 +156,39 @@ export default function App() {
             Tryck<span>Rad</span>
           </h1>
           <p className="brand-tag">
-            Analyserar varje Powerplay-speltillfälle för sig – odds, svenska
-            folket, artiklar och om lagen har kört tufft schema och kanske inte
-            orkar.
+            Analyserar Powerplay och Topptipset per omgång – odds, svenska
+            folket, artiklar och om lagen har tungt schema.
           </p>
+          <div className="product-switch" role="tablist" aria-label="Produkt">
+            <button
+              type="button"
+              className={`product-btn ${product === "topptipset" ? "active" : ""}`}
+              onClick={() => setProduct("topptipset")}
+            >
+              Topptipset
+            </button>
+            <button
+              type="button"
+              className={`product-btn ${product === "powerplay" ? "active" : ""}`}
+              onClick={() => setProduct("powerplay")}
+            >
+              Powerplay
+            </button>
+          </div>
         </div>
         <div className="meta-chip">
           {data
-            ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} speltillfällen`
+            ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
             : "Hämtar Svenska Spel…"}
         </div>
       </header>
 
-      {loading && <div className="loading">Läser in öppna Powerplay-omgångar…</div>}
+      {loading && (
+        <div className="loading">
+          Läser in öppna{" "}
+          {product === "topptipset" ? "Topptipset" : "Powerplay"}-omgångar…
+        </div>
+      )}
       {error && <div className="status-banner error">{error}</div>}
 
       {data && (
@@ -202,8 +237,9 @@ export default function App() {
                 <section className="panel panel-systems">
                   <h2>System 48–720 kr</h2>
                   <p className="panel-lead">
-                    Kupongen speglar Powerplay-raden på Svenska Spel. Kostnad =
-                    antal kombinationer × 1 kr.
+                    Kupongen speglar{" "}
+                    {product === "topptipset" ? "Topptipset" : "Powerplay"}-raden
+                    på Svenska Spel. Kostnad = antal kombinationer × 1 kr.
                   </p>
                   <div className="system-switch">
                     {draw.systems.map((s, i) => (
@@ -218,7 +254,10 @@ export default function App() {
                     ))}
                   </div>
                   {draw.systems[selectedSystem] && (
-                    <CouponView system={draw.systems[selectedSystem]} />
+                    <CouponView
+                      system={draw.systems[selectedSystem]}
+                      product={product}
+                    />
                   )}
                 </section>
 

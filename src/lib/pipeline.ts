@@ -1,7 +1,10 @@
 import { analyzeDraw } from "./analyze";
 import { fetchArticlesForMatches } from "./articles";
 import { generateSystems } from "./systems";
-import { fetchPowerplayDraws } from "./svenskaspel";
+import {
+  fetchDrawsForProduct,
+  type ProductKind,
+} from "./svenskaspel";
 import type { DrawBundle } from "./types";
 
 function parseRowPrice(value: string): number {
@@ -9,8 +12,11 @@ function parseRowPrice(value: string): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-export async function buildAllDrawBundles(): Promise<DrawBundle[]> {
-  const draws = await fetchPowerplayDraws();
+export async function buildAllDrawBundles(
+  product: ProductKind = "powerplay"
+): Promise<DrawBundle[]> {
+  const draws = await fetchDrawsForProduct(product);
+  const defaultSport = product === "topptipset" ? "Fotboll" : "Ishockey";
 
   const bundles = await Promise.all(
     draws.map(async (draw) => {
@@ -19,7 +25,7 @@ export async function buildAllDrawBundles(): Promise<DrawBundle[]> {
         draws
       );
       const [articles, systems] = await Promise.all([
-        fetchArticlesForMatches(matches, draw.drawNumber),
+        fetchArticlesForMatches(matches, draw.drawNumber, product),
         Promise.resolve(generateSystems(matches)),
       ]);
 
@@ -31,7 +37,7 @@ export async function buildAllDrawBundles(): Promise<DrawBundle[]> {
         openTime: draw.regOpenTime,
         rowPrice: parseRowPrice(draw.rowPrice),
         netSale: draw.currentNetSale ?? null,
-        sport: draw.sport?.name ?? "Ishockey",
+        sport: draw.sport?.name ?? defaultSport,
         leagueSummary,
         matches,
         articles,
@@ -44,11 +50,4 @@ export async function buildAllDrawBundles(): Promise<DrawBundle[]> {
   return bundles.sort(
     (a, b) => new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime()
   );
-}
-
-export async function buildDrawBundle(
-  drawNumber: number
-): Promise<DrawBundle | null> {
-  const all = await buildAllDrawBundles();
-  return all.find((d) => d.drawNumber === drawNumber) ?? null;
 }
