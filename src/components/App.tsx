@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   OddsetCandidate,
   OddsetDayTip,
+  OddsetLesson,
   OddsetTrackedTip,
 } from "../lib/oddset";
 import {
@@ -14,7 +15,9 @@ import {
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 
 const ODDSET_LS_KEY = "mikaels-oddset-tips-24h";
+const ODDSET_LEARN_LS_KEY = "mikaels-oddset-lessons";
 const ODDSET_RETENTION_MS = 24 * 60 * 60 * 1000;
+const ODDSET_LEARN_RETENTION_MS = 21 * 24 * 60 * 60 * 1000;
 
 function loadOddsetLocalTips(): OddsetTrackedTip[] {
   if (typeof window === "undefined") return [];
@@ -42,6 +45,43 @@ function saveOddsetLocalTips(tips: OddsetTrackedTip[]): void {
       return Number.isFinite(at) && now - at <= ODDSET_RETENTION_MS;
     });
     window.localStorage.setItem(ODDSET_LS_KEY, JSON.stringify(pruned));
+  } catch {
+    // private mode / quota
+  }
+}
+
+function loadOddsetLocalLessons(): OddsetLesson[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(ODDSET_LEARN_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as OddsetLesson[];
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    return parsed.filter((l) => {
+      const at = Date.parse(l.settledAt || l.tippedAt);
+      return Number.isFinite(at) && now - at <= ODDSET_LEARN_RETENTION_MS;
+    });
+  } catch {
+    return [];
+  }
+}
+
+function saveOddsetLocalLessons(lessons: OddsetLesson[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const now = Date.now();
+    const byId = new Map<number, OddsetLesson>();
+    for (const l of lessons) {
+      if (!l?.eventId) continue;
+      const at = Date.parse(l.settledAt || l.tippedAt);
+      if (!Number.isFinite(at) || now - at > ODDSET_LEARN_RETENTION_MS) continue;
+      byId.set(l.eventId, l);
+    }
+    window.localStorage.setItem(
+      ODDSET_LEARN_LS_KEY,
+      JSON.stringify([...byId.values()].slice(0, 80))
+    );
   } catch {
     // private mode / quota
   }
@@ -531,6 +571,11 @@ function OddsetPickCard({
         />
       </div>
       <div className="reason">{c.reason}</div>
+      {"learningNotes" in c &&
+        Array.isArray(c.learningNotes) &&
+        c.learningNotes.length > 0 && (
+          <div className="learning-note">{c.learningNotes.join(" · ")}</div>
+        )}
       <a
         className="oddset-link"
         href={c.url}
@@ -553,21 +598,21 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
   const retention = tip.retentionHours ?? 24;
   const won = tracked.filter((t) => t.outcome === "won").length;
   const lost = tracked.filter((t) => t.outcome === "lost").length;
+  const learning = tip.learning;
+  const missLessons = (learning?.lessons || []).filter((l) => !l.hit).slice(0, 6);
+  const hitLessons = (learning?.lessons || []).filter((l) => l.hit).slice(0, 3);
 
   return (
     <div className="rise">
       <section className="panel">
         <h2>Öppna Oddset nu · {tip.playDateLabel}</h2>
         <p className="panel-lead">
-          {picksPerDay} tips på matcher som <strong>går att spela nu</strong>{" "}
-          (öppna, ej startade). Tipsen ligger kvar{" "}
-          <strong>{retention} timmar</strong> – grönt när Över 2,5 går in,
-          rött när det missar. Analyserat {tip.analyzedCount} ·{" "}
-          {tip.eligibleCount} klarade sannolikhetsfiltret
-          {tracked.length > 0
-            ? ` · 24h: ${won} rätt / ${lost} fel`
-            : ""}
-          .
+          {picksPerDay} <strong>unika</strong> tips på matcher som går att
+          spela nu. Tipsen ligger kvar <strong>{retention} timmar</strong> –
+          grönt/rött efter slutsignal. Efter varje tips lär sig analysen
+          automatiskt och justerar nästa urval. Analyserat {tip.analyzedCount}{" "}
+          · {tip.eligibleCount} klarade filtret
+          {tracked.length > 0 ? ` · 24h: ${won} rätt / ${lost} fel` : ""}.
         </p>
         <ul className="alert-list table-alerts">
           {tip.rules.map((r) => (
@@ -576,11 +621,56 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         </ul>
       </section>
 
+      {learning && learning.summary.length > 0 && (
+        <section className="panel">
+          <h2>Lärdomar till nästa tips</h2>
+          <p className="panel-lead">
+            Uppdateras automatiskt när tips avgörs
+            {learning.biasesNote ? ` · ${learning.biasesNote}` : ""}.
+          </p>
+          <ul className="alert-list learning-alerts">
+            {learning.summary.map((a) => (
+              <li key={a}>{a}</li>
+            ))}
+          </ul>
+          {missLessons.length > 0 && (
+            <div className="oddset-lesson-list">
+              <h3>Varför det gick fel</h3>
+              {missLessons.map((l) => (
+                <div key={`miss-${l.eventId}`} className="oddset-lesson miss">
+                  <strong>
+                    {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
+                  </strong>
+                  <div className="reason">{l.whyWrong}</div>
+                  <div className="oddset-next-aspect">→ {l.nextAspect}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {hitLessons.length > 0 && (
+            <div className="oddset-lesson-list">
+              <h3>Vad som fungerade</h3>
+              {hitLessons.map((l) => (
+                <div key={`hit-${l.eventId}`} className="oddset-lesson hit">
+                  <strong>
+                    {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
+                  </strong>
+                  <div className="reason">
+                    {l.whyRight || "Över 2,5 rätt"}
+                  </div>
+                  <div className="oddset-next-aspect">→ {l.nextAspect}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="panel panel-systems">
         <h2>Spela dessa · Över 2,5 ({picks.length}/{picksPerDay})</h2>
         {picks.length === 0 ? (
           <p className="panel-lead">
-            Ingen match nådde 55% modell-sannolikhet för Över 2,5 just nu.
+            Ingen match nådde modellens ribba för Över 2,5 just nu.
           </p>
         ) : (
           <div className="match-cards">
@@ -601,7 +691,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
           <h2>Tips senaste {retention} h ({history.length})</h2>
           <p className="panel-lead">
             Sparade tips markeras grönt (rätt) eller rött (fel) när matchen är
-            avgjord.
+            avgjord – och matar nästa analys.
           </p>
           <div className="match-cards">
             {history.map((c, i) => (
@@ -618,9 +708,9 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
 
       {tip.candidates.length > picks.length && (
         <section className="panel">
-          <h2>Fler godkända (≥55%)</h2>
+          <h2>Fler godkända</h2>
           <p className="panel-lead">
-            Extra kandidater utöver dagens {picksPerDay} tips.
+            Extra kandidater utöver dagens {picksPerDay} unika tips.
           </p>
           <div className="match-cards">
             {tip.candidates.slice(picks.length).map((c, i) => (
@@ -672,6 +762,7 @@ export default function App() {
 
         if (product === "oddset") {
           const localTips = loadOddsetLocalTips();
+          const localLessons = loadOddsetLocalLessons();
           const res = await fetch(
             `/api/oddset${fresh ? "?fresh=1" : ""}`,
             {
@@ -683,6 +774,7 @@ export default function App() {
                   ...t,
                   tippedAt: t.tippedAt,
                 })),
+                clientLessons: localLessons,
               }),
             }
           );
@@ -710,6 +802,10 @@ export default function App() {
             json.tracked
           );
           saveOddsetLocalTips(merged);
+          saveOddsetLocalLessons([
+            ...localLessons,
+            ...(json.learning?.lessons || []),
+          ]);
           setOddset({ ...json, tracked: merged });
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else {
@@ -753,6 +849,22 @@ export default function App() {
       cancelled = true;
     };
   }, [loadProduct]);
+
+  // Oddset: polla resultat + lärdomar automatiskt medan tips väntar på slutsignal
+  useEffect(() => {
+    if (product !== "oddset" || !oddset) return;
+    const needsSettle = (oddset.tracked || []).some((t) => {
+      if (t.outcome === "won" || t.outcome === "lost") return false;
+      const kick = Date.parse(t.kickoff);
+      return Number.isFinite(kick) && Date.now() >= kick + 5 * 60 * 1000;
+    });
+    if (!needsSettle) return;
+
+    const id = setInterval(() => {
+      void loadProduct({ fresh: true, silent: true, resetSelection: false });
+    }, 6 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [product, oddset, loadProduct]);
 
   const draw = useMemo(() => {
     if (!data || data.product !== product) return null;

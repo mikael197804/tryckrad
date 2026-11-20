@@ -3,6 +3,7 @@ import { runWithFreshFetch } from "../../../lib/fetch-mode";
 import {
   buildOddsetDayTip,
   type OddsetCandidate,
+  type OddsetLesson,
 } from "../../../lib/oddset";
 import { PRE_CLOSE_REFRESH_MS } from "../../../lib/refresh";
 
@@ -15,12 +16,19 @@ type ClientTip = OddsetCandidate & { tippedAt?: string };
 async function runOddset(opts: {
   fresh: boolean;
   clientTips?: ClientTip[];
+  clientLessons?: OddsetLesson[];
 }) {
   const tip = opts.fresh
     ? await runWithFreshFetch(() =>
-        buildOddsetDayTip({ clientTips: opts.clientTips })
+        buildOddsetDayTip({
+          clientTips: opts.clientTips,
+          clientLessons: opts.clientLessons,
+        })
       )
-    : await buildOddsetDayTip({ clientTips: opts.clientTips });
+    : await buildOddsetDayTip({
+        clientTips: opts.clientTips,
+        clientLessons: opts.clientLessons,
+      });
   return {
     ...tip,
     preCloseRefreshMinutes: PRE_CLOSE_REFRESH_MS / 60000,
@@ -48,13 +56,19 @@ export async function POST(req: NextRequest) {
       req.nextUrl.searchParams.get("fresh") === "1" ||
       req.nextUrl.searchParams.get("fresh") === "true";
     let clientTips: ClientTip[] | undefined;
+    let clientLessons: OddsetLesson[] | undefined;
     try {
-      const body = (await req.json()) as { clientTips?: ClientTip[] };
+      const body = (await req.json()) as {
+        clientTips?: ClientTip[];
+        clientLessons?: OddsetLesson[];
+      };
       if (Array.isArray(body?.clientTips)) clientTips = body.clientTips;
+      if (Array.isArray(body?.clientLessons)) clientLessons = body.clientLessons;
     } catch {
       clientTips = undefined;
+      clientLessons = undefined;
     }
-    const payload = await runOddset({ fresh, clientTips });
+    const payload = await runOddset({ fresh, clientTips, clientLessons });
     return NextResponse.json(payload);
   } catch (error) {
     const message =

@@ -414,6 +414,40 @@ select {
   line-height: 1.35;
 }
 
+.oddset-lesson-list {
+  margin-top: 1rem;
+}
+
+.oddset-lesson-list h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.oddset-lesson {
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 0.55rem;
+  border-left: 3px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.oddset-lesson.miss {
+  border-left-color: rgba(220, 68, 68, 0.75);
+}
+
+.oddset-lesson.hit {
+  border-left-color: rgba(46, 184, 92, 0.75);
+}
+
+.oddset-next-aspect {
+  margin-top: 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: #d7ecff;
+}
+
 .ctx-pill.value-over {
   border-color: rgba(180, 150, 255, 0.55);
   color: #c9b6ff;

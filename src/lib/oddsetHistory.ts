@@ -1,4 +1,5 @@
 import type { OddsetCandidate } from "./oddset";
+import { learnFromSettledTips } from "./oddsetLearning";
 import { lookupMatchScore } from "./oddsetSettle";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
@@ -201,6 +202,8 @@ export async function settleOddsetTips(): Promise<OddsetTrackedTip[]> {
 
   s.tips = updated;
   await persist();
+  // Lär av varje avgjort tips (rätt/fel) innan nästa urval
+  await learnFromSettledTips(updated);
   return listTrackedOddsetTips();
 }
 

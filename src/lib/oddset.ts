@@ -7,9 +7,17 @@ import {
   settleOddsetTips,
   type OddsetTrackedTip,
 } from "./oddsetHistory";
+import {
+  importOddsetLessons,
+  loadOddsetLearning,
+  oddsetLearningAdjust,
+  type OddsetLearningMemory,
+  type OddsetLesson,
+} from "./oddsetLearning";
 import { overMarketValue } from "./valueOdds";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
+export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
 export type OddsetMarket = "over_2_5";
 
 export type RivalryInfo = {
@@ -47,6 +55,8 @@ export type OddsetCandidate = {
   score: number;
   reason: string;
   url: string;
+  /** Lärdomar som påverkat just detta tips. */
+  learningNotes?: string[];
 };
 
 export type OddsetDayTip = {
@@ -64,6 +74,13 @@ export type OddsetDayTip = {
   picksPerDay: number;
   rules: string[];
   disclaimer: string;
+  /** Efteranalys + aspekter till nästa tips (uppdateras automatiskt). */
+  learning: {
+    updatedAt: string;
+    summary: string[];
+    biasesNote: string;
+    lessons: OddsetLesson[];
+  };
 };
 
 const PICKS_PER_DAY = 5;
@@ -663,12 +680,73 @@ async function fetchMarketsForEvents(
   return map;
 }
 
+function selectUniquePicks(
+  ranked: OddsetCandidate[],
+  limit: number
+): OddsetCandidate[] {
+  const picked: OddsetCandidate[] = [];
+  const usedTeams = new Set<string>();
+  const usedLeagues = new Map<string, number>();
+
+  const teamKey = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  for (const c of ranked) {
+    if (picked.length >= limit) break;
+    const h = teamKey(c.home);
+    const a = teamKey(c.away);
+    if (usedTeams.has(h) || usedTeams.has(a)) continue;
+    const leagueCount = usedLeagues.get(c.league) || 0;
+    // Max 2 tips per liga i samma batch → mer unika tips
+    if (c.league && leagueCount >= 2) continue;
+    picked.push(c);
+    usedTeams.add(h);
+    usedTeams.add(a);
+    if (c.league) usedLeagues.set(c.league, leagueCount + 1);
+  }
+
+  // Fyll på om filtret blev för hårt
+  if (picked.length < limit) {
+    for (const c of ranked) {
+      if (picked.length >= limit) break;
+      if (picked.some((p) => p.eventId === c.eventId)) continue;
+      picked.push(c);
+    }
+  }
+  return picked;
+}
+
 export async function buildOddsetDayTip(opts?: {
   clientTips?: Array<OddsetCandidate & { tippedAt?: string }>;
+  clientLessons?: OddsetLesson[];
 }): Promise<OddsetDayTip> {
   const now = new Date();
   const today = todaySwedishPlayDate(now);
   const tomorrow = nextSwedishPlayDate(now);
+
+  if (opts?.clientLessons?.length) {
+    await importOddsetLessons(opts.clientLessons);
+  }
+  // Importera + settla tidigare tips först så lärdomar finns innan nytt urval
+  if (opts?.clientTips?.length) {
+    await importOddsetTips(opts.clientTips);
+  }
+  await settleOddsetTips();
+  const learning = await loadOddsetLearning();
+  const recentTracked = await listTrackedOddsetTips();
+  const recentEventIds = new Set(recentTracked.map((t) => t.eventId));
+  const recentTeams = new Set<string>();
+  const recentLeagues = new Set<string>();
+  for (const t of recentTracked) {
+    recentTeams.add(t.home);
+    recentTeams.add(t.away);
+    if (t.league) recentLeagues.add(t.league);
+  }
   const list = (await kambiFetch(
     "/listView/football.json?lang=sv_SE&market=SE"
   )) as { events?: Array<{ event: KambiEvent; betOffers?: KambiBetOffer[] }> };
@@ -743,12 +821,32 @@ export async function buildOddsetDayTip(opts?: {
   const toAnalyze = dayEvents.slice(0, maxAnalyze);
   const markets = await fetchMarketsForEvents(toAnalyze);
 
+  const floorBump = learning.biases.raiseProbFloor;
+  const minProb = MIN_OVER25_PROB + floorBump;
+
   const candidates: OddsetCandidate[] = [];
   for (const ev of toAnalyze) {
     const m = markets.get(ev.id);
     if (!m) continue;
     const c = buildCandidate(ev, m);
-    if (c) candidates.push(c);
+    if (!c) continue;
+
+    // Dynamisk ribba från missar (övertygade fel → höj golvet)
+    if (c.over25ProbPct / 100 < minProb) continue;
+
+    const adj = oddsetLearningAdjust({
+      memory: learning,
+      candidate: c,
+      recentEventIds,
+      recentTeams,
+      recentLeagues,
+    });
+    c.score += adj.scoreDelta;
+    if (adj.notes.length) {
+      c.learningNotes = adj.notes;
+      c.reason = `${c.reason}. ${adj.notes[0]}`;
+    }
+    candidates.push(c);
   }
 
   const todayIso = today.isoDate;
@@ -765,13 +863,11 @@ export async function buildOddsetDayTip(opts?: {
       new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime()
     );
   });
-  const selected = candidates.slice(0, PICKS_PER_DAY);
+  const selected = selectUniquePicks(candidates, PICKS_PER_DAY);
 
-  if (opts?.clientTips?.length) {
-    await importOddsetTips(opts.clientTips);
-  }
   await rememberOddsetTips(selected);
   const tracked = await settleOddsetTips();
+  const learningAfter = await loadOddsetLearning();
 
   return {
     playDate: play.isoDate,
@@ -784,16 +880,22 @@ export async function buildOddsetDayTip(opts?: {
     analyzedCount: toAnalyze.length,
     eligibleCount: candidates.length,
     picksPerDay: PICKS_PER_DAY,
+    learning: {
+      updatedAt: learningAfter.updatedAt,
+      summary: learningAfter.lastSummary,
+      biasesNote: learningAfter.biases.note,
+      lessons: learningAfter.lessons.slice(0, 12),
+    },
     rules: [
-      `${PICKS_PER_DAY} öppna Oddset-matcher (Över 2,5) som går att spela nu.`,
+      `${PICKS_PER_DAY} unika öppna Oddset-matcher (Över 2,5) som går att spela nu.`,
       `Fönster: ${windowNote}.`,
       "Bara matcher som inte startat ännu (för nya tips).",
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: grönt = Över 2,5 rätt, rött = fel.",
-      "Bara matcher där modellen bedömer ≥ 55% chans till Över 2,5 mål visas.",
-      "Sannolikhet beräknas innan listning (Poisson + Odds Ö/U-stege).",
+      "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
+      `Sannolikhetsgolv nu: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
-      "Uppdateras automatiskt 12 min före avspark.",
+      "Uppdateras automatiskt 12 min före avspark och när resultat kommer in.",
     ],
     disclaimer:
       "Oddset-tips är analys, ingen garanti. Odds från Svenska Spel/Kambi kan ändras. 18+ spela ansvarsfullt.",
