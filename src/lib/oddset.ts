@@ -1,4 +1,18 @@
-export type OddsetMarket = "over_1_5" | "over_2_5";
+export type OddsetMarket = "over_2_5";
+
+export type RivalryInfo = {
+  level: "none" | "possible" | "likely";
+  note: string;
+};
+
+export type RedCardInfo = {
+  level: "low" | "medium" | "high";
+  probabilityPct: number | null;
+  oddsYes: number | null;
+  totalCardsLine: number | null;
+  totalCardsOverOdds: number | null;
+  note: string;
+};
 
 export type OddsetCandidate = {
   eventId: number;
@@ -8,10 +22,16 @@ export type OddsetCandidate = {
   country: string;
   kickoff: string;
   market: OddsetMarket;
-  line: 1.5 | 2.5;
+  line: 2.5;
   odds: number;
   odds15: number | null;
   odds25: number | null;
+  odds35: number | null;
+  /** Uppskattad sannolikhet (%) att matchen får minst 3 mål (Över 2,5). */
+  over25ProbPct: number;
+  expectedGoals: number | null;
+  rivalry: RivalryInfo;
+  redCard: RedCardInfo;
   score: number;
   reason: string;
   url: string;
@@ -33,6 +53,9 @@ const KAMBI_BASE =
   "https://eu.offering-api.kambicdn.com/offering/v2018/svenskaspel";
 
 const STOCKHOLM = "Europe/Stockholm";
+
+/** Visa bara matcher där modellen tror Över 2,5 är sannolikt. */
+const MIN_OVER25_PROB = 0.55;
 
 type KambiEvent = {
   id: number;
@@ -57,6 +80,16 @@ type KambiBetOffer = {
   outcomes?: KambiOutcome[];
 };
 
+type MatchMarkets = {
+  odds15: number | null;
+  odds25: number | null;
+  odds35: number | null;
+  under25: number | null;
+  redCardYes: number | null;
+  redCardNo: number | null;
+  totalCardsOver: { line: number; odds: number } | null;
+};
+
 function stockholmDateIso(date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: STOCKHOLM,
@@ -66,13 +99,12 @@ function stockholmDateIso(date = new Date()): string {
   }).format(date);
 }
 
-/** Kalenderdagen efter i svensk tid (speldag som inte krockar med innevarande dygn). */
+/** Kalenderdagen efter i svensk tid. */
 export function nextSwedishPlayDate(now = new Date()): {
   isoDate: string;
   label: string;
 } {
   const today = stockholmDateIso(now);
-  // Stega framåt tills svensk kalenderdag byts
   let probe = new Date(now.getTime());
   let isoDate = today;
   for (let i = 0; i < 50; i++) {
@@ -131,28 +163,156 @@ function parseLine(raw?: number): number | null {
   return Math.round((raw / 1000) * 10) / 10;
 }
 
-function extractTotals(betOffers: KambiBetOffer[]): {
-  odds15: number | null;
-  odds25: number | null;
-} {
+function factorial(n: number): number {
+  let r = 1;
+  for (let i = 2; i <= n; i++) r *= i;
+  return r;
+}
+
+function poissonCdfAtLeast(lambda: number, minGoals: number): number {
+  if (lambda <= 0) return 0;
+  let pLess = 0;
+  for (let k = 0; k < minGoals; k++) {
+    pLess += (Math.exp(-lambda) * Math.pow(lambda, k)) / factorial(k);
+  }
+  return Math.max(0, Math.min(1, 1 - pLess));
+}
+
+/** Uppskatta λ (förväntade mål) från Ö/U-stegen. */
+function estimateExpectedGoals(
+  odds15: number | null,
+  odds25: number | null,
+  odds35: number | null,
+  under25: number | null
+): number | null {
+  const points: Array<{ line: number; pOver: number }> = [];
+
+  const add = (line: number, over: number | null, under: number | null) => {
+    if (over == null || over <= 1) return;
+    let pOver = 1 / over;
+    if (under != null && under > 1) {
+      const invOver = 1 / over;
+      const invUnder = 1 / under;
+      const sum = invOver + invUnder;
+      if (sum > 0) pOver = invOver / sum;
+    }
+    points.push({ line, pOver });
+  };
+
+  add(1.5, odds15, null);
+  add(2.5, odds25, under25);
+  add(3.5, odds35, null);
+
+  if (!points.length) return null;
+
+  // Sök λ som bäst matchar P(X > line) ≈ poisson
+  let bestL = 2.5;
+  let bestErr = Infinity;
+  for (let l = 1.2; l <= 4.2; l += 0.05) {
+    let err = 0;
+    for (const p of points) {
+      const model = poissonCdfAtLeast(l, Math.floor(p.line) + 1);
+      err += (model - p.pOver) ** 2;
+    }
+    if (err < bestErr) {
+      bestErr = err;
+      bestL = l;
+    }
+  }
+  return Math.round(bestL * 100) / 100;
+}
+
+function estimateOver25Probability(
+  lambda: number | null,
+  odds25: number | null,
+  under25: number | null
+): number | null {
+  const fromPoisson =
+    lambda != null ? poissonCdfAtLeast(lambda, 3) : null;
+
+  let fromOdds: number | null = null;
+  if (odds25 != null && odds25 > 1) {
+    if (under25 != null && under25 > 1) {
+      const a = 1 / odds25;
+      const b = 1 / under25;
+      fromOdds = a / (a + b);
+    } else {
+      // grov de-vig ~4%
+      fromOdds = Math.min(0.92, (1 / odds25) * 1.04);
+    }
+  }
+
+  if (fromPoisson == null && fromOdds == null) return null;
+  if (fromPoisson == null) return fromOdds;
+  if (fromOdds == null) return fromPoisson;
+  // Vikta Poisson tyngre när vi har bra stege
+  return fromPoisson * 0.65 + fromOdds * 0.35;
+}
+
+function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
   let odds15: number | null = null;
   let odds25: number | null = null;
+  let odds35: number | null = null;
+  let under25: number | null = null;
+  let redCardYes: number | null = null;
+  let redCardNo: number | null = null;
+  let totalCardsOver: { line: number; odds: number } | null = null;
 
   for (const bo of betOffers) {
     const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
-    if (label !== "Total Goals" && label !== "Antal mål") continue;
-    // Skip half-time / team totals which use different labels
-    for (const o of bo.outcomes || []) {
-      const side = (o.label || "").toLowerCase();
-      if (side !== "över" && side !== "over") continue;
-      const line = parseLine(o.line);
-      const odds = parseOdds(o.odds);
-      if (odds == null || line == null) continue;
-      if (line === 1.5) odds15 = odds;
-      if (line === 2.5) odds25 = odds;
+
+    if (label === "Total Goals" || label === "Antal mål") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const line = parseLine(o.line);
+        const odds = parseOdds(o.odds);
+        if (odds == null || line == null) continue;
+        if (side === "över" || side === "over") {
+          if (line === 1.5) odds15 = odds;
+          if (line === 2.5) odds25 = odds;
+          if (line === 3.5) odds35 = odds;
+        }
+        if ((side === "under") && line === 2.5) under25 = odds;
+      }
+    }
+
+    if (label === "Red Card given" || label === "Rött kort i matchen") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const odds = parseOdds(o.odds);
+        if (odds == null) continue;
+        if (side === "ja" || side === "yes") redCardYes = odds;
+        if (side === "nej" || side === "no") redCardNo = odds;
+      }
+    }
+
+    if (label === "Total Cards" || label === "Antal kort") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const line = parseLine(o.line);
+        const odds = parseOdds(o.odds);
+        if (odds == null || line == null) continue;
+        if (side !== "över" && side !== "over") continue;
+        // Prefer main line around 3.5–4.5
+        if (
+          !totalCardsOver ||
+          Math.abs(line - 4) < Math.abs(totalCardsOver.line - 4)
+        ) {
+          totalCardsOver = { line, odds };
+        }
+      }
     }
   }
-  return { odds15, odds25 };
+
+  return {
+    odds15,
+    odds25,
+    odds35,
+    under25,
+    redCardYes,
+    redCardNo,
+    totalCardsOver,
+  };
 }
 
 function eventUrl(eventId: number): string {
@@ -163,69 +323,219 @@ function countryOf(event: KambiEvent): string {
   return event.path?.[1]?.name || event.path?.[1]?.englishName || "";
 }
 
-/**
- * Poängsätt kandidat:
- * - Primärt Över 1,5 om odds >= 1,8 (ju närmare 1,80 desto "säkrare" inom regelverket)
- * - Annars Över 2,5 om odds > 2,0
- * - Bonus om båda linjerna tyder på målrikt matchbild
- */
+function isSeniorMensMatch(event: KambiEvent): boolean {
+  const blob = [
+    event.name,
+    event.homeName,
+    event.awayName,
+    event.group,
+    ...(event.path || []).map((p) => p.name || p.englishName || ""),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (
+    /\(d\)|\(w\)|women|woman|dames|damer|dam |female|u18|u19|u20|u21|u23|youth|ungdom|reserves| reserve/.test(
+      blob
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function normalizeName(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Kända derbyn / rivalpar (normaliserade namnfragment). */
+const RIVALRY_PAIRS: Array<[string, string, string]> = [
+  ["sevilla", "betis", "Sevilla-derby"],
+  ["real madrid", "barcelona", "El Clásico"],
+  ["atletico", "real madrid", "Madrid-derby"],
+  ["inter", "milan", "Milano-derby"],
+  ["juventus", "torino", "Derby della Mole"],
+  ["roma", "lazio", "Rom-derby"],
+  ["liverpool", "everton", "Merseyside-derby"],
+  ["manchester united", "manchester city", "Manchester-derby"],
+  ["arsenal", "tottenham", "North London-derby"],
+  ["celtic", "rangers", "Old Firm"],
+  ["ajax", "feyenoord", "De Klassieker"],
+  ["benfica", "porto", "O Clássico"],
+  ["galatasaray", "fenerbahce", "Istanbul-derby"],
+  ["boca", "river", "Superclásico"],
+  ["flamengo", "fluminense", "Fla-Flu"],
+  ["aik", "djurgarden", "Stockholmsderby"],
+  ["aik", "hammarby", "Stockholmsderby"],
+  ["hammarby", "djurgarden", "Stockholmsderby"],
+  ["ifk goteborg", "malmo", "Klassikermöte"],
+  ["porto", "sporting", "Lisboa-rivalitet"],
+  ["olympiacos", "panathinaikos", "Athensderby"],
+  ["celtic", "hearts", "Skotsk rivalitet"],
+];
+
+function analyzeRivalry(home: string, away: string, league: string): RivalryInfo {
+  const h = normalizeName(home);
+  const a = normalizeName(away);
+
+  for (const [x, y, label] of RIVALRY_PAIRS) {
+    const hit =
+      (h.includes(x) && a.includes(y)) || (h.includes(y) && a.includes(x));
+    if (hit) {
+      return {
+        level: "likely",
+        note: `${label} – hög rivalitet, ofta hetsigare matchbild`,
+      };
+    }
+  }
+
+  // Samma stadsnamn i båda lagnamnen
+  const cityHints = [
+    "madrid",
+    "milan",
+    "manchester",
+    "london",
+    "glasgow",
+    "lisboa",
+    "lisbon",
+    "stockholm",
+    "goteborg",
+    "malmo",
+    "roma",
+    "rome",
+    "istanbul",
+    "athens",
+    "athen",
+  ];
+  for (const city of cityHints) {
+    if (h.includes(city) && a.includes(city)) {
+      return {
+        level: "possible",
+        note: `Möjligt lokalderby (${city})`,
+      };
+    }
+  }
+
+  if (/derby|klassiker|clásico|clasico/i.test(league)) {
+    return { level: "possible", note: "Ligans derby-/klassikerprofil" };
+  }
+
+  return { level: "none", note: "Ingen tydlig derby-/bråksignal" };
+}
+
+function analyzeRedCard(
+  markets: MatchMarkets,
+  rivalry: RivalryInfo
+): RedCardInfo {
+  const notes: string[] = [];
+  let level: RedCardInfo["level"] = "low";
+  let probabilityPct: number | null = null;
+
+  if (markets.redCardYes != null && markets.redCardYes > 1) {
+    if (markets.redCardNo != null && markets.redCardNo > 1) {
+      const y = 1 / markets.redCardYes;
+      const n = 1 / markets.redCardNo;
+      probabilityPct = Math.round((100 * y) / (y + n));
+    } else {
+      probabilityPct = Math.round(Math.min(90, (100 / markets.redCardYes) * 1.05));
+    }
+    notes.push(
+      `Marknad rött kort Ja @ ${markets.redCardYes.toFixed(2).replace(".", ",")} (~${probabilityPct}%)`
+    );
+  }
+
+  if (markets.totalCardsOver) {
+    notes.push(
+      `Kort Över ${markets.totalCardsOver.line.toFixed(1).replace(".", ",")} @ ${markets.totalCardsOver.odds.toFixed(2).replace(".", ",")}`
+    );
+    // Kort över 4.5 till lågt odds ≈ fysiskt
+    if (
+      markets.totalCardsOver.line >= 4 &&
+      markets.totalCardsOver.odds <= 1.85
+    ) {
+      level = "medium";
+      notes.push("hög kortlinje tyder på fysisk match");
+    }
+  }
+
+  if (probabilityPct != null) {
+    if (probabilityPct >= 32) level = "high";
+    else if (probabilityPct >= 22) level = level === "low" ? "medium" : level;
+  }
+
+  if (rivalry.level === "likely") {
+    if (level === "low") level = "medium";
+    else if (level === "medium") level = "high";
+    notes.push("rivalitet höjer risken för heta situationer/rött kort");
+  } else if (rivalry.level === "possible" && level === "low") {
+    level = "medium";
+    notes.push("möjlig lokal rivalitet kan ge kort");
+  }
+
+  return {
+    level,
+    probabilityPct,
+    oddsYes: markets.redCardYes,
+    totalCardsLine: markets.totalCardsOver?.line ?? null,
+    totalCardsOverOdds: markets.totalCardsOver?.odds ?? null,
+    note: notes.join(" · ") || "ingen tydlig rött-kort-signal",
+  };
+}
+
 function buildCandidate(
   event: KambiEvent,
-  odds15: number | null,
-  odds25: number | null
+  markets: MatchMarkets
 ): OddsetCandidate | null {
   const home = event.homeName || event.name.split(" - ")[0] || event.name;
   const away =
     event.awayName || event.name.split(" - ").slice(1).join(" - ") || "";
-
-  let market: OddsetMarket | null = null;
-  let line: 1.5 | 2.5 | null = null;
-  let odds: number | null = null;
-  const reasons: string[] = [];
-
-  if (odds15 != null && odds15 >= 1.8) {
-    market = "over_1_5";
-    line = 1.5;
-    odds = odds15;
-    reasons.push(`Över 1,5 till ${odds15.toFixed(2).replace(".", ",")} (≥ 1,80)`);
-  } else if (odds25 != null && odds25 > 2.0) {
-    market = "over_2_5";
-    line = 2.5;
-    odds = odds25;
-    if (odds15 != null && odds15 < 1.8) {
-      reasons.push(
-        `Över 1,5 för lågt odds (${odds15.toFixed(2).replace(".", ",")}) – tar Över 2,5`
-      );
-    } else {
-      reasons.push("Över 1,5 saknas – tar Över 2,5");
-    }
-    reasons.push(`Över 2,5 till ${odds25.toFixed(2).replace(".", ",")} (> 2,00)`);
-  } else {
-    return null;
-  }
-
-  // Score: prefer over 1.5; within market prefer safer (lower) odds but still meeting floor
-  let score = 0;
-  if (market === "over_1_5" && odds != null) {
-    // Highest score near 1.80; fade if too high (less "garanterad")
-    const dist = Math.abs(odds - 1.8);
-    score = 100 - dist * 40;
-    if (odds25 != null) {
-      // Strong scoring profile if 2.5 is not crazy long
-      if (odds25 <= 2.35) score += 12;
-      else if (odds25 <= 2.7) score += 6;
-    }
-    reasons.push("prioriterad spelformel Över 1,5");
-  } else if (market === "over_2_5" && odds != null) {
-    const dist = Math.abs(odds - 2.05);
-    score = 70 - dist * 25;
-    if (odds15 != null && odds15 < 1.55) score += 8; // very likely 2+ goals
-    reasons.push("reservformel Över 2,5");
-  }
-
-  // Prefer top European leagues (country-aware – undvik t.ex. Ukrainas/Etiopiens "Premier League")
   const league = event.group || "";
   const country = countryOf(event);
+
+  if (markets.odds25 == null || markets.odds25 <= 1) return null;
+
+  const lambda = estimateExpectedGoals(
+    markets.odds15,
+    markets.odds25,
+    markets.odds35,
+    markets.under25
+  );
+  const p25 = estimateOver25Probability(
+    lambda,
+    markets.odds25,
+    markets.under25
+  );
+  if (p25 == null || p25 < MIN_OVER25_PROB) return null;
+
+  const rivalry = analyzeRivalry(home, away, league);
+  const redCard = analyzeRedCard(markets, rivalry);
+
+  const over25ProbPct = Math.round(p25 * 1000) / 10;
+  const reasons: string[] = [];
+  reasons.push(
+    `Modell: ${over25ProbPct.toFixed(1).replace(".", ",")}% chans till minst 3 mål`
+  );
+  if (lambda != null) {
+    reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
+  }
+  reasons.push(
+    `Över 2,5 @ ${markets.odds25.toFixed(2).replace(".", ",")}`
+  );
+  if (markets.odds15 != null) {
+    reasons.push(`Ö1,5 @ ${markets.odds15.toFixed(2).replace(".", ",")}`);
+  }
+  if (rivalry.level !== "none") reasons.push(rivalry.note);
+  if (redCard.level !== "low") reasons.push(`rött kort: ${redCard.note}`);
+
+  // Score: sannolikhet först, sedan liga, rivalitet/kort som kontext
+  let score = over25ProbPct * 1.2;
+  if (lambda != null) score += Math.min(12, (lambda - 2.4) * 10);
+
   const topCountry =
     /england|spanien|spain|italien|italy|tyskland|germany|frankrike|france|nederländerna|netherlands|portugal|sverige|sweden|skottland|scotland/i.test(
       country
@@ -236,12 +546,15 @@ function buildCandidate(
       league
     )
   ) {
-    score += 8;
-    reasons.push(`stark liga: ${league} (${country})`);
-  } else if (/champions league|europa league|conference league/i.test(league)) {
     score += 6;
-    reasons.push(`stark liga: ${league}`);
   }
+
+  // Liten bonus för derby (underhållning/hets) men inte krav
+  if (rivalry.level === "likely") score += 3;
+  if (redCard.level === "high") score += 2;
+
+  // Preferera kortare odds bland hög-sannolikhet (säkrare träff)
+  score += Math.max(0, 12 - Math.abs(markets.odds25 - 1.7) * 4);
 
   return {
     eventId: event.id,
@@ -250,45 +563,46 @@ function buildCandidate(
     league,
     country,
     kickoff: event.start,
-    market: market!,
-    line: line!,
-    odds: odds!,
-    odds15,
-    odds25,
+    market: "over_2_5",
+    line: 2.5,
+    odds: markets.odds25,
+    odds15: markets.odds15,
+    odds25: markets.odds25,
+    odds35: markets.odds35,
+    over25ProbPct,
+    expectedGoals: lambda,
+    rivalry,
+    redCard,
     score,
     reason: reasons.join(". "),
     url: eventUrl(event.id),
   };
 }
 
-async function fetchTotalsForEvents(
-  events: KambiEvent[],
-  seeded?: Map<number, KambiBetOffer[]>
-): Promise<Map<number, { odds15: number | null; odds25: number | null }>> {
-  const map = new Map<number, { odds15: number | null; odds25: number | null }>();
-
-  // Seed from listView when Total Goals already present
-  for (const ev of events) {
-    const seededOffers = seeded?.get(ev.id) || [];
-    const seededTotals = extractTotals(seededOffers);
-    if (seededTotals.odds15 != null || seededTotals.odds25 != null) {
-      map.set(ev.id, seededTotals);
-    }
-  }
-
-  const missing = events.filter((e) => !map.has(e.id));
+async function fetchMarketsForEvents(
+  events: KambiEvent[]
+): Promise<Map<number, MatchMarkets>> {
+  const map = new Map<number, MatchMarkets>();
   const concurrency = 6;
-  for (let i = 0; i < missing.length; i += concurrency) {
-    const slice = missing.slice(i, i + concurrency);
+  for (let i = 0; i < events.length; i += concurrency) {
+    const slice = events.slice(i, i + concurrency);
     await Promise.all(
       slice.map(async (ev) => {
         try {
           const data = (await kambiFetch(
             `/betoffer/event/${ev.id}.json?lang=sv_SE&market=SE`
           )) as { betOffers?: KambiBetOffer[] };
-          map.set(ev.id, extractTotals(data.betOffers || []));
+          map.set(ev.id, extractMarkets(data.betOffers || []));
         } catch {
-          map.set(ev.id, { odds15: null, odds25: null });
+          map.set(ev.id, {
+            odds15: null,
+            odds25: null,
+            odds35: null,
+            under25: null,
+            redCardYes: null,
+            redCardNo: null,
+            totalCardsOver: null,
+          });
         }
       })
     );
@@ -303,17 +617,17 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
   )) as { events?: Array<{ event: KambiEvent; betOffers?: KambiBetOffer[] }> };
 
   const dayEvents: KambiEvent[] = [];
-  const seeded = new Map<number, KambiBetOffer[]>();
   for (const wrap of list.events || []) {
     const ev = wrap.event;
     if (!ev?.start || !ev.id) continue;
-    if (stockholmDateIso(new Date(ev.start)) === play.isoDate) {
+    if (
+      stockholmDateIso(new Date(ev.start)) === play.isoDate &&
+      isSeniorMensMatch(ev)
+    ) {
       dayEvents.push(ev);
-      if (wrap.betOffers?.length) seeded.set(ev.id, wrap.betOffers);
     }
   }
 
-  // Prioritera större ligor så capen inte missar bra matcher
   const leagueRank = (ev: KambiEvent) => {
     const league = ev.group || "";
     const country = countryOf(ev);
@@ -343,19 +657,19 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
       new Date(a.start).getTime() - new Date(b.start).getTime()
   );
 
-  // Analysera morgondagens matcher (cap för Vercel-timeout på mycket stora dagar)
-  const maxAnalyze = 140;
+  const maxAnalyze = 100;
   const toAnalyze = dayEvents.slice(0, maxAnalyze);
-  const totals = await fetchTotalsForEvents(toAnalyze, seeded);
+  const markets = await fetchMarketsForEvents(toAnalyze);
 
   const candidates: OddsetCandidate[] = [];
   for (const ev of toAnalyze) {
-    const t = totals.get(ev.id) || { odds15: null, odds25: null };
-    const c = buildCandidate(ev, t.odds15, t.odds25);
+    const m = markets.get(ev.id);
+    if (!m) continue;
+    const c = buildCandidate(ev, m);
     if (c) candidates.push(c);
   }
 
-  candidates.sort((a, b) => b.score - a.score || a.odds - b.odds);
+  candidates.sort((a, b) => b.score - a.score || b.over25ProbPct - a.over25ProbPct);
   const selected = candidates[0] ?? null;
 
   return {
@@ -363,15 +677,15 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
     playDateLabel: play.label,
     generatedAt: new Date().toISOString(),
     selected,
-    candidates: candidates.slice(0, 12),
+    candidates: candidates.slice(0, 10),
     analyzedCount: toAnalyze.length,
     eligibleCount: candidates.length,
     rules: [
       "En match per 24 timmar (svenskt dygn).",
-      "Speldatum = dagen efter (kickoff under morgondagens svenska kalenderdag).",
-      "Primär formel: Över 1,5 mål – odds minst 1,80.",
-      "Alternativ: Över 2,5 mål – odds över 2,00.",
-      "Bland godkända matcher väljs den med starkast analysscore (säkrast målbild inom reglerna).",
+      "Speldatum = dagen efter (morgondagens svenska kalenderdag).",
+      "Bara matcher där modellen bedömer ≥ 55% chans till Över 2,5 mål visas.",
+      "Sannolikhet beräknas innan listning (Poisson + Odds Ö/U-stege).",
+      "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
     ],
     disclaimer:
       "Oddset-tips är analys, ingen garanti. Odds från Svenska Spel/Kambi kan ändras. 18+ spela ansvarsfullt.",
