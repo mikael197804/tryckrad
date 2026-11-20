@@ -442,11 +442,11 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
   return (
     <div className="rise">
       <section className="panel">
-        <h2>Dagens Oddset · {tip.playDateLabel}</h2>
+        <h2>Öppna Oddset nu · {tip.playDateLabel}</h2>
         <p className="panel-lead">
-          {picksPerDay} matcher per svenskt dygn. Tipset gäller{" "}
-          <strong>dagen efter</strong>. Matcher visas bara om modellen bedömer
-          minst 55% chans till Över 2,5 mål. Analyserat {tip.analyzedCount} ·{" "}
+          {picksPerDay} tips på matcher som <strong>går att spela nu</strong>{" "}
+          (öppna, ej startade). Visa bara om modellen bedömer minst 55% chans
+          till Över 2,5 mål. Analyserat {tip.analyzedCount} ·{" "}
           {tip.eligibleCount} klarade sannolikhetsfiltret.
         </p>
         <ul className="alert-list table-alerts">
@@ -699,7 +699,7 @@ export default function App() {
           <p className="brand-tag">
             Alla spel uppdateras 12 min före spelstopp. Powerplay/Topptipset lär
             av förra omgångens missar automatiskt. Stryk/Mål: lagnyheter ca 15
-            min före avspark. Oddset: fem Över 2,5 dagen efter.
+            min före avspark. Oddset: fem öppna Över 2,5-tips att spela nu.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
             {DRAW_PRODUCTS.map((p) => (
@@ -743,7 +743,7 @@ export default function App() {
       {loading && (
         <div className="loading">
           {product === "oddset"
-            ? "Analyserar morgondagens Oddset-matcher…"
+            ? "Analyserar öppna Oddset-matcher…"
             : `Läser in öppna ${productLabel(product)}-omgångar…`}
         </div>
       )}

@@ -106,7 +106,23 @@ function stockholmDateIso(date = new Date()): string {
   }).format(date);
 }
 
-/** Kalenderdagen efter i svensk tid. */
+/** Dagens svenska kalenderdag (öppna Oddset-spel nu). */
+export function todaySwedishPlayDate(now = new Date()): {
+  isoDate: string;
+  label: string;
+} {
+  const isoDate = stockholmDateIso(now);
+  const label = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: STOCKHOLM,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(now);
+  return { isoDate, label };
+}
+
+/** Morgondagens svenska kalenderdag (fallback om få öppna matcher idag). */
 export function nextSwedishPlayDate(now = new Date()): {
   isoDate: string;
   label: string;
@@ -345,7 +361,7 @@ function isSeniorMensMatch(event: KambiEvent): boolean {
     .join(" ")
     .toLowerCase();
   if (
-    /\(d\)|\(w\)|women|woman|dames|damer|dam |female|u18|u19|u20|u21|u23|youth|ungdom|reserves| reserve/.test(
+    /\(d\)|\(w\)|women|woman|dames|damer|dam |female|u18|u19|u20|u21|u23|youth|ungdom|reserves| reserve|junior|academy|amateur|\(mani\)|\(sena\)/.test(
       blob
     )
   ) {
@@ -508,6 +524,8 @@ function buildCandidate(
   const country = countryOf(event);
 
   if (markets.odds25 == null || markets.odds25 <= 1) return null;
+  // För öppna spel: undvik nästan avgjorda/live-lika korta Över-odds
+  if (markets.odds25 < 1.28) return null;
 
   const lambda = estimateExpectedGoals(
     markets.odds15,
@@ -634,22 +652,48 @@ async function fetchMarketsForEvents(
 }
 
 export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
-  const play = nextSwedishPlayDate();
+  const now = new Date();
+  const today = todaySwedishPlayDate(now);
+  const tomorrow = nextSwedishPlayDate(now);
   const list = (await kambiFetch(
     "/listView/football.json?lang=sv_SE&market=SE"
   )) as { events?: Array<{ event: KambiEvent; betOffers?: KambiBetOffer[] }> };
 
-  const dayEvents: KambiEvent[] = [];
+  // Öppna spel nu: avspark minst ~12 min framåt, i första hand idag (svensk tid)
+  const minStart = now.getTime() + 12 * 60 * 1000;
+  const openEvents: KambiEvent[] = [];
   for (const wrap of list.events || []) {
     const ev = wrap.event;
     if (!ev?.start || !ev.id) continue;
-    if (
-      stockholmDateIso(new Date(ev.start)) === play.isoDate &&
-      isSeniorMensMatch(ev)
-    ) {
-      dayEvents.push(ev);
-    }
+    const start = new Date(ev.start);
+    if (start.getTime() < minStart) continue;
+    if (!isSeniorMensMatch(ev)) continue;
+    openEvents.push(ev);
   }
+
+  const todayEvents = openEvents.filter(
+    (ev) => stockholmDateIso(new Date(ev.start)) === today.isoDate
+  );
+  const tomorrowEvents = openEvents.filter(
+    (ev) => stockholmDateIso(new Date(ev.start)) === tomorrow.isoDate
+  );
+
+  // Prioritera dagens öppna matcher; ta alltid med imorgon som backup-pool
+  let dayEvents = [...todayEvents, ...tomorrowEvents];
+  let play = today;
+  let windowNote = "öppna matcher idag (svensk tid)";
+  if (!todayEvents.length && tomorrowEvents.length) {
+    play = tomorrow;
+    windowNote = "öppna matcher imorgon (inga kvar idag)";
+  } else if (todayEvents.length && tomorrowEvents.length) {
+    windowNote = "öppna matcher idag + imorgon";
+  } else if (!dayEvents.length) {
+    windowNote = "inga öppna fotbollsmatcher just nu";
+  }
+
+  // Rangordna: dagens matcher före imorgon vid lika liga-kvalitet
+  const isToday = (ev: KambiEvent) =>
+    stockholmDateIso(new Date(ev.start)) === today.isoDate;
 
   const leagueRank = (ev: KambiEvent) => {
     const league = ev.group || "";
@@ -676,6 +720,7 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
   };
   dayEvents.sort(
     (a, b) =>
+      Number(isToday(b)) - Number(isToday(a)) ||
       leagueRank(a) - leagueRank(b) ||
       new Date(a.start).getTime() - new Date(b.start).getTime()
   );
@@ -692,7 +737,20 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
     if (c) candidates.push(c);
   }
 
-  candidates.sort((a, b) => b.score - a.score || b.over25ProbPct - a.over25ProbPct);
+  const todayIso = today.isoDate;
+  candidates.sort((a, b) => {
+    const aToday = stockholmDateIso(new Date(a.kickoff)) === todayIso ? 1 : 0;
+    const bToday = stockholmDateIso(new Date(b.kickoff)) === todayIso ? 1 : 0;
+    // Nära i score: prioritera matcher som går idag (öppna att spela snart)
+    if (Math.abs(a.score - b.score) < 8 && aToday !== bToday) {
+      return bToday - aToday;
+    }
+    return (
+      b.score - a.score ||
+      b.over25ProbPct - a.over25ProbPct ||
+      new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime()
+    );
+  });
   const selected = candidates.slice(0, PICKS_PER_DAY);
 
   return {
@@ -705,11 +763,13 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
     eligibleCount: candidates.length,
     picksPerDay: PICKS_PER_DAY,
     rules: [
-      `${PICKS_PER_DAY} matcher per svenskt dygn.`,
-      "Speldatum = dagen efter (morgondagens svenska kalenderdag).",
+      `${PICKS_PER_DAY} öppna Oddset-matcher (Över 2,5) som går att spela nu.`,
+      `Fönster: ${windowNote}.`,
+      "Bara matcher som inte startat ännu.",
       "Bara matcher där modellen bedömer ≥ 55% chans till Över 2,5 mål visas.",
       "Sannolikhet beräknas innan listning (Poisson + Odds Ö/U-stege).",
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
+      "Uppdateras automatiskt 12 min före avspark.",
     ],
     disclaimer:
       "Oddset-tips är analys, ingen garanti. Odds från Svenska Spel/Kambi kan ändras. 18+ spela ansvarsfullt.",
