@@ -187,7 +187,7 @@ export default function App() {
       <header className="brand-bar">
         <div>
           <h1 className="brand-mark">
-            Tryck<span>Rad</span>
+            Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
             Analyserar Powerplay och Topptipset per omgång – odds, svenska

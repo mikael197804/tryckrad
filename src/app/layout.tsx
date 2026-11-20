@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TryckRad – Powerplay-analys",
+  title: "Mikael’s tips – Powerplay & Topptipset",
   description:
-    "Analyserar Svenska Spels Powerplay per speltillfälle med matchbelastning, artiklar och systemrader 48–720 kr.",
+    "Mikael’s tips analyserar Svenska Spels Powerplay och Topptipset per speltillfälle med tabelläge, vilomotiv, artiklar och systemrader 48–720 kr.",
   appleWebApp: {
     capable: true,
-    title: "TryckRad",
+    title: "Mikael’s tips",
     statusBarStyle: "black-translucent",
   },
   formatDetection: {

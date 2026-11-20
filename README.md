@@ -1,6 +1,6 @@
-# TryckRad
+# Mikael’s tips
 
-Analyserar Svenska Spels Powerplay **per speltillfälle** – odds, matchbelastning, artiklar och system 48–720 kr.
+Analyserar Svenska Spels Powerplay och Topptipset **per speltillfälle** – odds, tabelläge, vilomotiv, artiklar och system 48–720 kr.
 
 ## Live
 
