@@ -288,7 +288,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
 }
 
 export default function App() {
-  const [product, setProduct] = useState<ProductKind>("oddset");
+  const [product, setProduct] = useState<ProductKind>("topptipset");
   const [data, setData] = useState<ApiResponse | null>(null);
   const [oddset, setOddset] = useState<OddsetDayTip | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -351,17 +351,10 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Powerplay, Topptipset och Oddset – fem Över 2,5-tips per svenskt
-            dygn plus omgångstips med tabell, vila och schema.
+            Topptipset och Powerplay analyserar öppna omgångar nu. Oddset ger
+            fem Över 2,5-tips för dagen efter.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
-            <button
-              type="button"
-              className={`product-btn ${product === "oddset" ? "active" : ""}`}
-              onClick={() => setProduct("oddset")}
-            >
-              Oddset
-            </button>
             <button
               type="button"
               className={`product-btn ${product === "topptipset" ? "active" : ""}`}
@@ -375,6 +368,13 @@ export default function App() {
               onClick={() => setProduct("powerplay")}
             >
               Powerplay
+            </button>
+            <button
+              type="button"
+              className={`product-btn ${product === "oddset" ? "active" : ""}`}
+              onClick={() => setProduct("oddset")}
+            >
+              Oddset
             </button>
           </div>
         </div>
@@ -427,7 +427,8 @@ export default function App() {
               <section className="panel">
                 <h2>{draw.closeDescription}</h2>
                 <p className="panel-lead">
-                  Speltillfälle {draw.drawNumber} · {draw.matches.length} matcher ·{" "}
+                  Öppen omgång nu (inte nästa dag) · speltillfälle{" "}
+                  {draw.drawNumber} · {draw.matches.length} matcher ·{" "}
                   {draw.leagueSummary} · stänger {fmtTime(draw.closeTime)}
                   {draw.netSale ? ` · omsättning ${draw.netSale} kr` : ""}
                 </p>
