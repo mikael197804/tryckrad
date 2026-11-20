@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { OddsetCandidate, OddsetDayTip } from "../lib/oddset";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 
-type ProductKind = "powerplay" | "topptipset";
+type ProductKind = "powerplay" | "topptipset" | "oddset";
 
 type ApiResponse = {
   generatedAt: string;
@@ -87,7 +88,7 @@ function CouponView({
   product,
 }: {
   system: GeneratedSystem;
-  product: ProductKind;
+  product: "powerplay" | "topptipset";
 }) {
   return (
     <div className="coupon rise">
@@ -137,9 +138,125 @@ function CouponView({
   );
 }
 
+function marketLabel(c: OddsetCandidate): string {
+  return c.line === 1.5 ? "Över 1,5 mål" : "Över 2,5 mål";
+}
+
+function OddsetView({ tip }: { tip: OddsetDayTip }) {
+  const selected = tip.selected;
+  return (
+    <div className="rise">
+      <section className="panel">
+        <h2>Dagens Oddset · {tip.playDateLabel}</h2>
+        <p className="panel-lead">
+          En match per svenskt dygn. Tipset gäller{" "}
+          <strong>dagen efter</strong> så det inte krockar med innevarande
+          svenska kalenderdag. Analyserat {tip.analyzedCount} matcher ·{" "}
+          {tip.eligibleCount} inom oddskraven.
+        </p>
+        <ul className="alert-list table-alerts">
+          {tip.rules.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="panel panel-systems">
+        <h2>Spela denna</h2>
+        {!selected ? (
+          <p className="panel-lead">
+            Ingen match klarade oddskraven för Över 1,5 (≥ 1,80) eller Över 2,5
+            (&gt; 2,00) just nu.
+          </p>
+        ) : (
+          <div className="coupon rise">
+            <div className="coupon-head">
+              <div>
+                <h3>
+                  {selected.home} – {selected.away}
+                </h3>
+                <div
+                  style={{
+                    color: "rgba(223,247,234,0.75)",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {selected.league}
+                  {selected.country ? ` · ${selected.country}` : ""} ·{" "}
+                  {fmtTime(selected.kickoff)}
+                </div>
+              </div>
+              <div className="coupon-cost">{fmtOdds(selected.odds)}</div>
+            </div>
+            <div className="oddset-pick-line">
+              <span className="ctx-pill table-comfortable">
+                {marketLabel(selected)}
+              </span>
+              <span className="odds">
+                Ö1,5 {fmtOdds(selected.odds15)} · Ö2,5{" "}
+                {fmtOdds(selected.odds25)}
+              </span>
+            </div>
+            <div className="reason" style={{ marginTop: "0.65rem" }}>
+              {selected.reason}
+            </div>
+            <a
+              className="oddset-link"
+              href={selected.url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Öppna på Oddset
+            </a>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Övriga kandidater</h2>
+        <p className="panel-lead">
+          Rankade efter analysscore. Endast den översta ska spelas i dag.
+        </p>
+        <div className="match-cards">
+          {tip.candidates.map((c, i) => (
+            <article className="match-card" key={c.eventId}>
+              <div className="match-card-top">
+                <span className="match-num">{i + 1}</span>
+                <div>
+                  <strong>
+                    {c.home} – {c.away}
+                  </strong>
+                  <div className="reason">
+                    {fmtTime(c.kickoff)} · {c.league}
+                  </div>
+                </div>
+                <div className="pick-cells">
+                  <span className="pick-cell on">
+                    {c.line === 1.5 ? "Ö1,5" : "Ö2,5"}
+                  </span>
+                </div>
+              </div>
+              <div className="match-card-meta">
+                <span className="odds">Odds {fmtOdds(c.odds)}</span>
+                <span className="odds">
+                  Ö1,5 {fmtOdds(c.odds15)} / Ö2,5 {fmtOdds(c.odds25)}
+                </span>
+              </div>
+              <div className="reason">{c.reason}</div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <p className="disclaimer">{tip.disclaimer}</p>
+    </div>
+  );
+}
+
 export default function App() {
-  const [product, setProduct] = useState<ProductKind>("topptipset");
+  const [product, setProduct] = useState<ProductKind>("oddset");
   const [data, setData] = useState<ApiResponse | null>(null);
+  const [oddset, setOddset] = useState<OddsetDayTip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedDraw, setSelectedDraw] = useState<number | null>(null);
@@ -150,16 +267,26 @@ export default function App() {
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/draws?product=${product}`, {
-          cache: "no-store",
-        });
-        const json = (await res.json()) as ApiResponse;
-        if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
-        if (cancelled) return;
-        setData(json);
-        setSelectedDraw(json.draws[0]?.drawNumber ?? null);
-        setSelectedSystem(0);
         setError(null);
+        if (product === "oddset") {
+          const res = await fetch("/api/oddset", { cache: "no-store" });
+          const json = (await res.json()) as OddsetDayTip & { error?: string };
+          if (!res.ok) throw new Error(json.error || "Kunde inte hämta Oddset");
+          if (cancelled) return;
+          setOddset(json);
+          setData(null);
+        } else {
+          const res = await fetch(`/api/draws?product=${product}`, {
+            cache: "no-store",
+          });
+          const json = (await res.json()) as ApiResponse;
+          if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
+          if (cancelled) return;
+          setData(json);
+          setOddset(null);
+          setSelectedDraw(json.draws[0]?.drawNumber ?? null);
+          setSelectedSystem(0);
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Nätverksfel");
@@ -190,10 +317,17 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Analyserar Powerplay och Topptipset per omgång – odds, svenska
-            folket, tabelläge, vilomotiv och om lagen har tungt schema.
+            Powerplay, Topptipset och Oddset – en målmatch per svenskt dygn
+            plus omgångstips med tabell, vila och schema.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
+            <button
+              type="button"
+              className={`product-btn ${product === "oddset" ? "active" : ""}`}
+              onClick={() => setProduct("oddset")}
+            >
+              Oddset
+            </button>
             <button
               type="button"
               className={`product-btn ${product === "topptipset" ? "active" : ""}`}
@@ -211,21 +345,30 @@ export default function App() {
           </div>
         </div>
         <div className="meta-chip">
-          {data
-            ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
-            : "Hämtar Svenska Spel…"}
+          {product === "oddset"
+            ? oddset
+              ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
+              : "Hämtar Oddset…"
+            : data
+              ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
+              : "Hämtar Svenska Spel…"}
         </div>
       </header>
 
       {loading && (
         <div className="loading">
-          Läser in öppna{" "}
-          {product === "topptipset" ? "Topptipset" : "Powerplay"}-omgångar…
+          {product === "oddset"
+            ? "Analyserar morgondagens Oddset-matcher…"
+            : `Läser in öppna ${product === "topptipset" ? "Topptipset" : "Powerplay"}-omgångar…`}
         </div>
       )}
       {error && <div className="status-banner error">{error}</div>}
 
-      {data && (
+      {!loading && !error && product === "oddset" && oddset && (
+        <OddsetView tip={oddset} />
+      )}
+
+      {data && product !== "oddset" && (
         <>
           <nav className="draw-tabs" aria-label="Speltillfällen">
             {data.draws.map((d) => (

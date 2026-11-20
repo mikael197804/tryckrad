@@ -351,6 +351,31 @@ select {
   color: #ffc48a;
 }
 
+.oddset-pick-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.oddset-link {
+  display: inline-block;
+  margin-top: 0.9rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 200, 255, 0.45);
+  color: #9fd6ff;
+  text-decoration: none;
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.oddset-link:hover {
+  background: rgba(120, 200, 255, 0.1);
+}
+
 .pick-cells {
   display: flex;
   gap: 0.35rem;
