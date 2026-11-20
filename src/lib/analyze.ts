@@ -1,4 +1,12 @@
 import {
+  buildRestSignal,
+  buildTableContext,
+  enrichFootballUpcoming,
+  enrichShlUpcoming,
+  loadLeagueTables,
+  type LeagueTable,
+} from "./context";
+import {
   favouriteFromDist,
   parseDistribution,
   parseOdds,
@@ -10,6 +18,8 @@ import type {
   FatigueInfo,
   MatchAnalysis,
   Outcome,
+  RestSignal,
+  TableContext,
   UpcomingMatch,
 } from "./types";
 
@@ -143,7 +153,15 @@ function entropy(dist: { one: number; x: number; two: number }): number {
     .reduce((acc, p) => acc + p * Math.log2(p), 0);
 }
 
-function scoreOutcomes(event: RawEvent, homeFatigue: FatigueInfo, awayFatigue: FatigueInfo) {
+function scoreOutcomes(
+  event: RawEvent,
+  homeFatigue: FatigueInfo,
+  awayFatigue: FatigueInfo,
+  homeTable: TableContext,
+  awayTable: TableContext,
+  homeRest: RestSignal,
+  awayRest: RestSignal
+) {
   const odds = parseOdds(event.odds);
   const dist = parseDistribution(event.svenskaFolket);
 
@@ -151,12 +169,10 @@ function scoreOutcomes(event: RawEvent, homeFatigue: FatigueInfo, awayFatigue: F
   const pX = impliedProb(odds.x) || dist.x / 100;
   const p2 = impliedProb(odds.two) || dist.two / 100;
 
-  // Blend market implied probability with svenska folket
   let score1 = p1 * 0.55 + (dist.one / 100) * 0.45;
   let scoreX = pX * 0.55 + (dist.x / 100) * 0.45;
   let score2 = p2 * 0.55 + (dist.two / 100) * 0.45;
 
-  // Fatigue: tired home team → slight away bump; tired away → home bump
   const homePenalty =
     homeFatigue.level === "high" ? 0.08 : homeFatigue.level === "medium" ? 0.04 : 0;
   const awayPenalty =
@@ -166,8 +182,62 @@ function scoreOutcomes(event: RawEvent, homeFatigue: FatigueInfo, awayFatigue: F
   score2 = Math.max(0.01, score2 - awayPenalty + homePenalty * 0.6);
   scoreX = Math.max(0.01, scoreX + (homePenalty + awayPenalty) * 0.25);
 
-  // Normalize
-  const sum = score1 + scoreX + score2;
+  // Tabell: jämna placeringar eller trygg poängställning → mer X
+  const rankGap = homeTable.rankGapToOpponent;
+  if (rankGap != null && rankGap <= 2) {
+    scoreX += 0.05;
+  } else if (rankGap != null && rankGap <= 4) {
+    scoreX += 0.025;
+  }
+
+  if (homeTable.comfort === "comfortable" && awayTable.comfort !== "fighting") {
+    scoreX += 0.04;
+    score1 -= 0.025;
+  }
+  if (awayTable.comfort === "comfortable" && homeTable.comfort !== "fighting") {
+    scoreX += 0.04;
+    score2 -= 0.025;
+  }
+  if (
+    homeTable.comfort === "comfortable" &&
+    awayTable.comfort === "comfortable"
+  ) {
+    scoreX += 0.03;
+  }
+
+  // Favorit med bra tabelläge mot svagare lag → mer kryss än vad odds säger
+  if (
+    homeTable.rank != null &&
+    awayTable.rank != null &&
+    homeTable.rank + 4 <= awayTable.rank &&
+    homeTable.comfort === "comfortable"
+  ) {
+    scoreX += 0.035;
+    score1 -= 0.02;
+  }
+  if (
+    homeTable.rank != null &&
+    awayTable.rank != null &&
+    awayTable.rank + 4 <= homeTable.rank &&
+    awayTable.comfort === "comfortable"
+  ) {
+    scoreX += 0.035;
+    score2 -= 0.02;
+  }
+
+  // Vila inför viktigare match
+  const applyRest = (rest: RestSignal, isHome: boolean) => {
+    if (rest.level === "none") return;
+    const bump = rest.level === "likely" ? 0.07 : 0.04;
+    const favCut = rest.level === "likely" ? 0.05 : 0.03;
+    scoreX += bump;
+    if (isHome) score1 -= favCut;
+    else score2 -= favCut;
+  };
+  applyRest(homeRest, true);
+  applyRest(awayRest, false);
+
+  const sum = Math.max(score1 + scoreX + score2, 0.01);
   return {
     score1: score1 / sum,
     scoreX: scoreX / sum,
@@ -180,7 +250,11 @@ function scoreOutcomes(event: RawEvent, homeFatigue: FatigueInfo, awayFatigue: F
 function buildPick(
   scores: { score1: number; scoreX: number; score2: number },
   homeFatigue: FatigueInfo,
-  awayFatigue: FatigueInfo
+  awayFatigue: FatigueInfo,
+  homeTable: TableContext,
+  awayTable: TableContext,
+  homeRest: RestSignal,
+  awayRest: RestSignal
 ): { pick: Outcome[]; reason: string; valueOutcomes: Outcome[] } {
   const ranked = (
     [
@@ -209,10 +283,38 @@ function buildPick(
 
   if (homeFatigue.level === "high" || awayFatigue.level === "high") {
     reasons.push("hög matchbelastning påverkar bedömningen");
-    if (!pick.includes("X") && top.o !== "X" && scores.scoreX > 0.18) {
-      // keep existing cover; note only
+  }
+
+  if (
+    homeTable.comfort === "comfortable" ||
+    awayTable.comfort === "comfortable"
+  ) {
+    reasons.push("bra poängställning kan öka kryssrisken");
+    if (!pick.includes("X") && scores.scoreX >= 0.2) {
+      pick = [...pick, "X"];
     }
   }
+
+  if (
+    homeTable.rankGapToOpponent != null &&
+    homeTable.rankGapToOpponent <= 2
+  ) {
+    reasons.push("jämna tabellplaceringar");
+  }
+
+  if (homeRest.level !== "none" || awayRest.level !== "none") {
+    const restNotes = [homeRest, awayRest]
+      .filter((r) => r.level !== "none")
+      .map((r) => r.note);
+    reasons.push(restNotes.join(". "));
+    if (!pick.includes("X") && scores.scoreX >= 0.18) {
+      pick = [...pick, "X"];
+    }
+  }
+
+  // Deduplicate pick order 1-X-2
+  const order: Outcome[] = ["1", "X", "2"];
+  pick = order.filter((o) => pick.includes(o));
 
   const valueOutcomes = ranked
     .filter((r) => r.s >= 0.22)
@@ -222,26 +324,72 @@ function buildPick(
   return { pick, reason: reasons.join(". "), valueOutcomes };
 }
 
-export function analyzeDraw(
+export async function analyzeDraw(
   draw: RawDraw,
   allDraws: RawDraw[]
-): {
+): Promise<{
   matches: MatchAnalysis[];
   fatigueAlerts: string[];
+  tableAlerts: string[];
+  restAlerts: string[];
   leagueSummary: string;
-} {
+}> {
   const schedule = buildTeamSchedule(allDraws);
   const matches: MatchAnalysis[] = [];
   const fatigueAlerts: string[] = [];
+  const tableAlerts: string[] = [];
+  const restAlerts: string[] = [];
   const leagues = new Set<string>();
 
   for (const event of draw.drawEvents) {
     if (event.cancelled) continue;
-    const { home, away } = participants(event);
     leagues.add(event.match.league.name);
+  }
 
-    const homeFatigue = fatigueForTeam(home.id, event.match.matchStart, schedule);
-    const awayFatigue = fatigueForTeam(away.id, event.match.matchStart, schedule);
+  const tables = await loadLeagueTables([...leagues]);
+
+  for (const event of draw.drawEvents) {
+    if (event.cancelled) continue;
+    const { home, away } = participants(event);
+    const league = event.match.league.name;
+    const table: LeagueTable | null = tables.get(league) ?? null;
+
+    let homeFatigue = fatigueForTeam(home.id, event.match.matchStart, schedule);
+    let awayFatigue = fatigueForTeam(away.id, event.match.matchStart, schedule);
+
+    if (league.toLowerCase() === "shl") {
+      [homeFatigue, awayFatigue] = await Promise.all([
+        enrichShlUpcoming(home.name, event.match.matchStart, table, homeFatigue),
+        enrichShlUpcoming(away.name, event.match.matchStart, table, awayFatigue),
+      ]);
+    } else if (
+      [
+        "premier league",
+        "championship",
+        "la liga",
+        "laliga",
+        "serie a",
+        "bundesliga",
+        "ligue 1",
+        "allsvenskan",
+        "superettan",
+      ].includes(league.toLowerCase())
+    ) {
+      [homeFatigue, awayFatigue] = await Promise.all([
+        enrichFootballUpcoming(
+          league,
+          home.name,
+          event.match.matchStart,
+          homeFatigue
+        ),
+        enrichFootballUpcoming(
+          league,
+          away.name,
+          event.match.matchStart,
+          awayFatigue
+        ),
+      ]);
+    }
 
     if (homeFatigue.level !== "low") {
       fatigueAlerts.push(
@@ -254,17 +402,68 @@ export function analyzeDraw(
       );
     }
 
-    const scored = scoreOutcomes(event, homeFatigue, awayFatigue);
+    const homeTable = buildTableContext(home, away, table);
+    const awayTable = buildTableContext(away, home, table);
+
+    if (homeTable.comfort === "comfortable" || awayTable.comfort === "comfortable") {
+      tableAlerts.push(
+        `Match ${event.eventNumber}: ${home.name} (${homeTable.note}) vs ${away.name} (${awayTable.note})`
+      );
+    }
+
+    const homeRest = buildRestSignal({
+      teamName: home.name,
+      currentOpponentName: away.name,
+      currentOpponentRank: awayTable.rank,
+      leagueSize: homeTable.leagueSize,
+      table,
+      fatigue: homeFatigue,
+      teamComfort: homeTable.comfort,
+    });
+    const awayRest = buildRestSignal({
+      teamName: away.name,
+      currentOpponentName: home.name,
+      currentOpponentRank: homeTable.rank,
+      leagueSize: awayTable.leagueSize,
+      table,
+      fatigue: awayFatigue,
+      teamComfort: awayTable.comfort,
+    });
+
+    if (homeRest.level !== "none") {
+      restAlerts.push(
+        `${home.name}: ${homeRest.note} (match ${event.eventNumber})`
+      );
+    }
+    if (awayRest.level !== "none") {
+      restAlerts.push(
+        `${away.name}: ${awayRest.note} (match ${event.eventNumber})`
+      );
+    }
+
+    const scored = scoreOutcomes(
+      event,
+      homeFatigue,
+      awayFatigue,
+      homeTable,
+      awayTable,
+      homeRest,
+      awayRest
+    );
     const { pick, reason, valueOutcomes } = buildPick(
       scored,
       homeFatigue,
-      awayFatigue
+      awayFatigue,
+      homeTable,
+      awayTable,
+      homeRest,
+      awayRest
     );
 
     matches.push({
       eventNumber: event.eventNumber,
       description: event.eventDescription,
-      league: event.match.league.name,
+      league,
       matchStart: event.match.matchStart,
       matchId: event.match.matchId,
       home,
@@ -276,6 +475,10 @@ export function analyzeDraw(
       uncertainty: entropy(scored.dist),
       homeFatigue,
       awayFatigue,
+      homeTable,
+      awayTable,
+      homeRest,
+      awayRest,
       pick,
       pickReason: reason,
       score1: scored.score1,
@@ -289,6 +492,8 @@ export function analyzeDraw(
   return {
     matches,
     fatigueAlerts,
+    tableAlerts,
+    restAlerts,
     leagueSummary: [...leagues].join(", "),
   };
 }

@@ -35,6 +35,24 @@ export type FatigueInfo = {
   upcoming: UpcomingMatch[];
 };
 
+export type TableContext = {
+  rank: number | null;
+  points: number | null;
+  played: number | null;
+  leagueSize: number | null;
+  comfort: "fighting" | "mid" | "comfortable" | "unknown";
+  rankGapToOpponent: number | null;
+  note: string;
+};
+
+export type RestSignal = {
+  level: "none" | "possible" | "likely";
+  note: string;
+  nextMatchDescription: string | null;
+  nextOpponentRank: number | null;
+  hoursUntilNext: number | null;
+};
+
 export type MatchAnalysis = {
   eventNumber: number;
   description: string;
@@ -50,11 +68,33 @@ export type MatchAnalysis = {
   uncertainty: number;
   homeFatigue: FatigueInfo;
   awayFatigue: FatigueInfo;
+  homeTable: TableContext;
+  awayTable: TableContext;
+  homeRest: RestSignal;
+  awayRest: RestSignal;
   pick: Outcome[];
   pickReason: string;
   score1: number;
   scoreX: number;
   score2: number;
+};
+
+export type DrawBundle = {
+  drawNumber: number;
+  productName: string;
+  closeDescription: string;
+  closeTime: string;
+  openTime: string;
+  rowPrice: number;
+  netSale: string | null;
+  sport: string;
+  leagueSummary: string;
+  matches: MatchAnalysis[];
+  articles: Article[];
+  systems: GeneratedSystem[];
+  fatigueAlerts: string[];
+  tableAlerts: string[];
+  restAlerts: string[];
 };
 
 export type Article = {
@@ -82,20 +122,4 @@ export type GeneratedSystem = {
   picks: SystemPick[];
   summary: string;
   risk: "lågt" | "medel" | "högt";
-};
-
-export type DrawBundle = {
-  drawNumber: number;
-  productName: string;
-  closeDescription: string;
-  closeTime: string;
-  openTime: string;
-  rowPrice: number;
-  netSale: string | null;
-  sport: string;
-  leagueSummary: string;
-  matches: MatchAnalysis[];
-  articles: Article[];
-  systems: GeneratedSystem[];
-  fatigueAlerts: string[];
 };

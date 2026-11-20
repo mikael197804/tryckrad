@@ -20,10 +20,8 @@ export async function buildAllDrawBundles(
 
   const bundles = await Promise.all(
     draws.map(async (draw) => {
-      const { matches, fatigueAlerts, leagueSummary } = analyzeDraw(
-        draw,
-        draws
-      );
+      const { matches, fatigueAlerts, tableAlerts, restAlerts, leagueSummary } =
+        await analyzeDraw(draw, draws);
       const [articles, systems] = await Promise.all([
         fetchArticlesForMatches(matches, draw.drawNumber, product),
         Promise.resolve(generateSystems(matches)),
@@ -43,6 +41,8 @@ export async function buildAllDrawBundles(
         articles,
         systems,
         fatigueAlerts,
+        tableAlerts,
+        restAlerts,
       } satisfies DrawBundle;
     })
   );

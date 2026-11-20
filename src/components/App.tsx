@@ -48,6 +48,40 @@ function Fatigue({
   );
 }
 
+function TablePill({
+  comfort,
+  note,
+  label,
+}: {
+  comfort: "fighting" | "mid" | "comfortable" | "unknown";
+  note: string;
+  label: string;
+}) {
+  if (comfort === "unknown" || comfort === "mid") return null;
+  return (
+    <span className={`ctx-pill table-${comfort}`} title={note}>
+      {comfort === "comfortable" ? "trygg tabell" : "poängjakt"} · {label}
+    </span>
+  );
+}
+
+function RestPill({
+  level,
+  note,
+  label,
+}: {
+  level: "none" | "possible" | "likely";
+  note: string;
+  label: string;
+}) {
+  if (level === "none") return null;
+  return (
+    <span className={`ctx-pill rest-${level}`} title={note}>
+      {level === "likely" ? "vila trolig" : "vila möjlig"} · {label}
+    </span>
+  );
+}
+
 function CouponView({
   system,
   product,
@@ -157,7 +191,7 @@ export default function App() {
           </h1>
           <p className="brand-tag">
             Analyserar Powerplay och Topptipset per omgång – odds, svenska
-            folket, artiklar och om lagen har tungt schema.
+            folket, tabelläge, vilomotiv och om lagen har tungt schema.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
             <button
@@ -231,6 +265,26 @@ export default function App() {
                     </ul>
                   </>
                 )}
+                {draw.tableAlerts.length > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>Tabell & poängställning</h2>
+                    <ul className="alert-list table-alerts">
+                      {draw.tableAlerts.map((a) => (
+                        <li key={a}>{a}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {draw.restAlerts.length > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>Vila inför viktigare match</h2>
+                    <ul className="alert-list rest-alerts">
+                      {draw.restAlerts.map((a) => (
+                        <li key={a}>{a}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
               </section>
 
               <div className="grid-2 mobile-stack">
@@ -264,8 +318,9 @@ export default function App() {
                 <section className="panel">
                   <h2>Matcher & tipsläge</h2>
                   <p className="panel-lead">
-                    Baserat på odds, svenska folket och schema. Garderingar
-                    läggs där osäkerhet eller trötthet är högst.
+                    Baserat på odds, svenska folket, tabelläge, vilomotiv och
+                    schema. Garderingar läggs där osäkerhet, trygg tabell eller
+                    trötthet är högst.
                   </p>
 
                   <div className="match-cards">
@@ -309,6 +364,26 @@ export default function App() {
                             level={m.awayFatigue.level}
                             label={m.away.name}
                           />
+                          <TablePill
+                            comfort={m.homeTable.comfort}
+                            note={m.homeTable.note}
+                            label={m.home.name}
+                          />
+                          <TablePill
+                            comfort={m.awayTable.comfort}
+                            note={m.awayTable.note}
+                            label={m.away.name}
+                          />
+                          <RestPill
+                            level={m.homeRest.level}
+                            note={m.homeRest.note}
+                            label={m.home.name}
+                          />
+                          <RestPill
+                            level={m.awayRest.level}
+                            note={m.awayRest.note}
+                            label={m.away.name}
+                          />
                         </div>
                         <div className="reason">{m.pickReason}</div>
                       </article>
@@ -342,6 +417,26 @@ export default function App() {
                                 />
                                 <Fatigue
                                   level={m.awayFatigue.level}
+                                  label={m.away.name}
+                                />
+                                <TablePill
+                                  comfort={m.homeTable.comfort}
+                                  note={m.homeTable.note}
+                                  label={m.home.name}
+                                />
+                                <TablePill
+                                  comfort={m.awayTable.comfort}
+                                  note={m.awayTable.note}
+                                  label={m.away.name}
+                                />
+                                <RestPill
+                                  level={m.homeRest.level}
+                                  note={m.homeRest.note}
+                                  label={m.home.name}
+                                />
+                                <RestPill
+                                  level={m.awayRest.level}
+                                  note={m.awayRest.note}
                                   label={m.away.name}
                                 />
                               </div>
