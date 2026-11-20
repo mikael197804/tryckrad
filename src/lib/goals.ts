@@ -92,7 +92,10 @@ function extractHockeyGoalLines(betOffers: KambiBetOffer[]): {
   return { regulation, withOt };
 }
 
-function estimateLambda(lines: GoalLine[]): number | null {
+function estimateLambda(
+  lines: GoalLine[],
+  range: { min: number; max: number; seed: number }
+): number | null {
   if (!lines.length) return null;
   const points = lines
     .map((l) => {
@@ -102,9 +105,9 @@ function estimateLambda(lines: GoalLine[]): number | null {
     .filter((p): p is { line: number; pOver: number } => p != null);
   if (!points.length) return null;
 
-  let bestL = 5.2;
+  let bestL = range.seed;
   let bestErr = Infinity;
-  for (let l = 3.0; l <= 8.5; l += 0.05) {
+  for (let l = range.min; l <= range.max; l += 0.05) {
     let err = 0;
     for (const p of points) {
       const model = poissonPAtLeast(l, Math.floor(p.line) + 1);
@@ -116,6 +119,30 @@ function estimateLambda(lines: GoalLine[]): number | null {
     }
   }
   return Math.round(bestL * 100) / 100;
+}
+
+function extractFootballGoalLines(betOffers: KambiBetOffer[]): GoalLine[] {
+  const lines: GoalLine[] = [];
+  for (const bo of betOffers) {
+    const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
+    if (label !== "Total Goals") continue;
+    let over: number | null = null;
+    let under: number | null = null;
+    let line: number | null = null;
+    for (const o of bo.outcomes || []) {
+      const side = (o.label || "").toLowerCase();
+      const odds = parseOdds(o.odds);
+      const ln = parseLine(o.line);
+      if (odds == null || ln == null) continue;
+      line = ln;
+      if (side === "över" || side === "over") over = odds;
+      if (side === "under") under = odds;
+    }
+    if (line != null && over != null) {
+      lines.push({ line, over, under });
+    }
+  }
+  return lines;
 }
 
 function likelyRange(lambda: number): string {
@@ -140,10 +167,16 @@ function attackNeed(
   return "medium";
 }
 
-function emptyGoals(note: string): GoalAnalysis {
+function emptyGoals(
+  note: string,
+  sport: GoalAnalysis["sport"] = "hockey"
+): GoalAnalysis {
   return {
+    sport,
     expectedGoals: null,
     likelyRange: "–",
+    over25ProbPct: null,
+    over35ProbPct: null,
     over45ProbPct: null,
     over55ProbPct: null,
     mainLine: null,
@@ -207,6 +240,7 @@ function needNote(
 
 export async function analyzeMatchGoals(args: {
   kambiEventId: string | null;
+  sport?: GoalAnalysis["sport"];
   home: TeamInfo;
   away: TeamInfo;
   homeTable: TableContext;
@@ -217,9 +251,12 @@ export async function analyzeMatchGoals(args: {
   awayRest: RestSignal;
   score1: number;
   score2: number;
+  /** Extra justering t.ex. från sen laganalys */
+  lambdaAdjust?: number;
 }): Promise<GoalAnalysis> {
   const {
     kambiEventId,
+    sport = "hockey",
     home,
     away,
     homeTable,
@@ -230,6 +267,7 @@ export async function analyzeMatchGoals(args: {
     awayRest,
     score1,
     score2,
+    lambdaAdjust = 0,
   } = args;
 
   const homeFav = score1 >= score2;
@@ -237,7 +275,7 @@ export async function analyzeMatchGoals(args: {
   const awayNeed = attackNeed(awayTable, awayRest, awayFatigue, !homeFav);
 
   if (!kambiEventId) {
-    const g = emptyGoals("ingen målmarknad kopplad");
+    const g = emptyGoals("ingen målmarknad kopplad", sport);
     g.homeAttackNeed = homeNeed;
     g.awayAttackNeed = awayNeed;
     g.homeNeedNote = needNote(home, homeNeed, homeTable);
@@ -247,10 +285,16 @@ export async function analyzeMatchGoals(args: {
   }
 
   const offers = await fetchKambiOffers(kambiEventId);
-  const { regulation, withOt } = extractHockeyGoalLines(offers);
-  const lines = regulation.length ? regulation : withOt;
+  let lines: GoalLine[] = [];
+  if (sport === "football") {
+    lines = extractFootballGoalLines(offers);
+  } else {
+    const { regulation, withOt } = extractHockeyGoalLines(offers);
+    lines = regulation.length ? regulation : withOt;
+  }
+
   if (!lines.length) {
-    const g = emptyGoals("målodds saknas just nu");
+    const g = emptyGoals("målodds saknas just nu", sport);
     g.homeAttackNeed = homeNeed;
     g.awayAttackNeed = awayNeed;
     g.homeNeedNote = needNote(home, homeNeed, homeTable);
@@ -259,23 +303,42 @@ export async function analyzeMatchGoals(args: {
     return g;
   }
 
-  let lambda = estimateLambda(lines);
-  // Justera lätt efter motivation/vila
+  const range =
+    sport === "football"
+      ? { min: 1.4, max: 4.8, seed: 2.6 }
+      : { min: 3.0, max: 8.5, seed: 5.2 };
+  let lambda = estimateLambda(lines, range);
   if (lambda != null) {
     if (homeNeed === "high" || awayNeed === "high") lambda += 0.15;
     if (homeNeed === "low" && awayNeed === "low") lambda -= 0.2;
     if (homeRest.level === "likely" || awayRest.level === "likely") lambda -= 0.25;
     if (homeFatigue.level === "high" || awayFatigue.level === "high") lambda -= 0.15;
-    lambda = Math.round(Math.max(2.8, lambda) * 100) / 100;
+    lambda += lambdaAdjust;
+    const floor = sport === "football" ? 1.5 : 2.8;
+    lambda = Math.round(Math.max(floor, lambda) * 100) / 100;
   }
 
+  const line25 = lines.find((l) => l.line === 2.5);
+  const line35 = lines.find((l) => l.line === 3.5);
   const line45 = lines.find((l) => l.line === 4.5);
   const line55 = lines.find((l) => l.line === 5.5);
   const main =
-    lines.find((l) => l.line === 5.5) ||
-    lines.find((l) => l.line === 4.5) ||
-    lines[0];
+    sport === "football"
+      ? lines.find((l) => l.line === 2.5) ||
+        lines.find((l) => l.line === 3.5) ||
+        lines[0]
+      : lines.find((l) => l.line === 5.5) ||
+        lines.find((l) => l.line === 4.5) ||
+        lines[0];
 
+  const over25 =
+    lambda != null
+      ? poissonPAtLeast(lambda, 3)
+      : deVigOver(line25?.over ?? null, line25?.under ?? null);
+  const over35 =
+    lambda != null
+      ? poissonPAtLeast(lambda, 4)
+      : deVigOver(line35?.over ?? null, line35?.under ?? null);
   const over45 =
     lambda != null
       ? poissonPAtLeast(lambda, 5)
@@ -293,18 +356,22 @@ export async function analyzeMatchGoals(args: {
       `ca ${lambda.toFixed(1).replace(".", ",")} mål totalt (troligen ${likelyRange(lambda)})`
     );
   }
-  if (over45 != null) {
-    parts.push(`Över 4,5 ≈ ${Math.round(over45 * 100)}%`);
-  }
-  if (over55 != null) {
-    parts.push(`Över 5,5 ≈ ${Math.round(over55 * 100)}%`);
+  if (sport === "football") {
+    if (over25 != null) parts.push(`Över 2,5 ≈ ${Math.round(over25 * 100)}%`);
+    if (over35 != null) parts.push(`Över 3,5 ≈ ${Math.round(over35 * 100)}%`);
+  } else {
+    if (over45 != null) parts.push(`Över 4,5 ≈ ${Math.round(over45 * 100)}%`);
+    if (over55 != null) parts.push(`Över 5,5 ≈ ${Math.round(over55 * 100)}%`);
   }
   parts.push(homeNeedNote);
   parts.push(awayNeedNote);
 
   return {
+    sport,
     expectedGoals: lambda,
     likelyRange: lambda != null ? likelyRange(lambda) : "–",
+    over25ProbPct: over25 != null ? Math.round(over25 * 1000) / 10 : null,
+    over35ProbPct: over35 != null ? Math.round(over35 * 1000) / 10 : null,
     over45ProbPct: over45 != null ? Math.round(over45 * 1000) / 10 : null,
     over55ProbPct: over55 != null ? Math.round(over55 * 1000) / 10 : null,
     mainLine: main?.line ?? null,

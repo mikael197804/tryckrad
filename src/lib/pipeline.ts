@@ -1,6 +1,6 @@
 import { analyzeDraw } from "./analyze";
 import { fetchArticlesForMatches } from "./articles";
-import { generateSystems } from "./systems";
+import { generateMaltipsetSystems, generateSystems } from "./systems";
 import {
   fetchDrawsForProduct,
   type ProductKind,
@@ -16,13 +16,17 @@ function isStillOpen(closeTime: string, graceMs = 2 * 60 * 1000): boolean {
   return new Date(closeTime).getTime() + graceMs >= Date.now();
 }
 
+function defaultSport(product: ProductKind): string {
+  if (product === "powerplay") return "Ishockey";
+  return "Fotboll";
+}
+
 export async function buildAllDrawBundles(
   product: ProductKind = "powerplay"
 ): Promise<DrawBundle[]> {
   const draws = (await fetchDrawsForProduct(product)).filter((d) =>
     isStillOpen(d.regCloseTime)
   );
-  const defaultSport = product === "topptipset" ? "Fotboll" : "Ishockey";
 
   const bundles = await Promise.all(
     draws.map(async (draw) => {
@@ -33,24 +37,32 @@ export async function buildAllDrawBundles(
           tableAlerts,
           restAlerts,
           goalAlerts,
+          lineupAlerts,
+          malTip,
           leagueSummary,
-        } = await analyzeDraw(draw, draws);
+        } = await analyzeDraw(draw, draws, product);
+        const rowPrice = parseRowPrice(draw.rowPrice);
         const [articles, systems] = await Promise.all([
           fetchArticlesForMatches(matches, draw.drawNumber, product).catch(
             () => []
           ),
-          Promise.resolve(generateSystems(matches)),
+          Promise.resolve(
+            product === "maltipset"
+              ? generateMaltipsetSystems(matches, rowPrice)
+              : generateSystems(matches)
+          ),
         ]);
 
         return {
           drawNumber: draw.drawNumber,
           productName: draw.productName,
+          productKind: product,
           closeDescription: draw.regCloseDescription,
           closeTime: draw.regCloseTime,
           openTime: draw.regOpenTime,
-          rowPrice: parseRowPrice(draw.rowPrice),
+          rowPrice,
           netSale: draw.currentNetSale ?? null,
-          sport: draw.sport?.name ?? defaultSport,
+          sport: draw.sport?.name ?? defaultSport(product),
           leagueSummary,
           matches,
           articles,
@@ -59,6 +71,8 @@ export async function buildAllDrawBundles(
           tableAlerts: tableAlerts ?? [],
           restAlerts: restAlerts ?? [],
           goalAlerts: goalAlerts ?? [],
+          lineupAlerts: lineupAlerts ?? [],
+          malTip: malTip ?? [],
         } satisfies DrawBundle;
       } catch (error) {
         console.error(

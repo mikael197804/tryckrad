@@ -4,7 +4,34 @@ import { useEffect, useMemo, useState } from "react";
 import type { OddsetCandidate, OddsetDayTip } from "../lib/oddset";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 
-type ProductKind = "powerplay" | "topptipset" | "oddset";
+type ProductKind =
+  | "powerplay"
+  | "topptipset"
+  | "stryktipset"
+  | "maltipset"
+  | "oddset";
+
+const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset">> = [
+  "topptipset",
+  "stryktipset",
+  "maltipset",
+  "powerplay",
+];
+
+function productLabel(p: ProductKind): string {
+  switch (p) {
+    case "stryktipset":
+      return "Stryktipset";
+    case "maltipset":
+      return "Måltipset";
+    case "topptipset":
+      return "Topptipset";
+    case "powerplay":
+      return "Powerplay";
+    case "oddset":
+      return "Oddset";
+  }
+}
 
 type ApiResponse = {
   generatedAt: string;
@@ -143,10 +170,13 @@ function GoalNeedPill({
 function CouponView({
   system,
   product,
+  rowPrice = 1,
 }: {
   system: GeneratedSystem;
-  product: "powerplay" | "topptipset";
+  product: Exclude<ProductKind, "oddset">;
+  rowPrice?: number;
 }) {
+  const isMal = system.kind === "mal" || product === "maltipset";
   return (
     <div className="coupon rise">
       <div className="coupon-head">
@@ -156,27 +186,43 @@ function CouponView({
             {system.summary} · risk {system.risk}
           </div>
         </div>
-        <div className="coupon-cost">{system.costKr} kr</div>
-      </div>
-      {system.picks.map((p) => (
-        <div className="coupon-row" key={p.eventNumber}>
-          <strong>{p.eventNumber}</strong>
-          <div>
-            <div>{p.description}</div>
-            <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>{p.reason}</div>
-          </div>
-          <div className="coupon-marks">
-            {(["1", "X", "2"] as Outcome[]).map((o) => (
-              <span
-                key={o}
-                className={`mark ${p.outcomes.includes(o) ? "filled" : ""}`}
-              >
-                {o}
-              </span>
-            ))}
-          </div>
+        <div className="coupon-cost">
+          {String(system.costKr).replace(".", ",")} kr
         </div>
-      ))}
+      </div>
+      {system.picks.map((p) => {
+        const malOn =
+          isMal &&
+          (system.malEventNumbers?.includes(p.eventNumber) ||
+            p.outcomes.length > 0);
+        return (
+          <div className="coupon-row" key={p.eventNumber}>
+            <strong>{p.eventNumber}</strong>
+            <div>
+              <div>{p.description}</div>
+              <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>{p.reason}</div>
+            </div>
+            {isMal ? (
+              <div className="coupon-marks">
+                <span className={`mark ${malOn ? "filled" : ""}`}>
+                  {malOn ? "M" : "·"}
+                </span>
+              </div>
+            ) : (
+              <div className="coupon-marks">
+                {(["1", "X", "2"] as Outcome[]).map((o) => (
+                  <span
+                    key={o}
+                    className={`mark ${p.outcomes.includes(o) ? "filled" : ""}`}
+                  >
+                    {o}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
       <div
         style={{
           marginTop: "0.85rem",
@@ -186,11 +232,78 @@ function CouponView({
           color: "rgba(223,247,234,0.8)",
         }}
       >
-        <span>{system.rows} rader × 1 kr</span>
         <span>
-          {product === "topptipset" ? "Topptipset-kupong" : "Powerplay-kupong"}
+          {system.rows} rader × {String(rowPrice).replace(".", ",")} kr
         </span>
+        <span>{productLabel(product)}-kupong</span>
       </div>
+    </div>
+  );
+}
+
+function LineupPill({
+  impact,
+  label,
+  note,
+}: {
+  impact: "better" | "worse" | "neutral" | "unknown";
+  label: string;
+  note: string;
+}) {
+  if (impact === "unknown" || impact === "neutral") return null;
+  return (
+    <span className={`ctx-pill lineup-${impact}`} title={note}>
+      {impact === "worse" ? "sämre (borta)" : "bättre (lag)"} · {label}
+    </span>
+  );
+}
+
+function GoalBlock({
+  goals,
+  malSelected,
+  goalRank,
+}: {
+  goals: NonNullable<DrawBundle["matches"][number]["goals"]>;
+  malSelected?: boolean;
+  goalRank?: number | null;
+}) {
+  const football = goals.sport === "football";
+  return (
+    <div className={`goal-block ${malSelected ? "mal-on" : ""}`}>
+      <div className="goal-line">
+        <strong>
+          Mål
+          {goalRank != null ? ` · #${goalRank}` : ""}
+          {malSelected ? " · tippas" : ""}
+        </strong>
+        {goals.expectedGoals != null ? (
+          <span>
+            ca {goals.expectedGoals.toFixed(1).replace(".", ",")} totalt ·{" "}
+            {goals.likelyRange}
+            {football && goals.over25ProbPct != null
+              ? ` · Ö2,5 ${String(goals.over25ProbPct).replace(".", ",")}%`
+              : ""}
+            {football && goals.over35ProbPct != null
+              ? ` · Ö3,5 ${String(goals.over35ProbPct).replace(".", ",")}%`
+              : ""}
+            {!football && goals.over45ProbPct != null
+              ? ` · Ö4,5 ${String(goals.over45ProbPct).replace(".", ",")}%`
+              : ""}
+            {!football && goals.over55ProbPct != null
+              ? ` · Ö5,5 ${String(goals.over55ProbPct).replace(".", ",")}%`
+              : ""}
+          </span>
+        ) : (
+          <span>{goals.note || "målanalys saknas"}</span>
+        )}
+      </div>
+      {(goals.homeNeedNote || goals.awayNeedNote) && (
+        <div className="goal-need">
+          {[goals.homeNeedNote, goals.awayNeedNote]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      )}
     </div>
   );
 }
@@ -414,24 +527,21 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Topptipset och Powerplay analyserar öppna omgångar nu. Oddset ger
-            fem Över 2,5-tips för dagen efter.
+            Öppna omgångar för Topptipset, Stryktipset, Måltipset och Powerplay.
+            Stryk/Mål får sen laganalys ca 15 min före avspark. Oddset: fem Över
+            2,5 för dagen efter.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
-            <button
-              type="button"
-              className={`product-btn ${product === "topptipset" ? "active" : ""}`}
-              onClick={() => setProduct("topptipset")}
-            >
-              Topptipset
-            </button>
-            <button
-              type="button"
-              className={`product-btn ${product === "powerplay" ? "active" : ""}`}
-              onClick={() => setProduct("powerplay")}
-            >
-              Powerplay
-            </button>
+            {DRAW_PRODUCTS.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`product-btn ${product === p ? "active" : ""}`}
+                onClick={() => setProduct(p)}
+              >
+                {productLabel(p)}
+              </button>
+            ))}
             <button
               type="button"
               className={`product-btn ${product === "oddset" ? "active" : ""}`}
@@ -456,7 +566,7 @@ export default function App() {
         <div className="loading">
           {product === "oddset"
             ? "Analyserar morgondagens Oddset-matcher…"
-            : `Läser in öppna ${product === "topptipset" ? "Topptipset" : "Powerplay"}-omgångar…`}
+            : `Läser in öppna ${productLabel(product)}-omgångar…`}
         </div>
       )}
       {error && <div className="status-banner error">{error}</div>}
@@ -501,14 +611,27 @@ export default function App() {
                 </p>
 
                 <div className="tip-strip" aria-label="Tipprad">
-                  <strong>Tipprad</strong>
+                  <strong>
+                    {product === "maltipset" ? "Måltips (8)" : "Tipprad"}
+                  </strong>
                   <div className="tip-strip-picks">
-                    {draw.matches.map((m) => (
-                      <span key={m.eventNumber} className="tip-strip-pick">
-                        <em>{m.eventNumber}</em>
-                        {m.pick.join("")}
-                      </span>
-                    ))}
+                    {product === "maltipset"
+                      ? (draw.malTip?.length
+                          ? draw.malTip
+                          : draw.matches
+                              .filter((m) => m.malSelected)
+                              .map((m) => m.eventNumber)
+                        ).map((n) => (
+                          <span key={n} className="tip-strip-pick">
+                            <em>{n}</em>M
+                          </span>
+                        ))
+                      : draw.matches.map((m) => (
+                          <span key={m.eventNumber} className="tip-strip-pick">
+                            <em>{m.eventNumber}</em>
+                            {m.pick.join("")}
+                          </span>
+                        ))}
                   </div>
                 </div>
 
@@ -542,10 +665,14 @@ export default function App() {
                     </ul>
                   </>
                 )}
-                {product === "powerplay" &&
+                {(product === "powerplay" || product === "maltipset") &&
                   (draw.goalAlerts?.length ?? 0) > 0 && (
                   <>
-                    <h2 style={{ fontSize: "1.05rem" }}>Mål per match</h2>
+                    <h2 style={{ fontSize: "1.05rem" }}>
+                      {product === "maltipset"
+                        ? "Förväntat målantal (rangordning)"
+                        : "Mål per match"}
+                    </h2>
                     <ul className="alert-list goal-alerts">
                       {draw.goalAlerts.map((a) => (
                         <li key={a}>{a}</li>
@@ -553,15 +680,44 @@ export default function App() {
                     </ul>
                   </>
                 )}
+                {(product === "stryktipset" || product === "maltipset") &&
+                  (draw.lineupAlerts?.length ?? 0) > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>
+                      Laguppställning / sen analys
+                    </h2>
+                    <ul className="alert-list lineup-alerts">
+                      {draw.lineupAlerts.map((a) => (
+                        <li key={a}>{a}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {(product === "stryktipset" || product === "maltipset") &&
+                  (draw.lineupAlerts?.length ?? 0) === 0 && (
+                  <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
+                    Sen analys aktiveras automatiskt ca 15 minuter före varje
+                    matchstart: spelare borta och oddsrörelse vägs in som bättre
+                    eller sämre för laget.
+                  </p>
+                )}
               </section>
 
               <div className="grid-2 mobile-stack">
                 <section className="panel panel-systems">
-                  <h2>System 48–720 kr</h2>
+                  <h2>
+                    {product === "maltipset"
+                      ? "M-system (8 målrikaste)"
+                      : "System 48–720 kr"}
+                  </h2>
                   <p className="panel-lead">
-                    Kupongen speglar{" "}
-                    {product === "topptipset" ? "Topptipset" : "Powerplay"}-raden
-                    på Svenska Spel. Kostnad = antal kombinationer × 1 kr.
+                    Kupongen speglar {productLabel(product)}-raden på Svenska
+                    Spel. Kostnad = antal kombinationer ×{" "}
+                    {String(draw.rowPrice).replace(".", ",")} kr
+                    {product === "maltipset"
+                      ? " (M8–M12)"
+                      : ""}
+                    .
                   </p>
                   <div className="system-switch">
                     {draw.systems.map((s, i) => (
@@ -571,7 +727,7 @@ export default function App() {
                         className={`system-btn ${selectedSystem === i ? "active" : ""}`}
                         onClick={() => setSelectedSystem(i)}
                       >
-                        {s.costKr} kr · {s.risk}
+                        {String(s.costKr).replace(".", ",")} kr · {s.risk}
                       </button>
                     ))}
                   </div>
@@ -579,6 +735,7 @@ export default function App() {
                     <CouponView
                       system={draw.systems[selectedSystem]}
                       product={product}
+                      rowPrice={draw.rowPrice}
                     />
                   )}
                 </section>
@@ -586,13 +743,15 @@ export default function App() {
                 <section className="panel">
                   <h2>Matcher & tipsläge</h2>
                   <p className="panel-lead">
-                    Baserat på odds, svenska folket, tabelläge, vilomotiv och
-                    schema
-                    {product === "powerplay"
-                      ? ", plus förväntat antal mål"
-                      : ""}
-                    . Garderingar läggs där osäkerhet, trygg tabell eller
-                    trötthet är högst.
+                    {product === "maltipset"
+                      ? "Rangordnar de 30 matcherna efter förväntat målantal (Kambi + motivation/lagnyheter). Tippa de 8 målrikaste."
+                      : `Baserat på odds, svenska folket, tabelläge, vilomotiv och schema${
+                          product === "powerplay"
+                            ? ", plus förväntat antal mål"
+                            : product === "stryktipset"
+                              ? ", plus sen laganalys 15 min före avspark"
+                              : ""
+                        }. Garderingar läggs där osäkerhet, trygg tabell eller trötthet är högst.`}
                   </p>
 
                   <div className="match-cards">
@@ -607,14 +766,22 @@ export default function App() {
                             </div>
                           </div>
                           <div className="pick-cells">
-                            {(["1", "X", "2"] as Outcome[]).map((o) => (
+                            {product === "maltipset" ? (
                               <span
-                                key={o}
-                                className={`pick-cell ${m.pick.includes(o) ? "on" : ""}`}
+                                className={`pick-cell ${m.malSelected ? "on" : ""}`}
                               >
-                                {o}
+                                {m.malSelected ? "M" : "·"}
                               </span>
-                            ))}
+                            ) : (
+                              (["1", "X", "2"] as Outcome[]).map((o) => (
+                                <span
+                                  key={o}
+                                  className={`pick-cell ${m.pick.includes(o) ? "on" : ""}`}
+                                >
+                                  {o}
+                                </span>
+                              ))
+                            )}
                           </div>
                         </div>
                         <div className="match-card-meta">
@@ -627,35 +794,26 @@ export default function App() {
                             {m.svenskaFolket.two}
                           </span>
                         </div>
-                        {product === "powerplay" && m.goals && (
-                          <div className="goal-block">
-                            <div className="goal-line">
-                              <strong>Mål</strong>
-                              {m.goals.expectedGoals != null ? (
-                                <span>
-                                  ca{" "}
-                                  {m.goals.expectedGoals
-                                    .toFixed(1)
-                                    .replace(".", ",")}{" "}
-                                  totalt · {m.goals.likelyRange}
-                                  {m.goals.over45ProbPct != null
-                                    ? ` · Ö4,5 ${String(m.goals.over45ProbPct).replace(".", ",")}%`
-                                    : ""}
-                                  {m.goals.over55ProbPct != null
-                                    ? ` · Ö5,5 ${String(m.goals.over55ProbPct).replace(".", ",")}%`
-                                    : ""}
-                                </span>
-                              ) : (
-                                <span>{m.goals.note || "målanalys saknas"}</span>
-                              )}
-                            </div>
-                            {(m.goals.homeNeedNote || m.goals.awayNeedNote) && (
-                              <div className="goal-need">
-                                {[m.goals.homeNeedNote, m.goals.awayNeedNote]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </div>
-                            )}
+                        {(product === "powerplay" ||
+                          product === "maltipset") &&
+                          m.goals && (
+                          <GoalBlock
+                            goals={m.goals}
+                            malSelected={m.malSelected}
+                            goalRank={m.goalRank}
+                          />
+                        )}
+                        {m.lineup?.windowActive && (
+                          <div className="lineup-block late">
+                            <strong>Sen analys</strong> {m.lineup.note}
+                          </div>
+                        )}
+                        {!m.lineup?.windowActive &&
+                          (product === "stryktipset" ||
+                            product === "maltipset") &&
+                          (m.lineup?.items?.length ?? 0) > 0 && (
+                          <div className="lineup-block">
+                            <strong>Lag</strong> {m.lineup.note}
                           </div>
                         )}
                         <div className="match-card-flags">
@@ -687,7 +845,9 @@ export default function App() {
                             note={m.awayRest.note}
                             label={m.away.name}
                           />
-                          {product === "powerplay" && m.goals && (
+                          {(product === "powerplay" ||
+                            product === "maltipset") &&
+                            m.goals && (
                             <>
                               <GoalNeedPill
                                 need={m.goals.homeAttackNeed}
@@ -698,6 +858,22 @@ export default function App() {
                                 need={m.goals.awayAttackNeed}
                                 note={m.goals.awayNeedNote}
                                 label={m.away.name}
+                              />
+                            </>
+                          )}
+                          {(product === "stryktipset" ||
+                            product === "maltipset") &&
+                            m.lineup && (
+                            <>
+                              <LineupPill
+                                impact={m.lineup.homeImpact}
+                                label={m.home.name}
+                                note={m.lineup.note}
+                              />
+                              <LineupPill
+                                impact={m.lineup.awayImpact}
+                                label={m.away.name}
+                                note={m.lineup.note}
                               />
                             </>
                           )}
@@ -756,7 +932,9 @@ export default function App() {
                                   note={m.awayRest.note}
                                   label={m.away.name}
                                 />
-                                {product === "powerplay" && m.goals && (
+                                {(product === "powerplay" ||
+                                  product === "maltipset") &&
+                                  m.goals && (
                                   <>
                                     <GoalNeedPill
                                       need={m.goals.homeAttackNeed}
@@ -770,42 +948,47 @@ export default function App() {
                                     />
                                   </>
                                 )}
+                                {(product === "stryktipset" ||
+                                  product === "maltipset") &&
+                                  m.lineup && (
+                                  <>
+                                    <LineupPill
+                                      impact={m.lineup.homeImpact}
+                                      label={m.home.name}
+                                      note={m.lineup.note}
+                                    />
+                                    <LineupPill
+                                      impact={m.lineup.awayImpact}
+                                      label={m.away.name}
+                                      note={m.lineup.note}
+                                    />
+                                  </>
+                                )}
                               </div>
-                              {product === "powerplay" && m.goals && (
-                                <div className="goal-block">
-                                  <div className="goal-line">
-                                    <strong>Mål</strong>
-                                    {m.goals.expectedGoals != null ? (
-                                      <span>
-                                        ca{" "}
-                                        {m.goals.expectedGoals
-                                          .toFixed(1)
-                                          .replace(".", ",")}{" "}
-                                        totalt · {m.goals.likelyRange}
-                                        {m.goals.over45ProbPct != null
-                                          ? ` · Ö4,5 ${String(m.goals.over45ProbPct).replace(".", ",")}%`
-                                          : ""}
-                                        {m.goals.over55ProbPct != null
-                                          ? ` · Ö5,5 ${String(m.goals.over55ProbPct).replace(".", ",")}%`
-                                          : ""}
-                                      </span>
-                                    ) : (
-                                      <span>
-                                        {m.goals.note || "målanalys saknas"}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {(m.goals.homeNeedNote ||
-                                    m.goals.awayNeedNote) && (
-                                    <div className="goal-need">
-                                      {[
-                                        m.goals.homeNeedNote,
-                                        m.goals.awayNeedNote,
-                                      ]
-                                        .filter(Boolean)
-                                        .join(" · ")}
-                                    </div>
-                                  )}
+                              {(product === "powerplay" ||
+                                product === "maltipset") &&
+                                m.goals && (
+                                <GoalBlock
+                                  goals={m.goals}
+                                  malSelected={m.malSelected}
+                                  goalRank={m.goalRank}
+                                />
+                              )}
+                              {(product === "stryktipset" ||
+                                product === "maltipset") &&
+                                m.lineup &&
+                                (m.lineup.windowActive ||
+                                  m.lineup.items.length > 0 ||
+                                  m.lineup.oddsDriftNote) && (
+                                <div
+                                  className={`lineup-block ${m.lineup.windowActive ? "late" : ""}`}
+                                >
+                                  <strong>
+                                    {m.lineup.windowActive
+                                      ? "Sen analys"
+                                      : "Lag"}
+                                  </strong>{" "}
+                                  {m.lineup.note}
                                 </div>
                               )}
                               <div className="reason">{m.pickReason}</div>
@@ -820,14 +1003,22 @@ export default function App() {
                             </td>
                             <td>
                               <div className="pick-cells">
-                                {(["1", "X", "2"] as Outcome[]).map((o) => (
+                                {product === "maltipset" ? (
                                   <span
-                                    key={o}
-                                    className={`pick-cell ${m.pick.includes(o) ? "on" : ""}`}
+                                    className={`pick-cell ${m.malSelected ? "on" : ""}`}
                                   >
-                                    {o}
+                                    {m.malSelected ? "M" : "·"}
                                   </span>
-                                ))}
+                                ) : (
+                                  (["1", "X", "2"] as Outcome[]).map((o) => (
+                                    <span
+                                      key={o}
+                                      className={`pick-cell ${m.pick.includes(o) ? "on" : ""}`}
+                                    >
+                                      {o}
+                                    </span>
+                                  ))
+                                )}
                               </div>
                             </td>
                           </tr>

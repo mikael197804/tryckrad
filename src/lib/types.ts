@@ -54,8 +54,11 @@ export type RestSignal = {
 };
 
 export type GoalAnalysis = {
+  sport: "hockey" | "football";
   expectedGoals: number | null;
   likelyRange: string;
+  over25ProbPct: number | null;
+  over35ProbPct: number | null;
   over45ProbPct: number | null;
   over55ProbPct: number | null;
   mainLine: number | null;
@@ -65,6 +68,27 @@ export type GoalAnalysis = {
   homeNeedNote: string;
   awayNeedNote: string;
   note: string;
+};
+
+export type LineupImpactItem = {
+  side: "home" | "away";
+  player: string;
+  status: "out" | "doubt" | "returned";
+  impact: "worse" | "better" | "neutral";
+  severity: "low" | "medium" | "high";
+  note: string;
+  source: string;
+};
+
+export type LateLineupAnalysis = {
+  windowActive: boolean;
+  minutesToKickoff: number | null;
+  homeImpact: "better" | "worse" | "neutral" | "unknown";
+  awayImpact: "better" | "worse" | "neutral" | "unknown";
+  items: LineupImpactItem[];
+  oddsDriftNote: string | null;
+  note: string;
+  analyzedAt: string;
 };
 
 export type MatchAnalysis = {
@@ -87,6 +111,10 @@ export type MatchAnalysis = {
   homeRest: RestSignal;
   awayRest: RestSignal;
   goals: GoalAnalysis;
+  lineup: LateLineupAnalysis;
+  /** Måltipset: rank 1 = högst förväntat målantal */
+  goalRank: number | null;
+  malSelected: boolean;
   pick: Outcome[];
   pickReason: string;
   score1: number;
@@ -97,6 +125,7 @@ export type MatchAnalysis = {
 export type DrawBundle = {
   drawNumber: number;
   productName: string;
+  productKind: "powerplay" | "topptipset" | "stryktipset" | "maltipset";
   closeDescription: string;
   closeTime: string;
   openTime: string;
@@ -111,6 +140,9 @@ export type DrawBundle = {
   tableAlerts: string[];
   restAlerts: string[];
   goalAlerts: string[];
+  lineupAlerts: string[];
+  /** Måltipset: de 8 högst rankade matchnumren */
+  malTip: number[];
 };
 
 export type Article = {
@@ -138,4 +170,7 @@ export type GeneratedSystem = {
   picks: SystemPick[];
   summary: string;
   risk: "lågt" | "medel" | "högt";
+  kind?: "1x2" | "mal";
+  /** Måltipset: markerade matchnummer (M8–M14) */
+  malEventNumbers?: number[];
 };

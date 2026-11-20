@@ -146,7 +146,11 @@ function articleMatchesTeams(
 export async function fetchArticlesForMatches(
   matches: MatchAnalysis[],
   drawNumber: number,
-  product: "powerplay" | "topptipset" = "powerplay"
+  product:
+    | "powerplay"
+    | "topptipset"
+    | "stryktipset"
+    | "maltipset" = "powerplay"
 ): Promise<Article[]> {
   const teamQuery = [
     ...new Set(matches.flatMap((m) => [m.home.name, m.away.name])),
@@ -154,8 +158,20 @@ export async function fetchArticlesForMatches(
     .slice(0, 6)
     .join(" OR ");
 
+  const footballProduct =
+    product === "topptipset" ||
+    product === "stryktipset" ||
+    product === "maltipset";
+
+  const productNewsQuery =
+    product === "stryktipset"
+      ? "Stryktipset tips Svenska Spel"
+      : product === "maltipset"
+        ? "Måltipset tips Svenska Spel"
+        : "Topptipset tips Svenska Spel";
+
   const feeds: { url: string; source: string }[] =
-    product === "topptipset"
+    footballProduct
       ? [
           {
             url: `https://news.google.com/rss/search?q=${encodeURIComponent(
@@ -165,9 +181,9 @@ export async function fetchArticlesForMatches(
           },
           {
             url: `https://news.google.com/rss/search?q=${encodeURIComponent(
-              "Topptipset tips Svenska Spel"
+              productNewsQuery
             )}&hl=sv&gl=SE&ceid=SE:sv`,
-            source: "Topptipset-tips",
+            source: "Tips-nyheter",
           },
           {
             url: "https://www.fotbollskanalen.se/rss/",
@@ -240,10 +256,10 @@ export async function fetchArticlesForMatches(
     // Keep general hockey/powerplay articles too, but prioritize match hits
     if (teams.length === 0) {
       const general =
-        (product === "topptipset"
-          ? /topptipset|premier|champions|allsvenskan|tips|match/i.test(
+        (footballProduct
+          ? /stryktipset|måltipset|maltipset|topptipset|premier|champions|championship|allsvenskan|tips|match/i.test(
               item.title
-            ) || /topptipset|tips/i.test(item.snippet)
+            ) || /stryk|måltips|topptipset|tips/i.test(item.snippet)
           : /powerplay|shl|hockeyallsvenskan|nhl|tips|match/i.test(
               item.title
             ) || /powerplay|shl|tips/i.test(item.snippet));

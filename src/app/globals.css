@@ -106,6 +106,7 @@ select {
 
 .product-switch {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
   margin-top: 0.85rem;
 }
@@ -392,6 +393,48 @@ select {
 
 .alert-list.goal-alerts {
   color: #9eecc0;
+}
+
+.alert-list.lineup-alerts {
+  color: #ffd28a;
+}
+
+.ctx-pill.lineup-worse {
+  border-color: rgba(255, 140, 140, 0.55);
+  color: #ffb0b0;
+}
+
+.ctx-pill.lineup-better {
+  border-color: rgba(120, 220, 160, 0.55);
+  color: #9eecc0;
+}
+
+.goal-block.mal-on {
+  border-left-color: rgba(255, 200, 80, 0.75);
+  background: rgba(40, 32, 7, 0.4);
+}
+
+.lineup-block {
+  margin-top: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  border-left: 2px solid rgba(255, 210, 138, 0.45);
+  background: rgba(40, 28, 7, 0.35);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: rgba(223, 247, 234, 0.88);
+}
+
+.lineup-block.late {
+  border-left-color: rgba(255, 120, 80, 0.75);
+  background: rgba(50, 18, 8, 0.45);
+}
+
+.lineup-block strong {
+  color: #ffd28a;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 0.35rem;
 }
 
 .tip-strip {

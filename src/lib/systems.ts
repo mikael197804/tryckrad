@@ -121,10 +121,70 @@ function systemName(cost: number, index: number): string {
   return `${labels[index] ?? "System"} ${cost} kr`;
 }
 
+function combinations(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  if (k === 0 || k === n) return 1;
+  let r = 1;
+  for (let i = 1; i <= k; i++) {
+    r = (r * (n - k + i)) / i;
+  }
+  return Math.round(r);
+}
+
+/** Måltipset: markera N matcher, vinst om 8 målrikaste ingår (M-system). */
+export function generateMaltipsetSystems(
+  matches: MatchAnalysis[],
+  rowPrice = 2.5
+): GeneratedSystem[] {
+  const ranked = [...matches].sort((a, b) => {
+    const ra = a.goalRank ?? 999;
+    const rb = b.goalRank ?? 999;
+    return ra - rb;
+  });
+  if (ranked.length < 8) return [];
+
+  const systems: GeneratedSystem[] = [];
+  // M8–M12: radkostnad = C(n,8) * 2,50
+  for (const n of [8, 9, 10, 11, 12]) {
+    if (n > ranked.length) break;
+    const rows = combinations(n, 8);
+    const cost = Math.round(rows * rowPrice * 100) / 100;
+    if (cost > 1500) continue;
+    const selected = ranked.slice(0, n);
+    const picks: SystemPick[] = matches.map((m) => {
+      const on = selected.some((s) => s.eventNumber === m.eventNumber);
+      return {
+        eventNumber: m.eventNumber,
+        description: m.description,
+        outcomes: on ? (["1"] as Outcome[]) : [],
+        cover: on ? "enkel" : "enkel",
+        reason: on
+          ? `Markerad (målrank ${m.goalRank})`
+          : `Ej markerad (rank ${m.goalRank})`,
+      };
+    });
+    systems.push({
+      name: `M${n} · ${cost} kr`,
+      costKr: cost,
+      rows,
+      picks,
+      summary: `${n} matcher markerade · ${rows} rader × ${String(rowPrice).replace(".", ",")} kr. Tippar de målrikaste.`,
+      risk: n <= 8 ? "högt" : n <= 10 ? "medel" : "lågt",
+      kind: "mal",
+      malEventNumbers: selected.map((m) => m.eventNumber),
+    });
+  }
+  return systems;
+}
+
 export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   if (matches.length === 0) return [];
 
   const preferred = [48, 96, 144, 288, 432, 72, 192, 576];
+  // Stryktipset (13): fler större system behövs ibland
+  if (matches.length >= 13) {
+    preferred.push(64, 108, 162, 216, 324, 486, 729);
+  }
   const systems: GeneratedSystem[] = [];
   const used = new Set<number>();
 
@@ -152,6 +212,7 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
       picks,
       summary: `${hel} hel · ${halv} halv · ${picks.length - hel - halv} enkel. ${fatigueMatches} matcher med förhöjd belastning vägdes in.`,
       risk: riskFromCost(cost),
+      kind: "1x2",
     });
 
     if (systems.length >= 4) break;
@@ -171,6 +232,7 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
         picks,
         summary: `Automatiskt system inom 48–720 kr.`,
         risk: riskFromCost(cost),
+        kind: "1x2",
       });
       break;
     }

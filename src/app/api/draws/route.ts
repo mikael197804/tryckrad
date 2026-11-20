@@ -8,8 +8,15 @@ export const revalidate = 0;
 export async function GET(req: NextRequest) {
   try {
     const raw = req.nextUrl.searchParams.get("product") ?? "powerplay";
-    const product: ProductKind =
-      raw === "topptipset" ? "topptipset" : "powerplay";
+    const allowed: ProductKind[] = [
+      "powerplay",
+      "topptipset",
+      "stryktipset",
+      "maltipset",
+    ];
+    const product: ProductKind = allowed.includes(raw as ProductKind)
+      ? (raw as ProductKind)
+      : "powerplay";
     const draws = await buildAllDrawBundles(product);
     return NextResponse.json({
       generatedAt: new Date().toISOString(),

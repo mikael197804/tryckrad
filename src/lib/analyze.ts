@@ -8,10 +8,18 @@ import {
 } from "./context";
 import { analyzeMatchGoals, kambiIdFromProviders } from "./goals";
 import {
+  analyzeMatchLineup,
+  emptyLineup,
+  lineupGoalAdjust,
+  lineupScoreAdjust,
+} from "./lineups";
+import {
   favouriteFromDist,
+  isFootballProduct,
   parseDistribution,
   parseOdds,
   participants,
+  type ProductKind,
   type RawDraw,
   type RawEvent,
 } from "./svenskaspel";
@@ -327,23 +335,33 @@ function buildPick(
 
 export async function analyzeDraw(
   draw: RawDraw,
-  allDraws: RawDraw[]
+  allDraws: RawDraw[],
+  product: ProductKind = "powerplay"
 ): Promise<{
   matches: MatchAnalysis[];
   fatigueAlerts: string[];
   tableAlerts: string[];
   restAlerts: string[];
   goalAlerts: string[];
+  lineupAlerts: string[];
+  malTip: number[];
   leagueSummary: string;
 }> {
   const schedule = buildTeamSchedule(allDraws);
-  const drafts: Omit<MatchAnalysis, "goals">[] = [];
+  const drafts: Array<
+    Omit<MatchAnalysis, "goals" | "lineup" | "goalRank" | "malSelected"> & {
+      startOdds: ReturnType<typeof parseOdds>;
+    }
+  > = [];
   const fatigueAlerts: string[] = [];
   const tableAlerts: string[] = [];
   const restAlerts: string[] = [];
   const goalAlerts: string[] = [];
+  const lineupAlerts: string[] = [];
   const leagues = new Set<string>();
   const kambiByEvent = new Map<number, string | null>();
+  const football = isFootballProduct(product);
+  const goalSport = football ? "football" : "hockey";
 
   for (const event of draw.drawEvents) {
     if (event.cancelled) continue;
@@ -358,6 +376,7 @@ export async function analyzeDraw(
     const league = event.match.league.name;
     const table: LeagueTable | null = tables.get(league) ?? null;
     kambiByEvent.set(event.eventNumber, kambiIdFromProviders(event.providerIds));
+    const startOdds = parseOdds(event.startOdds);
 
     let homeFatigue = fatigueForTeam(home.id, event.match.matchStart, schedule);
     let awayFatigue = fatigueForTeam(away.id, event.match.matchStart, schedule);
@@ -489,14 +508,76 @@ export async function analyzeDraw(
       score1: scored.score1,
       scoreX: scored.scoreX,
       score2: scored.score2,
+      startOdds,
     });
   }
 
-  // Målanalys efter helhetsbilden (tabell/vila/1X2)
-  const matches: MatchAnalysis[] = await Promise.all(
+  // Laguppställning / oddsrörelse + målanalys efter helhetsbilden
+  let matches: MatchAnalysis[] = await Promise.all(
     drafts.map(async (draft) => {
+      const { startOdds, ...base } = draft;
+      const lineup = football
+        ? await analyzeMatchLineup({
+            home: draft.home,
+            away: draft.away,
+            league: draft.league,
+            matchStart: draft.matchStart,
+            startOdds,
+            currentOdds: draft.odds,
+          })
+        : emptyLineup(draft.matchStart, "laganalys gäller fotbollstips");
+
+      const adj = football ? lineupScoreAdjust(lineup) : { d1: 0, dX: 0, d2: 0 };
+      let score1 = draft.score1 + adj.d1;
+      let scoreX = draft.scoreX + adj.dX;
+      let score2 = draft.score2 + adj.d2;
+      const sum = Math.max(score1 + scoreX + score2, 0.01);
+      score1 /= sum;
+      scoreX /= sum;
+      score2 /= sum;
+
+      let pick = draft.pick;
+      let pickReason = draft.pickReason;
+      if (football && (adj.d1 !== 0 || adj.dX !== 0 || adj.d2 !== 0)) {
+        const rebuilt = buildPick(
+          { score1, scoreX, score2 },
+          draft.homeFatigue,
+          draft.awayFatigue,
+          draft.homeTable,
+          draft.awayTable,
+          draft.homeRest,
+          draft.awayRest
+        );
+        pick = rebuilt.pick;
+        pickReason = `${rebuilt.reason}. ${lineup.windowActive ? "Sen laganalys inräknad" : "Lagnyhet/oddsrörelse vägd in"}`;
+      }
+
+      if (
+        football &&
+        (lineup.windowActive ||
+          lineup.items.length > 0 ||
+          lineup.oddsDriftNote)
+      ) {
+        const impactBits = [
+          lineup.homeImpact === "worse" || lineup.homeImpact === "better"
+            ? `${draft.home.name}: ${lineup.homeImpact === "worse" ? "sämre" : "bättre"}`
+            : null,
+          lineup.awayImpact === "worse" || lineup.awayImpact === "better"
+            ? `${draft.away.name}: ${lineup.awayImpact === "worse" ? "sämre" : "bättre"}`
+            : null,
+        ].filter(Boolean);
+        if (impactBits.length || lineup.windowActive || lineup.oddsDriftNote) {
+          lineupAlerts.push(
+            `Match ${draft.eventNumber}${lineup.windowActive ? " · SEN 15 min" : ""}: ${
+              impactBits.join(" · ") || lineup.oddsDriftNote || lineup.note
+            }`
+          );
+        }
+      }
+
       const goals = await analyzeMatchGoals({
         kambiEventId: kambiByEvent.get(draft.eventNumber) ?? null,
+        sport: goalSport,
         home: draft.home,
         away: draft.away,
         homeTable: draft.homeTable,
@@ -505,19 +586,64 @@ export async function analyzeDraw(
         awayFatigue: draft.awayFatigue,
         homeRest: draft.homeRest,
         awayRest: draft.awayRest,
-        score1: draft.score1,
-        score2: draft.score2,
+        score1,
+        score2,
+        lambdaAdjust: football ? lineupGoalAdjust(lineup) : 0,
       });
       if (goals.expectedGoals != null) {
         goalAlerts.push(
           `Match ${draft.eventNumber}: ca ${goals.expectedGoals.toFixed(1).replace(".", ",")} mål (${goals.likelyRange}) · ${goals.homeNeedNote} · ${goals.awayNeedNote}`
         );
       }
-      return { ...draft, goals };
+
+      return {
+        ...base,
+        pick,
+        pickReason,
+        score1,
+        scoreX,
+        score2,
+        goals,
+        lineup,
+        goalRank: null,
+        malSelected: false,
+      };
     })
   );
 
-  matches.sort((a, b) => a.eventNumber - b.eventNumber);
+  // Måltipset: rangordna efter förväntat målantal, tippa topp 8
+  let malTip: number[] = [];
+  if (product === "maltipset") {
+    const ranked = [...matches].sort((a, b) => {
+      const ga = a.goals.expectedGoals ?? -1;
+      const gb = b.goals.expectedGoals ?? -1;
+      if (gb !== ga) return gb - ga;
+      const oa = a.goals.over25ProbPct ?? 0;
+      const ob = b.goals.over25ProbPct ?? 0;
+      if (ob !== oa) return ob - oa;
+      return a.eventNumber - b.eventNumber;
+    });
+    ranked.forEach((m, i) => {
+      m.goalRank = i + 1;
+      m.malSelected = i < 8;
+    });
+    malTip = ranked.slice(0, 8).map((m) => m.eventNumber);
+    matches = matches
+      .map((m) => {
+        const r = ranked.find((x) => x.eventNumber === m.eventNumber)!;
+        return {
+          ...m,
+          goalRank: r.goalRank,
+          malSelected: r.malSelected,
+          pickReason: r.malSelected
+            ? `Måltips #${r.goalRank}: ${r.goals.note}`
+            : `Ej bland topp 8 (rank ${r.goalRank}): ${r.goals.note}`,
+        };
+      })
+      .sort((a, b) => a.eventNumber - b.eventNumber);
+  } else {
+    matches.sort((a, b) => a.eventNumber - b.eventNumber);
+  }
 
   return {
     matches,
@@ -525,6 +651,8 @@ export async function analyzeDraw(
     tableAlerts,
     restAlerts,
     goalAlerts,
+    lineupAlerts,
+    malTip,
     leagueSummary: [...leagues].join(", "),
   };
 }

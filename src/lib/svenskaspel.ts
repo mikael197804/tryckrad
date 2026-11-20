@@ -2,7 +2,11 @@ import type { Distribution, Odds, Outcome, TeamInfo } from "./types";
 
 const DRAWS_URL = "https://api.www.svenskaspel.se/draw/1/powerplay/draws";
 
-export type ProductKind = "powerplay" | "topptipset";
+export type ProductKind =
+  | "powerplay"
+  | "topptipset"
+  | "stryktipset"
+  | "maltipset";
 
 export type RawDraw = {
   drawNumber: number;
@@ -28,6 +32,7 @@ export type RawEvent = {
   eventDescription: string;
   cancelled: boolean;
   odds?: { one?: string; x?: string; two?: string } | null;
+  startOdds?: { one?: string; x?: string; two?: string } | null;
   svenskaFolket?: {
     one?: string;
     x?: string;
@@ -266,10 +271,44 @@ export async function fetchTopptipsetDraws(): Promise<RawDraw[]> {
   );
 }
 
+async function fetchOpenListDraws(slug: string): Promise<RawDraw[]> {
+  const data = (await fetchJson(
+    `https://api.www.svenskaspel.se/draw/1/${slug}/draws`
+  )) as { draws?: RawDraw[] };
+  return (data.draws ?? []).filter((d) => {
+    if (!Array.isArray(d.drawEvents) || d.drawEvents.length === 0) return false;
+    if (d.drawState && d.drawState !== "Open") return false;
+    return true;
+  });
+}
+
+export async function fetchStryktipsetDraws(): Promise<RawDraw[]> {
+  return (await fetchOpenListDraws("stryktipset")).sort(
+    (a, b) =>
+      new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
+  );
+}
+
+export async function fetchMaltipsetDraws(): Promise<RawDraw[]> {
+  return (await fetchOpenListDraws("maltipset")).sort(
+    (a, b) =>
+      new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
+  );
+}
+
 export async function fetchDrawsForProduct(
   product: ProductKind
 ): Promise<RawDraw[]> {
-  return product === "topptipset"
-    ? fetchTopptipsetDraws()
-    : fetchPowerplayDraws();
+  if (product === "topptipset") return fetchTopptipsetDraws();
+  if (product === "stryktipset") return fetchStryktipsetDraws();
+  if (product === "maltipset") return fetchMaltipsetDraws();
+  return fetchPowerplayDraws();
+}
+
+export function isFootballProduct(product: ProductKind): boolean {
+  return (
+    product === "topptipset" ||
+    product === "stryktipset" ||
+    product === "maltipset"
+  );
 }
