@@ -1,6 +1,15 @@
 import { upstreamFetchInit } from "./fetch-mode";
+import {
+  importOddsetTips,
+  listTrackedOddsetTips,
+  ODDSET_TIP_RETENTION_HOURS,
+  rememberOddsetTips,
+  settleOddsetTips,
+  type OddsetTrackedTip,
+} from "./oddsetHistory";
 import { overMarketValue } from "./valueOdds";
 
+export type { OddsetTrackedTip } from "./oddsetHistory";
 export type OddsetMarket = "over_2_5";
 
 export type RivalryInfo = {
@@ -47,6 +56,9 @@ export type OddsetDayTip = {
   /** Upp till 5 matcher att spela detta svenska dygn. */
   selected: OddsetCandidate[];
   candidates: OddsetCandidate[];
+  /** Tips som sparats senaste 24 h, med grönt/rött när resultatet är klart. */
+  tracked: OddsetTrackedTip[];
+  retentionHours: number;
   analyzedCount: number;
   eligibleCount: number;
   picksPerDay: number;
@@ -651,7 +663,9 @@ async function fetchMarketsForEvents(
   return map;
 }
 
-export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
+export async function buildOddsetDayTip(opts?: {
+  clientTips?: Array<OddsetCandidate & { tippedAt?: string }>;
+}): Promise<OddsetDayTip> {
   const now = new Date();
   const today = todaySwedishPlayDate(now);
   const tomorrow = nextSwedishPlayDate(now);
@@ -753,19 +767,29 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
   });
   const selected = candidates.slice(0, PICKS_PER_DAY);
 
+  if (opts?.clientTips?.length) {
+    await importOddsetTips(opts.clientTips);
+  }
+  await rememberOddsetTips(selected);
+  const tracked = await settleOddsetTips();
+
   return {
     playDate: play.isoDate,
     playDateLabel: play.label,
     generatedAt: new Date().toISOString(),
     selected,
     candidates: candidates.slice(0, 12),
+    tracked,
+    retentionHours: ODDSET_TIP_RETENTION_HOURS,
     analyzedCount: toAnalyze.length,
     eligibleCount: candidates.length,
     picksPerDay: PICKS_PER_DAY,
     rules: [
       `${PICKS_PER_DAY} öppna Oddset-matcher (Över 2,5) som går att spela nu.`,
       `Fönster: ${windowNote}.`,
-      "Bara matcher som inte startat ännu.",
+      "Bara matcher som inte startat ännu (för nya tips).",
+      `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
+      "Efter slutsignal: grönt = Över 2,5 rätt, rött = fel.",
       "Bara matcher där modellen bedömer ≥ 55% chans till Över 2,5 mål visas.",
       "Sannolikhet beräknas innan listning (Poisson + Odds Ö/U-stege).",
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
@@ -774,4 +798,16 @@ export async function buildOddsetDayTip(): Promise<OddsetDayTip> {
     disclaimer:
       "Oddset-tips är analys, ingen garanti. Odds från Svenska Spel/Kambi kan ändras. 18+ spela ansvarsfullt.",
   };
+}
+
+/** Enbart settlement av sparade/klienttips (lättare anrop). */
+export async function settleStoredOddsetTips(
+  clientTips?: Array<OddsetCandidate & { tippedAt?: string }>
+): Promise<OddsetTrackedTip[]> {
+  if (clientTips?.length) await importOddsetTips(clientTips);
+  return settleOddsetTips();
+}
+
+export async function getTrackedOddsetTips(): Promise<OddsetTrackedTip[]> {
+  return listTrackedOddsetTips();
 }

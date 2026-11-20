@@ -1,13 +1,94 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { OddsetCandidate, OddsetDayTip } from "../lib/oddset";
+import type {
+  OddsetCandidate,
+  OddsetDayTip,
+  OddsetTrackedTip,
+} from "../lib/oddset";
 import {
   formatPreCloseLabel,
   isInPreCloseWindow,
   nextPreCloseRefreshAt,
 } from "../lib/refresh";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
+
+const ODDSET_LS_KEY = "mikaels-oddset-tips-24h";
+const ODDSET_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+function loadOddsetLocalTips(): OddsetTrackedTip[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(ODDSET_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as OddsetTrackedTip[];
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    return parsed.filter((t) => {
+      const at = Date.parse(t.tippedAt || t.kickoff);
+      return Number.isFinite(at) && now - at <= ODDSET_RETENTION_MS;
+    });
+  } catch {
+    return [];
+  }
+}
+
+function saveOddsetLocalTips(tips: OddsetTrackedTip[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const now = Date.now();
+    const pruned = tips.filter((t) => {
+      const at = Date.parse(t.tippedAt || t.kickoff);
+      return Number.isFinite(at) && now - at <= ODDSET_RETENTION_MS;
+    });
+    window.localStorage.setItem(ODDSET_LS_KEY, JSON.stringify(pruned));
+  } catch {
+    // private mode / quota
+  }
+}
+
+function outcomeRank(o: OddsetTrackedTip["outcome"] | undefined): number {
+  if (o === "won" || o === "lost") return 3;
+  if (o === "live") return 2;
+  return 1;
+}
+
+function mergeOddsetTracked(
+  ...groups: Array<OddsetTrackedTip[] | undefined>
+): OddsetTrackedTip[] {
+  const byId = new Map<number, OddsetTrackedTip>();
+  for (const group of groups) {
+    for (const t of group || []) {
+      if (!t?.eventId) continue;
+      const prev = byId.get(t.eventId);
+      if (!prev) {
+        byId.set(t.eventId, t);
+        continue;
+      }
+      const tippedAt =
+        Date.parse(prev.tippedAt) <= Date.parse(t.tippedAt)
+          ? prev.tippedAt
+          : t.tippedAt;
+      const preferNew = outcomeRank(t.outcome) >= outcomeRank(prev.outcome);
+      const base = preferNew ? t : prev;
+      const other = preferNew ? prev : t;
+      byId.set(t.eventId, {
+        ...base,
+        tippedAt,
+        homeGoals: base.homeGoals ?? other.homeGoals,
+        awayGoals: base.awayGoals ?? other.awayGoals,
+        totalGoals: base.totalGoals ?? other.totalGoals,
+        settledAt: base.settledAt ?? other.settledAt,
+        resultNote: base.resultNote ?? other.resultNote,
+      });
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) =>
+      Date.parse(b.tippedAt) - Date.parse(a.tippedAt) ||
+      Date.parse(a.kickoff) - Date.parse(b.kickoff)
+  );
+}
 
 type ProductKind =
   | "powerplay"
@@ -378,15 +459,26 @@ function RedCardPill({
   );
 }
 
+function outcomeClass(outcome?: OddsetTrackedTip["outcome"]): string {
+  if (outcome === "won") return "oddset-card oddset-won";
+  if (outcome === "lost") return "oddset-card oddset-lost";
+  if (outcome === "live") return "oddset-card oddset-live";
+  return "oddset-card";
+}
+
 function OddsetPickCard({
   c,
   index,
+  tracked,
 }: {
-  c: OddsetCandidate;
+  c: OddsetCandidate | OddsetTrackedTip;
   index: number;
+  tracked?: OddsetTrackedTip;
 }) {
+  const outcome = tracked?.outcome;
+  const resultNote = tracked?.resultNote;
   return (
-    <article className="match-card">
+    <article className={`match-card ${outcomeClass(outcome)}`}>
       <div className="match-card-top">
         <span className="match-num">{index}</span>
         <div>
@@ -399,9 +491,24 @@ function OddsetPickCard({
           </div>
         </div>
         <div className="pick-cells">
-          <span className="pick-cell on">{c.over25ProbPct.toFixed(0)}%</span>
+          {outcome === "won" || outcome === "lost" ? (
+            <span
+              className={`oddset-result-badge ${
+                outcome === "won" ? "won" : "lost"
+              }`}
+            >
+              {outcome === "won" ? "Rätt" : "Fel"}
+            </span>
+          ) : outcome === "live" ? (
+            <span className="oddset-result-badge live">Live</span>
+          ) : (
+            <span className="pick-cell on">{c.over25ProbPct.toFixed(0)}%</span>
+          )}
         </div>
       </div>
+      {resultNote && (
+        <div className="oddset-result-note">{resultNote}</div>
+      )}
       <div className="oddset-pick-line">
         <span className="ctx-pill table-comfortable">Över 2,5 mål</span>
         <span className="odds">
@@ -439,15 +546,28 @@ function OddsetPickCard({
 function OddsetView({ tip }: { tip: OddsetDayTip }) {
   const picks = tip.selected;
   const picksPerDay = tip.picksPerDay ?? 5;
+  const tracked = tip.tracked || [];
+  const trackedById = new Map(tracked.map((t) => [t.eventId, t]));
+  const openIds = new Set(picks.map((p) => p.eventId));
+  const history = tracked.filter((t) => !openIds.has(t.eventId));
+  const retention = tip.retentionHours ?? 24;
+  const won = tracked.filter((t) => t.outcome === "won").length;
+  const lost = tracked.filter((t) => t.outcome === "lost").length;
+
   return (
     <div className="rise">
       <section className="panel">
         <h2>Öppna Oddset nu · {tip.playDateLabel}</h2>
         <p className="panel-lead">
           {picksPerDay} tips på matcher som <strong>går att spela nu</strong>{" "}
-          (öppna, ej startade). Visa bara om modellen bedömer minst 55% chans
-          till Över 2,5 mål. Analyserat {tip.analyzedCount} ·{" "}
-          {tip.eligibleCount} klarade sannolikhetsfiltret.
+          (öppna, ej startade). Tipsen ligger kvar{" "}
+          <strong>{retention} timmar</strong> – grönt när Över 2,5 går in,
+          rött när det missar. Analyserat {tip.analyzedCount} ·{" "}
+          {tip.eligibleCount} klarade sannolikhetsfiltret
+          {tracked.length > 0
+            ? ` · 24h: ${won} rätt / ${lost} fel`
+            : ""}
+          .
         </p>
         <ul className="alert-list table-alerts">
           {tip.rules.map((r) => (
@@ -465,11 +585,36 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         ) : (
           <div className="match-cards">
             {picks.map((c, i) => (
-              <OddsetPickCard key={c.eventId} c={c} index={i + 1} />
+              <OddsetPickCard
+                key={c.eventId}
+                c={c}
+                index={i + 1}
+                tracked={trackedById.get(c.eventId)}
+              />
             ))}
           </div>
         )}
       </section>
+
+      {history.length > 0 && (
+        <section className="panel">
+          <h2>Tips senaste {retention} h ({history.length})</h2>
+          <p className="panel-lead">
+            Sparade tips markeras grönt (rätt) eller rött (fel) när matchen är
+            avgjord.
+          </p>
+          <div className="match-cards">
+            {history.map((c, i) => (
+              <OddsetPickCard
+                key={`hist-${c.eventId}`}
+                c={c}
+                index={i + 1}
+                tracked={c}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {tip.candidates.length > picks.length && (
         <section className="panel">
@@ -483,6 +628,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
                 key={c.eventId}
                 c={c}
                 index={picks.length + i + 1}
+                tracked={trackedById.get(c.eventId)}
               />
             ))}
           </div>
@@ -525,16 +671,46 @@ export default function App() {
         }
 
         if (product === "oddset") {
+          const localTips = loadOddsetLocalTips();
           const res = await fetch(
             `/api/oddset${fresh ? "?fresh=1" : ""}`,
-            { cache: "no-store" }
+            {
+              method: "POST",
+              cache: "no-store",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                clientTips: localTips.map((t) => ({
+                  ...t,
+                  tippedAt: t.tippedAt,
+                })),
+              }),
+            }
           );
           const json = (await res.json()) as OddsetDayTip & {
             error?: string;
             fresh?: boolean;
           };
           if (!res.ok) throw new Error(json.error || "Kunde inte hämta Oddset");
-          setOddset(json);
+          const tippedAt = json.generatedAt || new Date().toISOString();
+          const fromSelected: OddsetTrackedTip[] = (json.selected || []).map(
+            (c) => ({
+              ...c,
+              tippedAt,
+              outcome: "pending" as const,
+              homeGoals: null,
+              awayGoals: null,
+              totalGoals: null,
+              settledAt: null,
+              resultNote: null,
+            })
+          );
+          const merged = mergeOddsetTracked(
+            localTips,
+            fromSelected,
+            json.tracked
+          );
+          saveOddsetLocalTips(merged);
+          setOddset({ ...json, tracked: merged });
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else {
           const res = await fetch(
@@ -699,7 +875,8 @@ export default function App() {
           <p className="brand-tag">
             Alla spel uppdateras 12 min före spelstopp. Powerplay/Topptipset lär
             av förra omgångens missar automatiskt. Stryk/Mål: lagnyheter ca 15
-            min före avspark. Oddset: fem öppna Över 2,5-tips att spela nu.
+            min före avspark. Oddset: fem Över 2,5-tips som sparas 24 h
+            (grönt/rött).
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
             {DRAW_PRODUCTS.map((p) => (
