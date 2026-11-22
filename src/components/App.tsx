@@ -109,6 +109,21 @@ function saveOddsetLocalLessons(lessons: OddsetLesson[]): void {
   }
 }
 
+function historyKeepUntilMs(p: HistoryPick): number {
+  if (p.status === "won" || p.status === "lost") {
+    const settled = p.settledAt ? Date.parse(p.settledAt) : NaN;
+    if (Number.isFinite(settled)) return settled;
+    const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+    if (Number.isFinite(kick)) return kick;
+  }
+  const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+  const tipped = Date.parse(p.tippedAt);
+  if (Number.isFinite(kick) && Number.isFinite(tipped)) {
+    return Math.max(kick, tipped);
+  }
+  return Number.isFinite(kick) ? kick : tipped;
+}
+
 function loadLocalHistoryPicks(): HistoryPick[] {
   if (typeof window === "undefined") return [];
   try {
@@ -118,7 +133,7 @@ function loadLocalHistoryPicks(): HistoryPick[] {
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
     return parsed.filter((p) => {
-      const at = Date.parse(p.tippedAt);
+      const at = historyKeepUntilMs(p);
       return Number.isFinite(at) && now - at <= HISTORY_RETENTION_MS;
     });
   } catch {
@@ -133,7 +148,7 @@ function saveLocalHistoryPicks(picks: HistoryPick[]): void {
     const byId = new Map<string, HistoryPick>();
     for (const p of picks) {
       if (!p?.id) continue;
-      const at = Date.parse(p.tippedAt);
+      const at = historyKeepUntilMs(p);
       if (!Number.isFinite(at) || now - at > HISTORY_RETENTION_MS) continue;
       const prev = byId.get(p.id);
       if (!prev) {
@@ -142,7 +157,18 @@ function saveLocalHistoryPicks(picks: HistoryPick[]): void {
       }
       const rank = (s: HistoryPick["status"]) =>
         s === "won" || s === "lost" ? 3 : s === "live" ? 2 : 1;
-      byId.set(p.id, rank(p.status) >= rank(prev.status) ? { ...p, tippedAt: prev.tippedAt } : prev);
+      const next =
+        rank(p.status) >= rank(prev.status)
+          ? {
+              ...p,
+              tippedAt: prev.tippedAt,
+              settledAt: p.settledAt ?? prev.settledAt ?? null,
+            }
+          : {
+              ...prev,
+              settledAt: prev.settledAt ?? p.settledAt ?? null,
+            };
+      byId.set(p.id, next);
     }
     window.localStorage.setItem(
       HISTORY_LS_KEY,
@@ -1088,7 +1114,7 @@ function HistoryView({
     <div className="history-overlay" role="dialog" aria-modal="true">
       <div className="history-panel rise">
         <div className="history-panel-top">
-          <h2>Alla tips · 24 timmar</h2>
+          <h2>Gamla resultat · 24 h</h2>
           <div className="history-actions">
             <button type="button" className="history-btn ghost" onClick={onRefresh}>
               Uppdatera resultat
@@ -1099,8 +1125,8 @@ function HistoryView({
           </div>
         </div>
         <p className="panel-lead">
-          Sparade spel från i går och i dag. Visar hur många rätt i varje tips.
-          Tipsen behålls {history?.retentionHours ?? 24} timmar.
+          Rätt/fel per tips efter att spelet är färdigt. Resultaten ligger kvar{" "}
+          {history?.retentionHours ?? 24} timmar efter färdigt resultat.
         </p>
 
         {loading && <div className="loading">Hämtar resultat…</div>}
@@ -1134,8 +1160,8 @@ function HistoryView({
 
             {history.games.length === 0 ? (
               <p className="panel-lead">
-                Inga sparade tips ännu. Öppna ett spel så sparas tipset
-                automatiskt i 24 h.
+                Inga resultat ännu. När du öppnar ett spel sparas tipset, och
+                när det är färdigt syns rätt/fel här i 24 timmar.
               </p>
             ) : (
               history.games.map((g) => {
@@ -1695,19 +1721,20 @@ export default function App() {
         <div className="product-switch" role="tablist" aria-label="Produkt">
           <button
             type="button"
+            className="product-btn history-launch"
+            onClick={openHistory}
+            title="Gamla resultat – tips med rätt/fel i 24 timmar efter färdigt spel"
+          >
+            Gamla resultat
+          </button>
+          <button
+            type="button"
             className="product-btn tips-launch"
             onClick={scrollToAnalysisTips}
             disabled={product === "oddset"}
             title="Hoppa till 1X2-tips från analys"
           >
             1X2-tips
-          </button>
-          <button
-            type="button"
-            className="product-btn history-launch"
-            onClick={openHistory}
-          >
-            Tips 24h
           </button>
           {DRAW_PRODUCTS.map((p) => (
             <button
@@ -1735,9 +1762,10 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Alla spel uppdateras 12 min före spelstopp. Tips sparas 24 h – tryck
-            på Tips 24h för rätt/fel per spel. Powerplay/Topptipset lär av
-            missar. Stryk/Mål: lagnyheter ca 15 min före avspark.
+            Alla spel uppdateras 12 min före spelstopp. Tryck på Gamla resultat
+            för rätt/fel – syns 24 h efter att spelet är färdigt.
+            Powerplay/Topptipset lär av missar. Stryk/Mål: lagnyheter ca 15 min
+            före avspark.
           </p>
         </div>
         <div className="meta-chip">

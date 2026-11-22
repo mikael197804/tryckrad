@@ -30,6 +30,8 @@ export type HistoryPick = {
   status: HistoryPickStatus;
   actual: string | null;
   resultNote: string | null;
+  /** När spelet settlades (färdigt) – resultat visas 24 h efter detta. */
+  settledAt?: string | null;
 };
 
 export type HistoryGameSummary = {
@@ -73,9 +75,28 @@ const PRODUCT_SLUG: Record<
   maltipset: "maltipset",
 };
 
+/**
+ * Behåll tips 24 h efter att spelet är färdigt.
+ * Väntande tips behålls tills kickoff/tipp + 24 h så de hinner settlas.
+ */
+export function historyRetentionAnchorMs(p: HistoryPick): number {
+  if (p.status === "won" || p.status === "lost") {
+    const settled = p.settledAt ? Date.parse(p.settledAt) : NaN;
+    if (Number.isFinite(settled)) return settled;
+    const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+    if (Number.isFinite(kick)) return kick;
+  }
+  const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+  const tipped = Date.parse(p.tippedAt);
+  if (Number.isFinite(kick) && Number.isFinite(tipped)) {
+    return Math.max(kick, tipped);
+  }
+  return Number.isFinite(kick) ? kick : tipped;
+}
+
 function prune(picks: HistoryPick[], now = Date.now()): HistoryPick[] {
   return picks.filter((p) => {
-    const at = Date.parse(p.tippedAt);
+    const at = historyRetentionAnchorMs(p);
     return Number.isFinite(at) && now - at <= TIP_HISTORY_RETENTION_MS;
   });
 }
@@ -103,6 +124,7 @@ function mergePicks(groups: HistoryPick[][]): HistoryPick[] {
             : p.tippedAt,
         actual: base.actual ?? other.actual,
         resultNote: base.resultNote ?? other.resultNote,
+        settledAt: base.settledAt ?? other.settledAt ?? null,
       });
     }
   }
@@ -241,6 +263,7 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
       ...pick,
       status: won ? "won" : "lost",
       actual: `${score.homeGoals}-${score.awayGoals}`,
+      settledAt: pick.settledAt || new Date().toISOString(),
       resultNote: won
         ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över 2,5)`
         : `Fel · ${score.homeGoals}–${score.awayGoals} (Under 2,5)`,
@@ -273,7 +296,14 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       continue;
     }
     if (p.status === "won" || p.status === "lost") {
-      out.push(p);
+      out.push({
+        ...p,
+        settledAt:
+          p.settledAt ||
+          p.kickoff ||
+          p.tippedAt ||
+          new Date().toISOString(),
+      });
       continue;
     }
     if (p.drawNumber == null || p.eventNumber == null) {
@@ -298,12 +328,14 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       continue;
     }
 
+    const settledAt = new Date().toISOString();
     if (p.market === "1x2") {
       const hit = p.pick.includes(res.outcome);
       out.push({
         ...p,
         status: hit ? "won" : "lost",
         actual: res.outcome,
+        settledAt,
         resultNote: hit
           ? `Rätt · tipset ${p.pick.join("")} träffade ${res.outcome}`
           : `Fel · tipset ${p.pick.join("")} · rätt blev ${res.outcome}`,
@@ -327,6 +359,7 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
         ...p,
         status: hit ? "won" : "lost",
         actual: `${res.homeGoals}-${res.awayGoals}`,
+        settledAt,
         resultNote: hit
           ? `Rätt · ${res.homeGoals}–${res.awayGoals} (≥3 mål)`
           : `Fel · ${res.homeGoals}–${res.awayGoals} (<3 mål)`,

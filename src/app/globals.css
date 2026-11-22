@@ -491,8 +491,10 @@ select {
 }
 
 .product-btn.history-launch {
-  border-color: rgba(255, 200, 100, 0.45);
+  border-color: rgba(255, 200, 100, 0.75);
   color: #ffe0a8;
+  background: rgba(90, 60, 20, 0.45);
+  font-weight: 700;
 }
 
 .product-btn.tips-launch {
