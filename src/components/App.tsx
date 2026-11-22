@@ -1474,21 +1474,43 @@ type AuthUser = {
   createdAt: string;
 };
 
+const STORE_TOKEN_KEY = "mikaels-tips-user-store-token";
+
+function storeHeaders(): HeadersInit {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (typeof window !== "undefined") {
+    const t = window.localStorage.getItem(STORE_TOKEN_KEY)?.trim();
+    if (t) headers["x-user-store-token"] = t;
+  }
+  return headers;
+}
+
 function UsersAdminPanel({ onClose }: { onClose: () => void }) {
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [name, setName] = useState("");
   const [role, setRole] = useState<"admin" | "user">("user");
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [created, setCreated] = useState<{
     name: string;
     password: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [storeToken, setStoreToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
+
+  useEffect(() => {
+    const t = window.localStorage.getItem(STORE_TOKEN_KEY) || "";
+    setStoreToken(t);
+    if (!t) setShowToken(true);
+  }, []);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/auth/users", { cache: "no-store" });
     const json = (await res.json()) as { users?: AuthUser[]; error?: string };
-    if (!res.ok) throw new Error(json.error || "Kunde inte hämta användare");
+    if (!res.ok) throw new Error(json.error || "Kunde inte hämta behöriga");
     setUsers(json.users || []);
   }, []);
 
@@ -1498,26 +1520,48 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
     );
   }, [load]);
 
+  function saveStoreToken() {
+    const t = storeToken.trim();
+    if (t) window.localStorage.setItem(STORE_TOKEN_KEY, t);
+    else window.localStorage.removeItem(STORE_TOKEN_KEY);
+    setInfo(
+      t
+        ? "Token sparad i din webbläsare – behöriga sparas permanent."
+        : "Token borttagen."
+    );
+  }
+
   async function createUser() {
     setBusy(true);
     setError(null);
+    setInfo(null);
     setCreated(null);
     try {
       const res = await fetch("/api/auth/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: storeHeaders(),
         body: JSON.stringify({ name, role, autoPassword: true }),
       });
       const json = (await res.json()) as {
         user?: AuthUser;
         password?: string;
+        persisted?: boolean;
+        persistError?: string | null;
         error?: string;
       };
-      if (!res.ok) throw new Error(json.error || "Kunde inte skapa");
+      if (!res.ok) throw new Error(json.error || "Kunde inte ge access");
       setCreated({
         name: json.user?.name || name,
         password: json.password || "",
       });
+      if (!json.persisted) {
+        setInfo(
+          "Access given nu, men spara en GitHub-token nedan så behörigheten ligger kvar permanent."
+        );
+        setShowToken(true);
+      } else {
+        setInfo("Personen har nu access och är sparad.");
+      }
       setName("");
       await load();
     } catch (e) {
@@ -1530,14 +1574,47 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
   async function toggleActive(u: AuthUser) {
     setBusy(true);
     setError(null);
+    setInfo(null);
     try {
       const res = await fetch("/api/auth/users", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: storeHeaders(),
         body: JSON.stringify({ id: u.id, active: !u.active }),
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        persisted?: boolean;
+      };
       if (!res.ok) throw new Error(json.error || "Kunde inte uppdatera");
+      setInfo(
+        u.active
+          ? `${u.name} har inte längre access.`
+          : `${u.name} har access igen.`
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fel");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeAccess(u: AuthUser) {
+    if (!window.confirm(`Ta bort ${u.name} helt? Personen kan då inte logga in.`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch("/api/auth/users", {
+        method: "DELETE",
+        headers: storeHeaders(),
+        body: JSON.stringify({ id: u.id }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Kunde inte ta bort");
+      setInfo(`${u.name} är borttagen – ingen access.`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fel");
@@ -1549,11 +1626,12 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
   async function resetPassword(u: AuthUser) {
     setBusy(true);
     setError(null);
+    setInfo(null);
     setCreated(null);
     try {
       const res = await fetch("/api/auth/users", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: storeHeaders(),
         body: JSON.stringify({ id: u.id, resetPassword: true }),
       });
       const json = (await res.json()) as {
@@ -1574,11 +1652,14 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const allowed = users.filter((u) => u.active);
+  const blocked = users.filter((u) => !u.active);
+
   return (
     <div className="history-overlay" role="dialog" aria-modal="true">
       <div className="history-panel rise">
         <div className="history-panel-top">
-          <h2>Användare</h2>
+          <h2>Behörighet</h2>
           <div className="history-actions">
             <button type="button" className="history-btn" onClick={onClose}>
               Stäng
@@ -1586,13 +1667,13 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="panel-lead">
-          Skapa konton med namn och lösenord. Nya lösenord visas en gång –
-          skicka dem till personen.
+          Bara personer i listan kan öppna appen. Lägg till någon, skicka
+          namn + lösenord, eller ta bort access när du vill.
         </p>
 
         <div className="users-admin-form">
           <label>
-            Namn
+            Namn på personen
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -1608,8 +1689,8 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
                 setRole(e.target.value === "admin" ? "admin" : "user")
               }
             >
-              <option value="user">Användare</option>
-              <option value="admin">Admin</option>
+              <option value="user">Får titta</option>
+              <option value="admin">Admin (kan styra access)</option>
             </select>
           </label>
           <button
@@ -1617,27 +1698,34 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
             disabled={busy || name.trim().length < 2}
             onClick={() => void createUser()}
           >
-            Skapa konto
+            Ge access
           </button>
         </div>
 
         {error && <div className="status-banner error">{error}</div>}
+        {info && <div className="status-banner ok">{info}</div>}
         {created && (
           <div className="created-creds">
-            Nytt konto: <strong>{created.name}</strong>
+            Skicka detta till <strong>{created.name}</strong>:
+            <br />
+            Namn: <code>{created.name}</code>
             <br />
             Lösenord: <code>{created.password}</code>
+            <br />
+            Länk: <code>https://tryckrad.vercel.app</code>
           </div>
         )}
 
+        <h3 className="access-subhead">
+          Har access ({allowed.length})
+        </h3>
         <ul className="users-list">
-          {users.map((u) => (
-            <li key={u.id} className={u.active ? "" : "inactive"}>
+          {allowed.map((u) => (
+            <li key={u.id}>
               <div>
                 <strong>{u.name}</strong>{" "}
                 <span className="history-score">
-                  {u.role === "admin" ? "admin" : "användare"}
-                  {u.active ? "" : " · inaktiv"}
+                  {u.role === "admin" ? "admin" : "får titta"}
                 </span>
               </div>
               <div className="users-row-actions">
@@ -1653,12 +1741,91 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
                   disabled={busy || u.name === "Mikael"}
                   onClick={() => void toggleActive(u)}
                 >
-                  {u.active ? "Inaktivera" : "Aktivera"}
+                  Stäng av
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || u.name === "Mikael"}
+                  onClick={() => void removeAccess(u)}
+                >
+                  Ta bort
                 </button>
               </div>
             </li>
           ))}
         </ul>
+
+        {blocked.length > 0 && (
+          <>
+            <h3 className="access-subhead">
+              Avstängda ({blocked.length})
+            </h3>
+            <ul className="users-list">
+              {blocked.map((u) => (
+                <li key={u.id} className="inactive">
+                  <div>
+                    <strong>{u.name}</strong>
+                  </div>
+                  <div className="users-row-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void toggleActive(u)}
+                    >
+                      Ge access igen
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void removeAccess(u)}
+                    >
+                      Ta bort
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        <div className="access-token-box">
+          <button
+            type="button"
+            className="history-btn ghost"
+            onClick={() => setShowToken((v) => !v)}
+          >
+            {showToken ? "Dölj" : "Visa"} permanent sparning
+          </button>
+          {showToken && (
+            <div className="access-token-fields">
+              <p className="panel-lead">
+                En gång: skapa en GitHub-token med rättighet{" "}
+                <strong>repo</strong> och klistra in den här. Då sparas vilka
+                som får titta så det håller mellan uppdateringar.{" "}
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo&description=tryckrad-behorighet"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Skapa token
+                </a>
+              </p>
+              <label>
+                GitHub-token
+                <input
+                  type="password"
+                  value={storeToken}
+                  onChange={(e) => setStoreToken(e.target.value)}
+                  placeholder="ghp_…"
+                  autoComplete="off"
+                />
+              </label>
+              <button type="button" onClick={saveStoreToken}>
+                Spara token i webbläsaren
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2081,9 +2248,9 @@ export default function App() {
               type="button"
               className="product-btn"
               onClick={() => setShowUsers(true)}
-              title="Hantera användare"
+              title="Styr vilka som får öppna appen"
             >
-              Användare
+              Behörighet
             </button>
           )}
           {authUser && (

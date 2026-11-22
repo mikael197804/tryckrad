@@ -1630,3 +1630,53 @@ select {
   font-weight: 700;
   color: var(--accent-2);
 }
+
+.status-banner.ok {
+  border-color: rgba(74, 211, 154, 0.45);
+  color: #b8f0d4;
+  background: rgba(74, 211, 154, 0.1);
+}
+
+.access-subhead {
+  margin: 1.1rem 0 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.03em;
+}
+
+.access-token-box {
+  margin-top: 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.access-token-fields {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.access-token-fields label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.access-token-fields input {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+}
+
+.access-token-fields button {
+  justify-self: start;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(62, 199, 184, 0.15);
+  color: var(--text);
+  cursor: pointer;
+}

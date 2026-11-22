@@ -4,6 +4,10 @@ import { randomBytes } from "node:crypto";
 import { hashPassword } from "./password";
 import type { AppUser, UserRole } from "./types";
 import seedJson from "../../../data/users.json";
+import {
+  fetchUsersFromGitHub,
+  pushUsersToGitHub,
+} from "./githubStore";
 
 type StoreFile = { users: AppUser[] };
 
@@ -12,14 +16,26 @@ const REL_PATH = path.join("data", "users.json");
 declare global {
   // eslint-disable-next-line no-var
   var __tryckradUsersCache: StoreFile | undefined;
+  // eslint-disable-next-line no-var
+  var __tryckradUsersCacheAt: number | undefined;
 }
 
+const CACHE_MS = 15_000;
+
 function cache(): StoreFile | undefined {
+  const at = globalThis.__tryckradUsersCacheAt || 0;
+  if (Date.now() - at > CACHE_MS) return undefined;
   return globalThis.__tryckradUsersCache;
 }
 
 function setCache(store: StoreFile) {
   globalThis.__tryckradUsersCache = store;
+  globalThis.__tryckradUsersCacheAt = Date.now();
+}
+
+function clearCache() {
+  globalThis.__tryckradUsersCache = undefined;
+  globalThis.__tryckradUsersCacheAt = undefined;
 }
 
 function seedStore(): StoreFile {
@@ -82,7 +98,6 @@ async function writeToDisk(store: StoreFile): Promise<boolean> {
   return ok;
 }
 
-/** Extra users from env: APP_USERS='[{"name":"Anna","password":"hemligt","role":"user"}]' */
 function usersFromEnv(): AppUser[] {
   const raw = process.env.APP_USERS?.trim();
   if (!raw) return [];
@@ -123,16 +138,33 @@ export async function loadUsers(): Promise<AppUser[]> {
   const hit = cache();
   if (hit) return mergeUsers(hit.users, usersFromEnv());
 
+  const fromGh = await fetchUsersFromGitHub();
+  if (fromGh?.length) {
+    const store = { users: fromGh };
+    setCache(store);
+    return mergeUsers(store.users, usersFromEnv());
+  }
+
   const disk = await readFromDisk();
   const store = disk?.users?.length ? disk : seedStore();
   setCache(store);
   return mergeUsers(store.users, usersFromEnv());
 }
 
-async function saveUsers(users: AppUser[]): Promise<void> {
+async function saveUsers(
+  users: AppUser[],
+  storeToken?: string | null
+): Promise<{ persisted: boolean; error?: string }> {
   const store = { users };
   setCache(store);
   await writeToDisk(store);
+  const gh = await pushUsersToGitHub(users, storeToken);
+  if (!gh.ok) {
+    return { persisted: false, error: gh.error };
+  }
+  clearCache();
+  setCache(store);
+  return { persisted: true };
 }
 
 export async function findUserByName(name: string): Promise<AppUser | null> {
@@ -150,11 +182,28 @@ export async function listUsers(): Promise<AppUser[]> {
   return loadUsers();
 }
 
-export async function createUser(input: {
-  name: string;
-  password: string;
-  role?: UserRole;
-}): Promise<AppUser> {
+export type SaveResult = {
+  user: AppUser;
+  persisted: boolean;
+  persistError?: string;
+  password?: string;
+};
+
+async function currentDiskUsers(): Promise<AppUser[]> {
+  const fromGh = await fetchUsersFromGitHub();
+  if (fromGh?.length) return fromGh;
+  const disk = await readFromDisk();
+  return disk?.users?.length ? disk.users : seedStore().users;
+}
+
+export async function createUser(
+  input: {
+    name: string;
+    password: string;
+    role?: UserRole;
+  },
+  storeToken?: string | null
+): Promise<SaveResult> {
   const name = normalizeName(input.name);
   if (!name || name.length < 2) {
     throw new Error("Namnet måste vara minst 2 tecken");
@@ -174,42 +223,69 @@ export async function createUser(input: {
     createdAt: new Date().toISOString(),
   };
 
-  const users = await loadUsers();
-  // Persist only file-backed users (not env-only ghosts)
-  const disk = (await readFromDisk()) || seedStore();
-  const next = mergeUsers(disk.users, [user]);
-  await saveUsers(next);
-  // refresh cache with env merge later via loadUsers
-  setCache({ users: next });
-  return user;
+  const base = await currentDiskUsers();
+  const next = mergeUsers(base, [user]);
+  const saved = await saveUsers(next, storeToken);
+  return {
+    user,
+    persisted: saved.persisted,
+    persistError: saved.error,
+  };
 }
 
-export async function setUserActive(id: string, active: boolean): Promise<AppUser> {
-  const disk = (await readFromDisk()) || seedStore();
-  const idx = disk.users.findIndex((u) => u.id === id);
+export async function setUserActive(
+  id: string,
+  active: boolean,
+  storeToken?: string | null
+): Promise<SaveResult> {
+  const base = await currentDiskUsers();
+  const idx = base.findIndex((u) => u.id === id);
   if (idx < 0) throw new Error("Användaren hittades inte");
-  if (disk.users[idx]!.name === "Mikael" && !active) {
-    throw new Error("Kan inte inaktivera huvudkontot Mikael");
+  if (base[idx]!.name === "Mikael" && !active) {
+    throw new Error("Kan inte ta bort access för Mikael");
   }
-  disk.users[idx] = { ...disk.users[idx]!, active };
-  await saveUsers(disk.users);
-  return disk.users[idx]!;
+  const next = base.map((u, i) => (i === idx ? { ...u, active } : u));
+  const saved = await saveUsers(next, storeToken);
+  return {
+    user: next[idx]!,
+    persisted: saved.persisted,
+    persistError: saved.error,
+  };
+}
+
+export async function removeUser(
+  id: string,
+  storeToken?: string | null
+): Promise<{ persisted: boolean; persistError?: string }> {
+  const base = await currentDiskUsers();
+  const target = base.find((u) => u.id === id);
+  if (!target) throw new Error("Användaren hittades inte");
+  if (target.name === "Mikael") {
+    throw new Error("Kan inte ta bort Mikael");
+  }
+  const next = base.filter((u) => u.id !== id);
+  const saved = await saveUsers(next, storeToken);
+  return { persisted: saved.persisted, persistError: saved.error };
 }
 
 export async function resetUserPassword(
   id: string,
-  password: string
-): Promise<AppUser> {
+  password: string,
+  storeToken?: string | null
+): Promise<SaveResult> {
   if (!password || password.length < 6) {
     throw new Error("Lösenordet måste vara minst 6 tecken");
   }
-  const disk = (await readFromDisk()) || seedStore();
-  const idx = disk.users.findIndex((u) => u.id === id);
+  const base = await currentDiskUsers();
+  const idx = base.findIndex((u) => u.id === id);
   if (idx < 0) throw new Error("Användaren hittades inte");
-  disk.users[idx] = {
-    ...disk.users[idx]!,
-    passwordHash: hashPassword(password),
+  const next = base.map((u, i) =>
+    i === idx ? { ...u, passwordHash: hashPassword(password) } : u
+  );
+  const saved = await saveUsers(next, storeToken);
+  return {
+    user: next[idx]!,
+    persisted: saved.persisted,
+    persistError: saved.error,
   };
-  await saveUsers(disk.users);
-  return disk.users[idx]!;
 }
