@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BackgroundMusic from "./BackgroundMusic";
 import type {
   OddsetCandidate,
   OddsetDayTip,
@@ -3241,6 +3242,7 @@ export default function App() {
           )}
         </>
       )}
+      <BackgroundMusic />
     </div>
   );
 }
