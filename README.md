@@ -4,7 +4,10 @@ Analyserar Svenska Spels Powerplay och Topptipset **per speltillfälle** – odd
 
 ## Live
 
+- Webb: https://tryckrad.vercel.app (kräver inloggning)
 - GitHub: https://github.com/mikael197804/tryckrad
+
+Inloggning: namn + lösenord (Basic Auth). Sätt `AUTH_USER` / `AUTH_PASSWORD` i Vercel om du vill byta.
 
 ### Deploya gratis (Vercel)
 
