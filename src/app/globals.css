@@ -56,10 +56,48 @@ select {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
   padding: 1.5rem 0 4rem;
-  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-top: max(4.75rem, calc(3.6rem + env(safe-area-inset-top)));
   padding-bottom: max(4rem, calc(2rem + env(safe-area-inset-bottom)));
   padding-left: max(1rem, env(safe-area-inset-left));
   padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+.top-menu-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  padding: max(0.55rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    0.55rem max(1rem, env(safe-area-inset-left));
+  background: linear-gradient(
+    180deg,
+    rgba(6, 12, 20, 0.97) 0%,
+    rgba(8, 16, 26, 0.94) 70%,
+    rgba(8, 16, 26, 0.88) 100%
+  );
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.top-menu-fixed .product-switch {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  margin-top: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  gap: 0.4rem;
+  padding-bottom: 0.15rem;
+}
+
+.top-menu-fixed .product-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.45rem 0.75rem;
+  min-height: 40px;
+  font-size: 0.82rem;
 }
 
 .brand-bar {
@@ -71,6 +109,10 @@ select {
   margin-bottom: 1.75rem;
   border-bottom: 1px solid var(--line);
   padding-bottom: 1.25rem;
+}
+
+#analysis-tips {
+  scroll-margin-top: 4.5rem;
 }
 
 .brand-mark {
@@ -453,10 +495,22 @@ select {
   color: #ffe0a8;
 }
 
+.product-btn.tips-launch {
+  border-color: rgba(100, 230, 160, 0.65);
+  color: #7dffb5;
+  background: rgba(30, 90, 60, 0.4);
+  font-weight: 700;
+}
+
+.product-btn.tips-launch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .history-overlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 60;
   background: rgba(4, 8, 14, 0.72);
   backdrop-filter: blur(6px);
   display: grid;

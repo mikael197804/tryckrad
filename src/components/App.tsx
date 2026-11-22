@@ -1677,8 +1677,58 @@ export default function App() {
     setSelectedSystem(0);
   }, [selectedDraw]);
 
+  const scrollToAnalysisTips = () => {
+    const el = document.getElementById("analysis-tips");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    // Tips visas per omgång – se till att draw-vyn är synlig
+    document
+      .querySelector(".analysis-tips-coupon")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="app-shell">
+      <div className="top-menu-fixed" role="navigation" aria-label="Huvudmeny">
+        <div className="product-switch" role="tablist" aria-label="Produkt">
+          <button
+            type="button"
+            className="product-btn tips-launch"
+            onClick={scrollToAnalysisTips}
+            disabled={product === "oddset"}
+            title="Hoppa till 1X2-tips från analys"
+          >
+            1X2-tips
+          </button>
+          <button
+            type="button"
+            className="product-btn history-launch"
+            onClick={openHistory}
+          >
+            Tips 24h
+          </button>
+          {DRAW_PRODUCTS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`product-btn ${product === p ? "active" : ""}`}
+              onClick={() => setProduct(p)}
+            >
+              {productLabel(p)}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`product-btn ${product === "oddset" ? "active" : ""}`}
+            onClick={() => setProduct("oddset")}
+          >
+            Oddset
+          </button>
+        </div>
+      </div>
+
       <header className="brand-bar">
         <div>
           <h1 className="brand-mark">
@@ -1689,32 +1739,6 @@ export default function App() {
             på Tips 24h för rätt/fel per spel. Powerplay/Topptipset lär av
             missar. Stryk/Mål: lagnyheter ca 15 min före avspark.
           </p>
-          <div className="product-switch" role="tablist" aria-label="Produkt">
-            {DRAW_PRODUCTS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={`product-btn ${product === p ? "active" : ""}`}
-                onClick={() => setProduct(p)}
-              >
-                {productLabel(p)}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={`product-btn ${product === "oddset" ? "active" : ""}`}
-              onClick={() => setProduct("oddset")}
-            >
-              Oddset
-            </button>
-            <button
-              type="button"
-              className="product-btn history-launch"
-              onClick={openHistory}
-            >
-              Tips 24h
-            </button>
-          </div>
         </div>
         <div className="meta-chip">
           {product === "oddset"
@@ -1886,7 +1910,7 @@ export default function App() {
                 {(buildAnalysisTips(draw.matches).length > 0 ||
                   (draw.safeWinners?.length ?? 0) > 0 ||
                   (draw.valueAlerts?.length ?? 0) > 0) && (
-                  <>
+                  <div id="analysis-tips">
                     <h2 style={{ fontSize: "1.05rem" }}>
                       Överodds & 1X2-tips
                     </h2>
@@ -1899,7 +1923,7 @@ export default function App() {
                       matches={draw.matches}
                       product={product}
                     />
-                  </>
+                  </div>
                 )}
                 {(product === "powerplay" || product === "topptipset") &&
                   (draw.learningAlerts?.length ?? 0) > 0 && (
