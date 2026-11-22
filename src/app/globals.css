@@ -1680,3 +1680,9 @@ select {
   color: var(--text);
   cursor: pointer;
 }
+
+.visit-list .visit-ip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--accent-2);
+  letter-spacing: 0.02em;
+}

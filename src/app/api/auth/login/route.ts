@@ -6,6 +6,10 @@ import {
 } from "../../../../lib/auth/session";
 import { findUserByName } from "../../../../lib/auth/users";
 import { toPublicUser } from "../../../../lib/auth/types";
+import {
+  clientIpFromHeaders,
+  recordVisit,
+} from "../../../../lib/auth/visits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +24,9 @@ export async function POST(req: NextRequest) {
 
   const name = (body.name || "").trim();
   const password = body.password || "";
+  const ip = clientIpFromHeaders(req.headers);
+  const ua = req.headers.get("user-agent");
+
   if (!name || !password) {
     return NextResponse.json(
       { error: "Ange namn och lösenord" },
@@ -29,11 +36,28 @@ export async function POST(req: NextRequest) {
 
   const user = await findUserByName(name);
   if (!user || !user.active || !verifyPassword(password, user.passwordHash)) {
+    await recordVisit({
+      ip,
+      userName: name || null,
+      userId: null,
+      path: "/login",
+      kind: "login_fail",
+      userAgent: ua,
+    });
     return NextResponse.json(
       { error: "Fel namn eller lösenord" },
       { status: 401 }
     );
   }
+
+  await recordVisit({
+    ip,
+    userName: user.name,
+    userId: user.id,
+    path: "/login",
+    kind: "login",
+    userAgent: ua,
+  });
 
   const token = await createSessionToken(user);
   const res = NextResponse.json({

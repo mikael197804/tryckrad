@@ -1487,8 +1487,36 @@ function storeHeaders(): HeadersInit {
   return headers;
 }
 
+type VisitRow = {
+  id: string;
+  at: string;
+  ip: string;
+  userName: string | null;
+  path: string;
+  kind: "login" | "view" | "login_fail";
+};
+
+function formatVisitTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("sv-SE", {
+    timeZone: "Europe/Stockholm",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function visitKindLabel(kind: VisitRow["kind"]): string {
+  if (kind === "login") return "inloggning";
+  if (kind === "login_fail") return "fel lösenord";
+  return "tittade";
+}
+
 function UsersAdminPanel({ onClose }: { onClose: () => void }) {
   const [users, setUsers] = useState<AuthUser[]>([]);
+  const [visits, setVisits] = useState<VisitRow[]>([]);
   const [name, setName] = useState("");
   const [role, setRole] = useState<"admin" | "user">("user");
   const [error, setError] = useState<string | null>(null);
@@ -1508,10 +1536,22 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
   }, []);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/auth/users", { cache: "no-store" });
-    const json = (await res.json()) as { users?: AuthUser[]; error?: string };
-    if (!res.ok) throw new Error(json.error || "Kunde inte hämta behöriga");
-    setUsers(json.users || []);
+    const [usersRes, visitsRes] = await Promise.all([
+      fetch("/api/auth/users", { cache: "no-store" }),
+      fetch("/api/auth/visits", { cache: "no-store" }),
+    ]);
+    const usersJson = (await usersRes.json()) as {
+      users?: AuthUser[];
+      error?: string;
+    };
+    if (!usersRes.ok) {
+      throw new Error(usersJson.error || "Kunde inte hämta behöriga");
+    }
+    setUsers(usersJson.users || []);
+    if (visitsRes.ok) {
+      const visitsJson = (await visitsRes.json()) as { visits?: VisitRow[] };
+      setVisits(visitsJson.visits || []);
+    }
   }, []);
 
   useEffect(() => {
@@ -1788,6 +1828,31 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
           </>
         )}
 
+        <h3 className="access-subhead">
+          IP på dem som tittar (bara du)
+        </h3>
+        <p className="panel-lead">
+          Senaste inloggningar och besök. Syns bara för admin.
+        </p>
+        {visits.length === 0 ? (
+          <p className="panel-lead">Inga besök loggade ännu.</p>
+        ) : (
+          <ul className="users-list visit-list">
+            {visits.slice(0, 80).map((v) => (
+              <li key={v.id}>
+                <div>
+                  <strong className="visit-ip">{v.ip}</strong>
+                  <span className="history-score">
+                    {" "}
+                    · {v.userName || "okänd"} · {visitKindLabel(v.kind)}
+                  </span>
+                  <div className="reason">{formatVisitTime(v.at)}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <div className="access-token-box">
           <button
             type="button"
@@ -1863,6 +1928,17 @@ export default function App() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!authUser) return;
+    void fetch("/api/auth/visits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: window.location.pathname || "/" }),
+    }).catch(() => {
+      /* ignore */
+    });
+  }, [authUser]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });

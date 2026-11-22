@@ -1,0 +1,56 @@
+import { NextRequest, NextResponse } from "next/server";
+import { readSessionFromRequest } from "../../../../lib/auth/session";
+import {
+  clientIpFromHeaders,
+  listVisits,
+  recordVisit,
+} from "../../../../lib/auth/visits";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
+  const session = await readSessionFromRequest(req);
+  if (!session || session.role !== "admin") {
+    return NextResponse.json({ error: "Endast admin" }, { status: 403 });
+  }
+  const visits = await listVisits(150);
+  return NextResponse.json({
+    visits,
+    generatedAt: new Date().toISOString(),
+  });
+}
+
+/** Beacon från appen – loggar IP för inloggad användare */
+export async function POST(req: NextRequest) {
+  const session = await readSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ error: "Inloggning krävs" }, { status: 401 });
+  }
+
+  let pathName = "/";
+  try {
+    const body = (await req.json()) as { path?: string };
+    if (body.path && typeof body.path === "string") {
+      pathName = body.path.slice(0, 200);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const ip = clientIpFromHeaders(req.headers);
+  await recordVisit({
+    ip,
+    userName: session.name,
+    userId: session.uid,
+    path: pathName,
+    kind: "view",
+    userAgent: req.headers.get("user-agent"),
+  });
+
+  // IP syns bara i admin-svaret om anroparen är admin
+  if (session.role === "admin") {
+    return NextResponse.json({ ok: true, ip });
+  }
+  return NextResponse.json({ ok: true });
+}
