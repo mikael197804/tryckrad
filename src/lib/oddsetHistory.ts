@@ -144,12 +144,12 @@ function applyScore(
       totalGoals: score.totalGoals,
       settledAt: null,
       resultNote: `Live ${score.homeGoals}–${score.awayGoals} · ${
-        score.over25Hit ? "Över 2,5 redan inne" : "väntar på fler mål"
+        score.overLineHit ? "Över 1,5 redan inne" : "väntar på fler mål"
       }`,
     };
   }
 
-  const outcome: OddsetOutcome = score.over25Hit ? "won" : "lost";
+  const outcome: OddsetOutcome = score.overLineHit ? "won" : "lost";
   return {
     ...tip,
     outcome,
@@ -157,9 +157,9 @@ function applyScore(
     awayGoals: score.awayGoals,
     totalGoals: score.totalGoals,
     settledAt: new Date().toISOString(),
-    resultNote: score.over25Hit
-      ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över 2,5)`
-      : `Fel · ${score.homeGoals}–${score.awayGoals} (Under 2,5)`,
+    resultNote: score.overLineHit
+      ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över 1,5)`
+      : `Fel · ${score.homeGoals}–${score.awayGoals} (Under 1,5)`,
   };
 }
 

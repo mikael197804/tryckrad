@@ -2,7 +2,8 @@ export type MatchScoreResult = {
   homeGoals: number;
   awayGoals: number;
   totalGoals: number;
-  over25Hit: boolean;
+  /** true om totalt mål slår Oddset-linjen (Över 1,5 ⇒ ≥2). */
+  overLineHit: boolean;
   status: "live" | "final";
   sourceName: string;
 };
@@ -283,7 +284,7 @@ export async function lookupMatchScore(input: {
     homeGoals: best.homeG,
     awayGoals: best.awayG,
     totalGoals,
-    over25Hit: totalGoals >= 3,
+    overLineHit: totalGoals >= 2,
     status: st === "final" ? "final" : "live",
     sourceName: best.ev.name || `${input.home} – ${input.away}`,
   };

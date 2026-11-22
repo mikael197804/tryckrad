@@ -193,13 +193,13 @@ function oddsetToHistoryPicks(
       id: `oddset:${t.eventId}`,
       product: "oddset" as const,
       gameKey: `oddset:${tippedAt.slice(0, 10)}`,
-      gameLabel: `Oddset · Över 2,5 · ${tippedAt.slice(0, 10)}`,
+      gameLabel: `Oddset · Över 1,5 · ${tippedAt.slice(0, 10)}`,
       tippedAt,
       description: `${t.home} – ${t.away}`,
       home: t.home,
       away: t.away,
-      market: "over_2_5" as const,
-      pick: ["over_2_5"],
+      market: "over_1_5" as const,
+      pick: ["over_1_5"],
       kickoff: t.kickoff || null,
       drawNumber: null,
       eventNumber: null,
@@ -1076,7 +1076,7 @@ function OddsetPickCard({
         <div className="oddset-result-note">{resultNote}</div>
       )}
       <div className="oddset-pick-line">
-        <span className="ctx-pill table-comfortable">Över 2,5 mål</span>
+        <span className="ctx-pill table-comfortable">Över 1,5 mål</span>
         <span className="odds">
           Odds {fmtOdds(c.odds)} · xG≈
           {c.expectedGoals != null
@@ -1085,7 +1085,7 @@ function OddsetPickCard({
         </span>
       </div>
       <div className="match-card-meta">
-        <span className="odds">Ö1,5 {fmtOdds(c.odds15)}</span>
+        <span className="odds">Ö2,5 {fmtOdds(c.odds25)}</span>
         <span className="odds">Ö3,5 {fmtOdds(c.odds35)}</span>
       </div>
       <div className="match-card-flags">
@@ -1249,7 +1249,8 @@ function HistoryView({
                                     </span>
                                   ))
                                 : null}
-                              {p.market === "over_2_5" && (
+                              {(p.market === "over_1_5" ||
+                                p.market === "over_2_5") && (
                                 <span
                                   className={`history-mark on ${
                                     p.status === "won"
@@ -1259,7 +1260,7 @@ function HistoryView({
                                         : ""
                                   }`}
                                 >
-                                  Ö2,5
+                                  {p.market === "over_2_5" ? "Ö2,5" : "Ö1,5"}
                                 </span>
                               )}
                               {p.market === "mal" && (
@@ -1278,8 +1279,8 @@ function HistoryView({
                             </div>
                             <div className="reason">
                               Tipset:{" "}
-                              {p.market === "over_2_5"
-                                ? "Över 2,5"
+                              {p.market === "over_1_5" || p.market === "over_2_5"
+                                ? (p.market === "over_2_5" ? "Över 2,5" : "Över 1,5")
                                 : p.market === "mal"
                                   ? "Målmatch"
                                   : p.pick.join("")}
@@ -1392,7 +1393,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
                     {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
                   </strong>
                   <div className="reason">
-                    {l.whyRight || "Över 2,5 rätt"}
+                    {l.whyRight || "Över 1,5 rätt"}
                   </div>
                   <div className="oddset-next-aspect">→ {l.nextAspect}</div>
                 </div>
@@ -1403,10 +1404,10 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
       )}
 
       <section className="panel panel-systems">
-        <h2>Spela dessa · Över 2,5 ({picks.length}/{picksPerDay})</h2>
+        <h2>Spela dessa · Över 1,5 ({picks.length}/{picksPerDay})</h2>
         {picks.length === 0 ? (
           <p className="panel-lead">
-            Ingen match nådde modellens ribba för Över 2,5 just nu.
+            Ingen match nådde modellens ribba för Över 1,5 just nu.
           </p>
         ) : (
           <div className="match-cards">

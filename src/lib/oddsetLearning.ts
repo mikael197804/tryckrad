@@ -42,7 +42,7 @@ export type OddsetLesson = {
 export type OddsetTeamAspect = {
   team: string;
   note: string;
-  /** Score-delta för Över 2,5 (negativt = tona ner). */
+  /** Score-delta för Över 1,5 (negativt = tona ner). */
   dOver: number;
   fromEventId: number;
   kind: OddsetMistakeKind;
@@ -167,41 +167,42 @@ function classifyTip(tip: OddsetTrackedTip): OddsetLesson | null {
   const nextParts: string[] = [];
 
   if (!hit) {
-    if (total <= 1) {
+    // Över 1,5 missar när totalt ≤ 1 mål
+    if (total === 0) {
       kinds.push("low_scoring_trap");
       whyParts.push(
-        `Bara ${total} mål – spelet föll på en låg målbild trots Över 2,5 @ ${tip.odds.toFixed(2).replace(".", ",")}`
+        `0–0 – spelet föll på en stängd matchbild trots Över 1,5 @ ${tip.odds.toFixed(2).replace(".", ",")}`
       );
       nextParts.push(
         `Var försiktig med ${tip.home}/${tip.away} och liknande lågtempo-matcher`
       );
-    } else if (total === 2) {
+    } else if (total === 1) {
       kinds.push("narrow_under");
       whyParts.push(
-        `Exakt 2 mål – nära men Under 2,5. Modellen hade ${tip.over25ProbPct.toFixed(0)}% på Över`
+        `Exakt 1 mål – nära men Under 1,5. Modellen hade ${tip.over25ProbPct.toFixed(0)}% på Över`
       );
       nextParts.push(
-        "Kräv tydligare kant (högre modell-p eller värde) innan Över 2,5 i jämna matcher"
+        "Kräv tydligare kant (högre modell-p eller värde) innan Över 1,5 i jämna/lågtippade matcher"
       );
     }
 
-    if (tip.over25ProbPct >= 68) {
+    if (tip.over25ProbPct >= 78) {
       kinds.push("overconfident_model");
       whyParts.push(
         `För hög modelltro (${tip.over25ProbPct.toFixed(0)}%) mot verkligt under`
       );
-      nextParts.push("Höj ribban – lita inte blint på ≥68% utan värde/oddsstöd");
+      nextParts.push("Höj ribban – lita inte blint på ≥78% utan värde/oddsstöd");
     }
 
-    if (tip.odds <= 1.55) {
+    if (tip.odds <= 1.22) {
       kinds.push("short_odds_miss");
       whyParts.push(
-        `Korta Över-odds (${tip.odds.toFixed(2).replace(".", ",")}) gick fel – “säker” linje var det inte`
+        `Korta Över 1,5-odds (${tip.odds.toFixed(2).replace(".", ",")}) gick fel – “säker” linje var det inte`
       );
-      nextParts.push("Tona ner ultrakorta Över-odds; sök hellre 1,60–1,95 med kant");
+      nextParts.push("Tona ner ultrakorta Ö1,5; sök hellre 1,28–1,48 med kant");
     }
 
-    if (tip.expectedGoals != null && tip.expectedGoals >= 3.0) {
+    if (tip.expectedGoals != null && tip.expectedGoals >= 2.6) {
       kinds.push("high_xg_miss");
       whyParts.push(
         `Hög xG≈${tip.expectedGoals.toFixed(2).replace(".", ",")} men bara ${total} mål`
@@ -217,7 +218,7 @@ function classifyTip(tip: OddsetTrackedTip): OddsetLesson | null {
 
     if (tip.redCard.level === "high" || tip.redCard.level === "medium") {
       kinds.push("red_card_noise");
-      whyParts.push("Rött-kort-signal hjälpte inte Över 2,5");
+      whyParts.push("Rött-kort-signal hjälpte inte Över 1,5");
       nextParts.push("Kort/hets är svag Över-proxy – sänk den vikten");
     }
 
@@ -230,23 +231,23 @@ function classifyTip(tip: OddsetTrackedTip): OddsetLesson | null {
 
     if (!kinds.length) {
       kinds.push("narrow_under");
-      whyParts.push(`Över 2,5 missade (${tip.homeGoals}–${tip.awayGoals})`);
+      whyParts.push(`Över 1,5 missade (${tip.homeGoals}–${tip.awayGoals})`);
       nextParts.push("Justera urvalet bort från liknande profiler");
     }
   } else {
-    if (tip.over25ProbPct >= 62 && tip.odds >= 1.55 && tip.odds <= 2.05) {
+    if (tip.over25ProbPct >= 70 && tip.odds >= 1.25 && tip.odds <= 1.55) {
       kinds.push("solid_over_hit");
       rightParts.push(
-        `Stabil träff ${tip.homeGoals}–${tip.awayGoals} med balanserad profil (p ${tip.over25ProbPct.toFixed(0)}% / odds ${tip.odds.toFixed(2).replace(".", ",")})`
+        `Stabil träff ${tip.homeGoals}–${tip.awayGoals} med balanserad Ö1,5-profil (p ${tip.over25ProbPct.toFixed(0)}% / odds ${tip.odds.toFixed(2).replace(".", ",")})`
       );
-      nextParts.push("Prioritera liknande mittenodds + solid modell-p framför ultrakorta favoriter");
+      nextParts.push("Prioritera liknande Ö1,5-odds + solid modell-p framför ultrakorta favoriter");
     } else if (total >= 4) {
       kinds.push("scrappy_over_hit");
       rightParts.push(`Målrik träff ${tip.homeGoals}–${tip.awayGoals} – öppet matchtempo`);
-      nextParts.push("Leta fler matcher med hög Ö1,5 + rimlig Ö3,5-stege");
+      nextParts.push("Leta fler matcher med hög Ö1,5 + rimlig Ö2,5-stege");
     } else {
       kinds.push("solid_over_hit");
-      rightParts.push(`Över 2,5 rätt (${tip.homeGoals}–${tip.awayGoals})`);
+      rightParts.push(`Över 1,5 rätt (${tip.homeGoals}–${tip.awayGoals})`);
       nextParts.push("Behåll liknande signaler i nästa urval");
     }
 
@@ -464,7 +465,7 @@ function rebuildDerived(memory: OddsetLearningMemory): void {
     }
     for (const l of recent.filter((x) => x.hit).slice(0, 2)) {
       summary.push(
-        `Rätt ${l.home}–${l.away} ${l.homeGoals}–${l.awayGoals}: ${l.whyRight || "Över 2,5"}. → ${l.nextAspect}`
+        `Rätt ${l.home}–${l.away} ${l.homeGoals}–${l.awayGoals}: ${l.whyRight || "Över 1,5"}. → ${l.nextAspect}`
       );
     }
   }

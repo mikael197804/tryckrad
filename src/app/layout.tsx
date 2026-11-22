@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Mikael’s tips – Topptipset, Powerplay & Oddset",
   description:
-    "Mikael’s tips: öppna Topptipset-, Powerplay- och Oddset-spel (Över 2,5) som går att tippa nu.",
+    "Mikael’s tips: öppna Topptipset-, Powerplay- och Oddset-spel (Över 1,5) som går att tippa nu.",
   appleWebApp: {
     capable: true,
     title: "Mikael’s tips",

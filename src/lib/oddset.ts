@@ -18,7 +18,7 @@ import { overMarketValue } from "./valueOdds";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
-export type OddsetMarket = "over_2_5";
+export type OddsetMarket = "over_1_5" | "over_2_5";
 
 export type RivalryInfo = {
   level: "none" | "possible" | "likely";
@@ -42,12 +42,13 @@ export type OddsetCandidate = {
   country: string;
   kickoff: string;
   market: OddsetMarket;
-  line: 2.5;
+  line: 1.5 | 2.5;
   odds: number;
-  odds15: number | null;
+  odds15: number;
   odds25: number | null;
   odds35: number | null;
-  /** Uppskattad sannolikhet (%) att matchen får minst 3 mål (Över 2,5). */
+  under15?: number | null;
+  /** Uppskattad sannolikhet (%) att matchen får minst 2 mål (Över 1,5). */
   over25ProbPct: number;
   expectedGoals: number | null;
   rivalry: RivalryInfo;
@@ -90,8 +91,11 @@ const KAMBI_BASE =
 
 const STOCKHOLM = "Europe/Stockholm";
 
-/** Visa bara matcher där modellen tror Över 2,5 är sannolikt. */
-const MIN_OVER25_PROB = 0.55;
+/** Oddset-linje: Över 1,5 (vinst vid ≥2 mål). */
+export const ODDSET_GOAL_LINE = 1.5;
+export const ODDSET_MIN_GOALS_TO_WIN = 2;
+/** Visa bara matcher där modellen tror Över 1,5 är sannolikt (högre golv – linjen är lättare). */
+const MIN_OVER15_PROB = 0.62;
 
 type KambiEvent = {
   id: number;
@@ -120,6 +124,7 @@ type MatchMarkets = {
   odds15: number | null;
   odds25: number | null;
   odds35: number | null;
+  under15: number | null;
   under25: number | null;
   redCardYes: number | null;
   redCardNo: number | null;
@@ -238,6 +243,7 @@ function estimateExpectedGoals(
   odds15: number | null,
   odds25: number | null,
   odds35: number | null,
+  under15: number | null,
   under25: number | null
 ): number | null {
   const points: Array<{ line: number; pOver: number }> = [];
@@ -254,7 +260,7 @@ function estimateExpectedGoals(
     points.push({ line, pOver });
   };
 
-  add(1.5, odds15, null);
+  add(1.5, odds15, under15);
   add(2.5, odds25, under25);
   add(3.5, odds35, null);
 
@@ -277,30 +283,30 @@ function estimateExpectedGoals(
   return Math.round(bestL * 100) / 100;
 }
 
-function estimateOver25Probability(
+/** P(totalt mål ≥ 2) = Över 1,5. */
+function estimateOver15Probability(
   lambda: number | null,
-  odds25: number | null,
-  under25: number | null
+  odds15: number | null,
+  under15: number | null
 ): number | null {
   const fromPoisson =
-    lambda != null ? poissonCdfAtLeast(lambda, 3) : null;
+    lambda != null ? poissonCdfAtLeast(lambda, 2) : null;
 
   let fromOdds: number | null = null;
-  if (odds25 != null && odds25 > 1) {
-    if (under25 != null && under25 > 1) {
-      const a = 1 / odds25;
-      const b = 1 / under25;
+  if (odds15 != null && odds15 > 1) {
+    if (under15 != null && under15 > 1) {
+      const a = 1 / odds15;
+      const b = 1 / under15;
       fromOdds = a / (a + b);
     } else {
-      // grov de-vig ~4%
-      fromOdds = Math.min(0.92, (1 / odds25) * 1.04);
+      // grov de-vig ~3%
+      fromOdds = Math.min(0.95, (1 / odds15) * 1.03);
     }
   }
 
   if (fromPoisson == null && fromOdds == null) return null;
   if (fromPoisson == null) return fromOdds;
   if (fromOdds == null) return fromPoisson;
-  // Vikta Poisson tyngre när vi har bra stege
   return fromPoisson * 0.65 + fromOdds * 0.35;
 }
 
@@ -308,6 +314,7 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
   let odds15: number | null = null;
   let odds25: number | null = null;
   let odds35: number | null = null;
+  let under15: number | null = null;
   let under25: number | null = null;
   let redCardYes: number | null = null;
   let redCardNo: number | null = null;
@@ -327,7 +334,10 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
           if (line === 2.5) odds25 = odds;
           if (line === 3.5) odds35 = odds;
         }
-        if ((side === "under") && line === 2.5) under25 = odds;
+        if (side === "under") {
+          if (line === 1.5) under15 = odds;
+          if (line === 2.5) under25 = odds;
+        }
       }
     }
 
@@ -363,6 +373,7 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
     odds15,
     odds25,
     odds35,
+    under15,
     under25,
     redCardYes,
     redCardNo,
@@ -552,46 +563,47 @@ function buildCandidate(
   const league = event.group || "";
   const country = countryOf(event);
 
-  if (markets.odds25 == null || markets.odds25 <= 1) return null;
+  if (markets.odds15 == null || markets.odds15 <= 1) return null;
   // För öppna spel: undvik nästan avgjorda/live-lika korta Över-odds
-  if (markets.odds25 < 1.28) return null;
+  if (markets.odds15 < 1.12) return null;
 
   const lambda = estimateExpectedGoals(
     markets.odds15,
     markets.odds25,
     markets.odds35,
+    markets.under15,
     markets.under25
   );
-  const p25 = estimateOver25Probability(
+  const p15 = estimateOver15Probability(
     lambda,
-    markets.odds25,
-    markets.under25
+    markets.odds15,
+    markets.under15
   );
-  if (p25 == null || p25 < MIN_OVER25_PROB) return null;
+  if (p15 == null || p15 < MIN_OVER15_PROB) return null;
 
   const rivalry = analyzeRivalry(home, away, league);
   const redCard = analyzeRedCard(markets, rivalry);
 
-  const over25ProbPct = Math.round(p25 * 1000) / 10;
+  const over25ProbPct = Math.round(p15 * 1000) / 10;
   const reasons: string[] = [];
   reasons.push(
-    `Modell: ${over25ProbPct.toFixed(1).replace(".", ",")}% chans till minst 3 mål`
+    `Modell: ${over25ProbPct.toFixed(1).replace(".", ",")}% chans till minst 2 mål`
   );
   if (lambda != null) {
     reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
   }
   reasons.push(
-    `Över 2,5 @ ${markets.odds25.toFixed(2).replace(".", ",")}`
+    `Över 1,5 @ ${markets.odds15.toFixed(2).replace(".", ",")}`
   );
-  if (markets.odds15 != null) {
-    reasons.push(`Ö1,5 @ ${markets.odds15.toFixed(2).replace(".", ",")}`);
+  if (markets.odds25 != null) {
+    reasons.push(`Ö2,5 @ ${markets.odds25.toFixed(2).replace(".", ",")}`);
   }
   if (rivalry.level !== "none") reasons.push(rivalry.note);
   if (redCard.level !== "low") reasons.push(`rött kort: ${redCard.note}`);
 
   // Score: sannolikhet först, sedan liga, rivalitet/kort som kontext
   let score = over25ProbPct * 1.2;
-  if (lambda != null) score += Math.min(12, (lambda - 2.4) * 10);
+  if (lambda != null) score += Math.min(12, (lambda - 1.8) * 8);
 
   const topCountry =
     /england|spanien|spain|italien|italy|tyskland|germany|frankrike|france|nederländerna|netherlands|portugal|sverige|sweden|skottland|scotland/i.test(
@@ -610,13 +622,13 @@ function buildCandidate(
   if (rivalry.level === "likely") score += 3;
   if (redCard.level === "high") score += 2;
 
-  // Preferera kortare odds bland hög-sannolikhet (säkrare träff)
-  score += Math.max(0, 12 - Math.abs(markets.odds25 - 1.7) * 4);
+  // Preferera rimliga Över 1,5-odds (ca 1,30–1,50)
+  score += Math.max(0, 12 - Math.abs(markets.odds15 - 1.38) * 8);
 
   // Överodds/värde: modellens p högre än oddsimplicit
   const ov = overMarketValue({
-    overOdds: markets.odds25,
-    modelProb: p25,
+    overOdds: markets.odds15,
+    modelProb: p15,
   });
   if (ov.isValue) {
     score += 8;
@@ -633,12 +645,13 @@ function buildCandidate(
     league,
     country,
     kickoff: event.start,
-    market: "over_2_5",
-    line: 2.5,
-    odds: markets.odds25,
+    market: "over_1_5",
+    line: 1.5,
+    odds: markets.odds15,
     odds15: markets.odds15,
     odds25: markets.odds25,
     odds35: markets.odds35,
+    under15: markets.under15,
     over25ProbPct,
     expectedGoals: lambda,
     rivalry,
@@ -668,6 +681,7 @@ async function fetchMarketsForEvents(
             odds15: null,
             odds25: null,
             odds35: null,
+            under15: null,
             under25: null,
             redCardYes: null,
             redCardNo: null,
@@ -822,7 +836,7 @@ export async function buildOddsetDayTip(opts?: {
   const markets = await fetchMarketsForEvents(toAnalyze);
 
   const floorBump = learning.biases.raiseProbFloor;
-  const minProb = MIN_OVER25_PROB + floorBump;
+  const minProb = MIN_OVER15_PROB + floorBump;
 
   const candidates: OddsetCandidate[] = [];
   for (const ev of toAnalyze) {
@@ -887,11 +901,11 @@ export async function buildOddsetDayTip(opts?: {
       lessons: learningAfter.lessons.slice(0, 12),
     },
     rules: [
-      `${PICKS_PER_DAY} unika öppna Oddset-matcher (Över 2,5) som går att spela nu.`,
+      `${PICKS_PER_DAY} unika öppna Oddset-matcher (Över 1,5) som går att spela nu.`,
       `Fönster: ${windowNote}.`,
       "Bara matcher som inte startat ännu (för nya tips).",
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
-      "Efter slutsignal: grönt = Över 2,5 rätt, rött = fel.",
+      "Efter slutsignal: grönt = Över 1,5 rätt (≥2 mål), rött = fel.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
       `Sannolikhetsgolv nu: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",

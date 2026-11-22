@@ -20,8 +20,8 @@ export type HistoryPick = {
   description: string;
   home: string;
   away: string;
-  market: "1x2" | "over_2_5" | "mal";
-  /** T.ex. ["1","X"], ["over_2_5"] eller ["mal"]. */
+  market: "1x2" | "over_1_5" | "over_2_5" | "mal";
+  /** T.ex. ["1","X"], ["over_1_5"] eller ["mal"]. */
   pick: string[];
   kickoff: string | null;
   drawNumber: number | null;
@@ -268,15 +268,18 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
         resultNote: `Live ${score.homeGoals}–${score.awayGoals}`,
       };
     }
-    const won = score.over25Hit;
+    const line = pick.market === "over_2_5" ? 2.5 : 1.5;
+    const minGoals = line === 2.5 ? 3 : 2;
+    const won = score.totalGoals >= minGoals;
+    const label = line === 2.5 ? "2,5" : "1,5";
     return {
       ...pick,
       status: won ? "won" : "lost",
       actual: `${score.homeGoals}-${score.awayGoals}`,
       settledAt: pick.settledAt || new Date().toISOString(),
       resultNote: won
-        ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över 2,5)`
-        : `Fel · ${score.homeGoals}–${score.awayGoals} (Under 2,5)`,
+        ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över ${label})`
+        : `Fel · ${score.homeGoals}–${score.awayGoals} (Under ${label})`,
     };
   } catch {
     return pick;
