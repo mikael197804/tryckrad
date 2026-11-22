@@ -210,6 +210,8 @@ export async function createUser(
     name: string;
     password: string;
     role?: UserRole;
+    /** Antal dagar spelaccess vid skapande (standard 7). Alltid role=user. */
+    accessDays?: number;
   },
   storeToken?: string | null
 ): Promise<SaveResult> {
@@ -224,7 +226,16 @@ export async function createUser(
   const existing = await findUserByName(name);
   if (existing) throw new Error("Namnet är redan upptaget");
 
-  // Bara Mikael är huvudperson – nya konton blir alltid vanliga användare
+  const daysRaw = input.accessDays ?? 7;
+  const days = Math.floor(Number(daysRaw));
+  if (!Number.isFinite(days) || days < 1 || days > 365) {
+    throw new Error("Ange 1–365 dagar spelaccess");
+  }
+  const accessUntil = new Date(
+    Date.now() + days * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  // Bara Mikael är huvudperson – inbjudna blir alltid vanliga spelare
   const user: AppUser = {
     id: `usr_${randomBytes(6).toString("hex")}`,
     name,
@@ -233,6 +244,7 @@ export async function createUser(
     passwordHash: hashPassword(input.password),
     createdAt: new Date().toISOString(),
     sessionVersion: 0,
+    accessUntil,
   };
 
   const base = await currentDiskUsers();

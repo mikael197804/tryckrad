@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
     name?: string;
     password?: string;
     autoPassword?: boolean;
+    accessDays?: number;
     action?: string;
     id?: string;
   };
@@ -92,6 +93,7 @@ export async function POST(req: NextRequest) {
         name: body.name || "",
         password,
         role: "user",
+        accessDays: body.accessDays ?? 7,
       },
       storeToken
     );

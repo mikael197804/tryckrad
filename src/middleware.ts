@@ -3,6 +3,7 @@ import {
   SESSION_COOKIE,
   verifySessionToken,
 } from "./lib/auth/session";
+import { isOwnerSession } from "./lib/auth/owner";
 
 export const config = {
   matcher: [
@@ -53,6 +54,35 @@ export async function middleware(req: NextRequest) {
     const login = new URL("/login", req.url);
     login.searchParams.set("next", pathname);
     return NextResponse.redirect(login);
+  }
+
+  // Inbjudna får bara spel – inte medlemmar / kontroll / behörighet
+  if (
+    (pathname === "/owner" ||
+      pathname.startsWith("/owner/") ||
+      pathname.startsWith("/api/owner") ||
+      pathname.startsWith("/api/auth/users")) &&
+    !isOwnerSession(session)
+  ) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { error: "Endast huvudkontot (Mikael) har access hit" },
+        { status: 403 }
+      );
+    }
+    return NextResponse.redirect(new URL("/", req.url));
+  }
+
+  // GET visits är ägare-only; POST (beacon) får alla inloggade göra
+  if (
+    pathname.startsWith("/api/auth/visits") &&
+    req.method === "GET" &&
+    !isOwnerSession(session)
+  ) {
+    return NextResponse.json(
+      { error: "Endast huvudkontot (Mikael) har access hit" },
+      { status: 403 }
+    );
   }
 
   const res = NextResponse.next();

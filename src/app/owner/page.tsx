@@ -177,7 +177,7 @@ export default function OwnerPage() {
       });
       setNewName("");
       setInfo(
-        "Konto skapat. Lägg till betalda dagar nedan innan personen kan logga in."
+        "Konto skapat med spelaccess (7 dagar). Förläng med betalda dagar nedan vid behov. Personen ser bara spelen – inte medlemmar."
       );
       if (json.user?.id) setPayUserId(json.user.id);
       await load();

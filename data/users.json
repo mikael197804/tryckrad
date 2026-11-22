@@ -26,6 +26,16 @@
       "createdAt": "2026-11-22T13:59:30.539Z",
       "sessionVersion": 0,
       "accessUntil": "2026-11-25T13:59:30.609Z"
+    },
+    {
+      "id": "usr_142526aa3101",
+      "name": "Magnus Gustafsson",
+      "role": "user",
+      "active": true,
+      "passwordHash": "pbkdf2$100000$P+VlZV2qi8Jw4tcdL395Dw==$kyQl3fTkotTGohF0y9HUD3JmwmXhV19P2RhNK1S7SPc=",
+      "createdAt": "2026-11-22T15:55:36.010Z",
+      "sessionVersion": 0,
+      "accessUntil": "2026-11-29T15:55:35.998Z"
     }
   ]
 }

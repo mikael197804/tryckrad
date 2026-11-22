@@ -1888,8 +1888,8 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="panel-lead">
-          Bara du är huvudperson. Ge andra egna konton (de betalar per dag),
-          sparka ut dem om de missbrukar, eller öppna{" "}
+          Bara du är huvudperson. Inbjudna får endast access till spelen – inte
+          medlemmar, behörighet eller kontroll. De betalar per dag. Öppna{" "}
           <a href="/owner">Mikael’s kontroll</a>.
         </p>
 
@@ -1935,7 +1935,7 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
               <div>
                 <strong>{u.name}</strong>{" "}
                 <span className="history-score">
-                  {u.role === "admin" ? "admin" : "får titta"}
+                  {u.isOwner ? "huvudkonto" : "bara spel"}
                 </span>
               </div>
               <div className="users-row-actions">
@@ -2590,7 +2590,7 @@ export default function App() {
           {authUser && (
             <span className="user-chip">
               Inloggad: <strong>{authUser.name}</strong>
-              {authUser.role === "admin" ? " · admin" : ""}
+              {authUser.isOwner ? " · huvudkonto" : ""}
             </span>
           )}{" "}
           {product === "oddset"
@@ -2614,7 +2614,7 @@ export default function App() {
         />
       )}
 
-      {showUsers && (
+      {showUsers && authUser?.isOwner && (
         <UsersAdminPanel onClose={() => setShowUsers(false)} />
       )}
 
