@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const AUDIO_SRC = "/audio/mama-robot-telling-me.mp3";
 const TRACK_TITLE = "Mama robot telling me";
+const TRACK_ARTIST = "Mikael nyman";
 const SUNO_URL = "https://suno.com/s/a4A0wO1qWefAXv1O";
 /** Svag bakgrundsvolym (0–1). */
 const QUIET_VOLUME = 0.12;
@@ -123,8 +124,10 @@ export default function BackgroundMusic() {
       <div className="bg-music-head">
         <div className="bg-music-meta">
           <strong>Bakgrund · {Math.round(QUIET_VOLUME * 100)}%</strong>
-          <span>{TRACK_TITLE}</span>
-          <span className="bg-music-hint">Suno · loopas svagt</span>
+          <span>
+            {TRACK_TITLE} · {TRACK_ARTIST}
+          </span>
+          <span className="bg-music-hint">Din Suno-låt · loopas svagt</span>
         </div>
         <div className="bg-music-actions">
           <button type="button" className="bg-music-btn" onClick={toggle}>
