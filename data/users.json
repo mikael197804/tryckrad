@@ -7,14 +7,6 @@
       "active": true,
       "passwordHash": "pbkdf2$100000$hd4Xf97rvk0aaqK0ytl+NA==$zbs+AnlNoJl4sOiqBF87NR5viW84jB9InqRUqOzrenI=",
       "createdAt": "2026-11-22T11:00:00.000Z"
-    },
-    {
-      "id": "usr_00130d8f7d30",
-      "name": "Anna",
-      "role": "user",
-      "active": true,
-      "passwordHash": "pbkdf2$100000$iuGJuq8PyjFJ3tKivY/xpw==$Yl67ej1gQtM4KfF8l6dErNX4gNI281Wfb+giZsvUpSU=",
-      "createdAt": "2026-11-22T12:01:01.727Z"
     }
   ]
 }
