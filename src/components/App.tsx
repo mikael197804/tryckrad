@@ -219,63 +219,78 @@ function drawToHistoryPicks(
   tippedAt: string
 ): HistoryPick[] {
   const product = draw.productKind as HistoryProduct;
-  const system = draw.systems[0];
-  if (!system) return [];
+  const systems = (draw.systems || []).filter(
+    (s) => s.costKr >= 48 && s.costKr <= 720
+  );
+  if (!systems.length) return [];
 
-  const gameKey = `${product}:${draw.drawNumber}`;
-  const gameLabel = `${productHistoryLabel(product)} #${draw.drawNumber}`;
+  const baseLabel = `${productHistoryLabel(product)} #${draw.drawNumber}`;
+  const out: HistoryPick[] = [];
 
-  if (system.kind === "mal" || product === "maltipset") {
-    const malNums = new Set(
-      system.malEventNumbers?.length
-        ? system.malEventNumbers
-        : draw.malTip || []
-    );
-    return draw.matches
-      .filter((m) => malNums.has(m.eventNumber) || m.malSelected)
-      .map((m) => ({
-        id: `${product}:${draw.drawNumber}:${m.eventNumber}`,
+  for (const system of systems) {
+    const costKr = system.costKr;
+    const gameKey = `${product}:${draw.drawNumber}:${costKr}`;
+    const gameLabel = `${baseLabel} · ${costKr} kr`;
+
+    if (system.kind === "mal" || product === "maltipset") {
+      const malNums = new Set(
+        system.malEventNumbers?.length
+          ? system.malEventNumbers
+          : draw.malTip || []
+      );
+      for (const m of draw.matches) {
+        if (!malNums.has(m.eventNumber) && !m.malSelected) continue;
+        out.push({
+          id: `${product}:${draw.drawNumber}:${costKr}:${m.eventNumber}`,
+          product,
+          gameKey,
+          gameLabel: `${gameLabel} · Mål`,
+          tippedAt,
+          description: m.description,
+          home: m.home.name,
+          away: m.away.name,
+          market: "mal",
+          pick: ["mal"],
+          kickoff: m.matchStart || null,
+          drawNumber: draw.drawNumber,
+          eventNumber: m.eventNumber,
+          eventId: null,
+          status: "pending",
+          actual: null,
+          resultNote: null,
+          costKr,
+        });
+      }
+      continue;
+    }
+
+    for (const p of system.picks) {
+      const match = draw.matches.find((m) => m.eventNumber === p.eventNumber);
+      out.push({
+        id: `${product}:${draw.drawNumber}:${costKr}:${p.eventNumber}`,
         product,
         gameKey,
-        gameLabel: `${gameLabel} · Mål`,
+        gameLabel,
         tippedAt,
-        description: m.description,
-        home: m.home.name,
-        away: m.away.name,
-        market: "mal" as const,
-        pick: ["mal"],
-        kickoff: m.matchStart || null,
+        description:
+          p.description || match?.description || `Match ${p.eventNumber}`,
+        home: match?.home.name || "",
+        away: match?.away.name || "",
+        market: "1x2",
+        pick: p.outcomes,
+        kickoff: match?.matchStart || null,
         drawNumber: draw.drawNumber,
-        eventNumber: m.eventNumber,
+        eventNumber: p.eventNumber,
         eventId: null,
-        status: "pending" as const,
+        status: "pending",
         actual: null,
         resultNote: null,
-      }));
+        costKr,
+      });
+    }
   }
 
-  return system.picks.map((p) => {
-    const match = draw.matches.find((m) => m.eventNumber === p.eventNumber);
-    return {
-      id: `${product}:${draw.drawNumber}:${p.eventNumber}`,
-      product,
-      gameKey,
-      gameLabel,
-      tippedAt,
-      description: p.description || match?.description || `Match ${p.eventNumber}`,
-      home: match?.home.name || "",
-      away: match?.away.name || "",
-      market: "1x2" as const,
-      pick: p.outcomes,
-      kickoff: match?.matchStart || null,
-      drawNumber: draw.drawNumber,
-      eventNumber: p.eventNumber,
-      eventId: null,
-      status: "pending" as const,
-      actual: null,
-      resultNote: null,
-    };
-  });
+  return out;
 }
 
 function outcomeRank(o: OddsetTrackedTip["outcome"] | undefined): number {
@@ -1125,8 +1140,9 @@ function HistoryView({
           </div>
         </div>
         <p className="panel-lead">
-          Rätt/fel per tips efter att spelet är färdigt. Resultaten ligger kvar{" "}
-          {history?.retentionHours ?? 24} timmar efter färdigt resultat.
+          System 48–720 kr: varje match visar grönt (rätt) eller rött (fel).
+          Resultaten ligger kvar {history?.retentionHours ?? 24} timmar efter
+          färdigt spel.
         </p>
 
         {loading && <div className="loading">Hämtar resultat…</div>}
@@ -1160,16 +1176,21 @@ function HistoryView({
 
             {history.games.length === 0 ? (
               <p className="panel-lead">
-                Inga resultat ännu. När du öppnar ett spel sparas tipset, och
-                när det är färdigt syns rätt/fel här i 24 timmar.
+                Inga resultat ännu. När du öppnar ett spel sparas tipset
+                (48–720 kr), och när det är färdigt syns grönt/rött här i 24
+                timmar.
               </p>
             ) : (
               history.games.map((g) => {
                 const picks = history.picks.filter(
                   (p) => p.gameKey === g.gameKey
                 );
+                const systemResult = g.systemResult || "pending";
                 return (
-                  <section key={g.gameKey} className="panel history-game">
+                  <section
+                    key={g.gameKey}
+                    className={`panel history-game system-${systemResult}`}
+                  >
                     <h3>
                       {g.label}{" "}
                       <span className="history-score">
@@ -1178,6 +1199,21 @@ function HistoryView({
                           ? ` · ${g.pending + g.live} väntar`
                           : ""}
                       </span>
+                      {g.costKr != null && (
+                        <span className="history-cost-pill">
+                          {g.costKr} kr
+                        </span>
+                      )}
+                      {systemResult === "won" && (
+                        <span className="oddset-result-badge won">
+                          System grönt
+                        </span>
+                      )}
+                      {systemResult === "lost" && (
+                        <span className="oddset-result-badge lost">
+                          System rött
+                        </span>
+                      )}
                     </h3>
                     <ul className="history-pick-list">
                       {picks.map((p) => (
@@ -1186,7 +1222,60 @@ function HistoryView({
                           className={`history-pick ${p.status}`}
                         >
                           <div>
-                            <strong>{p.description}</strong>
+                            <strong>
+                              {p.eventNumber != null
+                                ? `${p.eventNumber}. `
+                                : ""}
+                              {p.description}
+                            </strong>
+                            <div className="history-1x2-marks" aria-label="Tips">
+                              {p.market === "1x2"
+                                ? (["1", "X", "2"] as const).map((o) => (
+                                    <span
+                                      key={o}
+                                      className={`history-mark ${
+                                        p.pick.includes(o) ? "on" : ""
+                                      } ${
+                                        p.status === "won" &&
+                                        p.actual === o
+                                          ? "hit"
+                                          : p.status === "lost" &&
+                                              p.pick.includes(o)
+                                            ? "miss"
+                                            : ""
+                                      }`}
+                                    >
+                                      {o}
+                                    </span>
+                                  ))
+                                : null}
+                              {p.market === "over_2_5" && (
+                                <span
+                                  className={`history-mark on ${
+                                    p.status === "won"
+                                      ? "hit"
+                                      : p.status === "lost"
+                                        ? "miss"
+                                        : ""
+                                  }`}
+                                >
+                                  Ö2,5
+                                </span>
+                              )}
+                              {p.market === "mal" && (
+                                <span
+                                  className={`history-mark on ${
+                                    p.status === "won"
+                                      ? "hit"
+                                      : p.status === "lost"
+                                        ? "miss"
+                                        : ""
+                                  }`}
+                                >
+                                  M
+                                </span>
+                              )}
+                            </div>
                             <div className="reason">
                               Tipset:{" "}
                               {p.market === "over_2_5"
@@ -1560,19 +1649,35 @@ export default function App() {
         generatedAt: new Date().toISOString(),
         retentionHours: 24,
         picks,
-        games: [...byGame.entries()].map(([gameKey, list]) => ({
-          gameKey,
-          product: list[0].product,
-          label: list[0].gameLabel,
-          tippedAt: list[0].tippedAt,
-          total: list.length,
-          settled: list.filter((x) => x.status === "won" || x.status === "lost")
-            .length,
-          won: list.filter((x) => x.status === "won").length,
-          lost: list.filter((x) => x.status === "lost").length,
-          pending: list.filter((x) => x.status === "pending").length,
-          live: list.filter((x) => x.status === "live").length,
-        })),
+        games: [...byGame.entries()].map(([gameKey, list]) => {
+          const w = list.filter((x) => x.status === "won").length;
+          const l = list.filter((x) => x.status === "lost").length;
+          const settled = w + l;
+          const winThreshold =
+            list.length >= 7 && list.length <= 9
+              ? Math.max(1, list.length - 1)
+              : list.length;
+          const systemResult: "won" | "lost" | "pending" =
+            settled === list.length && list.length > 0
+              ? w >= winThreshold
+                ? "won"
+                : "lost"
+              : "pending";
+          return {
+            gameKey,
+            product: list[0].product,
+            label: list[0].gameLabel,
+            tippedAt: list[0].tippedAt,
+            total: list.length,
+            settled,
+            won: w,
+            lost: l,
+            pending: list.filter((x) => x.status === "pending").length,
+            live: list.filter((x) => x.status === "live").length,
+            costKr: list.find((x) => x.costKr != null)?.costKr ?? null,
+            systemResult,
+          };
+        }),
         totals: {
           total: picks.length,
           settled: won + lost,

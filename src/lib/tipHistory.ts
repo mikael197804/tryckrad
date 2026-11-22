@@ -32,6 +32,8 @@ export type HistoryPick = {
   resultNote: string | null;
   /** När spelet settlades (färdigt) – resultat visas 24 h efter detta. */
   settledAt?: string | null;
+  /** Systemkostnad 48–720 kr (null för Oddset). */
+  costKr?: number | null;
 };
 
 export type HistoryGameSummary = {
@@ -45,6 +47,13 @@ export type HistoryGameSummary = {
   lost: number;
   pending: number;
   live: number;
+  /** System 48–720 kr */
+  costKr: number | null;
+  /**
+   * Systemresultat när allt är settlat:
+   * vinst ≈ ≥7 rätt på 8 matcher (eller alla rätt på färre).
+   */
+  systemResult: "won" | "lost" | "pending";
 };
 
 export type TipHistoryResponse = {
@@ -125,6 +134,7 @@ function mergePicks(groups: HistoryPick[][]): HistoryPick[] {
         actual: base.actual ?? other.actual,
         resultNote: base.resultNote ?? other.resultNote,
         settledAt: base.settledAt ?? other.settledAt ?? null,
+        costKr: base.costKr ?? other.costKr ?? null,
       });
     }
   }
@@ -392,20 +402,38 @@ function summarize(picks: HistoryPick[]): {
       const tippedAt = list
         .map((x) => x.tippedAt)
         .sort()[0] || new Date().toISOString();
+      const costKr =
+        list.find((x) => x.costKr != null)?.costKr ?? null;
+      const settled = won + lost;
+      // 8 matcher: vinst vid ≥7 rätt. Annars: alla rätt.
+      const winThreshold =
+        list.length >= 7 && list.length <= 9
+          ? Math.max(1, list.length - 1)
+          : list.length;
+      let systemResult: "won" | "lost" | "pending" = "pending";
+      if (settled === list.length && list.length > 0) {
+        systemResult = won >= winThreshold ? "won" : "lost";
+      }
       return {
         gameKey,
         product: list[0].product,
         label: list[0].gameLabel,
         tippedAt,
         total: list.length,
-        settled: won + lost,
+        settled,
         won,
         lost,
         pending,
         live,
+        costKr,
+        systemResult,
       };
     })
-    .sort((a, b) => Date.parse(b.tippedAt) - Date.parse(a.tippedAt));
+    .sort((a, b) => {
+      const dt = Date.parse(b.tippedAt) - Date.parse(a.tippedAt);
+      if (dt !== 0) return dt;
+      return (a.costKr ?? 0) - (b.costKr ?? 0);
+    });
 
   const won = picks.filter((x) => x.status === "won").length;
   const lost = picks.filter((x) => x.status === "lost").length;
