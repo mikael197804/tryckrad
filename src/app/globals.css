@@ -689,6 +689,75 @@ select {
   color: #7dffb5;
 }
 
+.analysis-tips-coupon {
+  margin: 0.75rem 0 1rem;
+}
+
+.analysis-tips-embed {
+  margin-bottom: 1.1rem;
+}
+
+.analysis-tips-embed .analysis-tips-coupon {
+  margin-top: 0;
+}
+
+.tip-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tip-row-odds {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent-2);
+  margin-top: 0.15rem;
+}
+
+.tip-kind-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid rgba(223, 247, 234, 0.35);
+  color: #dff7ea;
+}
+
+.tip-kind-tag.safe {
+  background: rgba(40, 140, 90, 0.55);
+  border-color: rgba(120, 230, 160, 0.7);
+  color: #7dffb5;
+}
+
+.tip-kind-tag.over {
+  background: rgba(90, 70, 140, 0.5);
+  border-color: rgba(180, 150, 255, 0.55);
+  color: #c9b6ff;
+}
+
+.tip-kind-tag.admin {
+  background: rgba(40, 100, 90, 0.45);
+  border-color: rgba(120, 200, 170, 0.5);
+  color: #9eecc0;
+}
+
+.coupon-row.tip-kind-safe {
+  background: rgba(40, 120, 80, 0.18);
+  border-left: 3px solid rgba(100, 230, 150, 0.75);
+  padding-left: 0.4rem;
+  margin-left: -0.25rem;
+}
+
+.coupon-row.tip-kind-over .mark.filled {
+  background: #c9b6ff;
+  border-color: #c9b6ff;
+  color: #1a1230;
+}
+
 .odds-1x2 .odds-side {
   font-weight: 700;
   opacity: 0.75;

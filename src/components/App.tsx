@@ -460,6 +460,149 @@ function GoalNeedPill({
   );
 }
 
+type AnalysisTipRow = {
+  eventNumber: number;
+  description: string;
+  outcomes: Outcome[];
+  oddsLabel: string;
+  kind: "safe" | "over" | "admin" | "trap";
+  kindLabel: string;
+  note: string;
+};
+
+function buildAnalysisTips(
+  matches: DrawBundle["matches"]
+): AnalysisTipRow[] {
+  const rows: AnalysisTipRow[] = [];
+  for (const m of matches) {
+    const v = m.valueOdds;
+    if (!v) continue;
+    const admin = v.admin;
+    const safe = admin?.safeWinner;
+    if (safe) {
+      rows.push({
+        eventNumber: m.eventNumber,
+        description: m.description,
+        outcomes: ["2"],
+        oddsLabel: `2 @ ${fmtOdds(safe.odds)}`,
+        kind: "safe",
+        kindLabel: "Säker vinnare",
+        note: safe.note,
+      });
+      continue;
+    }
+    const traps = v.trapOverOddsOutcomes || [];
+    const overs = v.overOddsOutcomes || [];
+    const rec = admin?.recommended;
+    if (rec && admin && admin.confidence !== "low") {
+      const ov = v.outcomes.find((x) => x.outcome === rec);
+      const coverFav =
+        /Gardera gärna favoriten|mittfält-underdog/i.test(admin.verdict || "") &&
+        m.favourite &&
+        m.favourite !== rec;
+      const outcomes: Outcome[] = coverFav
+        ? (["1", "X", "2"] as Outcome[]).filter(
+            (o) => o === rec || o === m.favourite
+          )
+        : [rec];
+      rows.push({
+        eventNumber: m.eventNumber,
+        description: m.description,
+        outcomes,
+        oddsLabel: `${outcomes.join("")}${ov?.odds != null ? ` · ${rec} @ ${fmtOdds(ov.odds)}` : ""}`,
+        kind: overs.includes(rec) ? "over" : "admin",
+        kindLabel: overs.includes(rec) ? "Överodds-tips" : "1X2-tips",
+        note: admin.verdict,
+      });
+      continue;
+    }
+    if (overs.length) {
+      const outcomes = overs.filter((o) => !traps.includes(o));
+      if (!outcomes.length) continue;
+      const labels = outcomes
+        .map((o) => {
+          const ov = v.outcomes.find((x) => x.outcome === o);
+          return `${o} @ ${fmtOdds(ov?.odds ?? null)}`;
+        })
+        .join(" · ");
+      rows.push({
+        eventNumber: m.eventNumber,
+        description: m.description,
+        outcomes,
+        oddsLabel: labels,
+        kind: "over",
+        kindLabel: "Överodds-tips",
+        note: v.explanations?.[0] || v.note,
+      });
+    }
+  }
+  return rows.sort((a, b) => a.eventNumber - b.eventNumber);
+}
+
+function AnalysisTipsCoupon({
+  matches,
+  product,
+}: {
+  matches: DrawBundle["matches"];
+  product: Exclude<ProductKind, "oddset">;
+}) {
+  const tips = buildAnalysisTips(matches);
+  if (!tips.length) return null;
+  const safeCount = tips.filter((t) => t.kind === "safe").length;
+  return (
+    <div className="coupon analysis-tips-coupon rise">
+      <div className="coupon-head">
+        <div>
+          <h3>1X2-tips från analys</h3>
+          <div style={{ color: "rgba(223,247,234,0.75)", fontSize: "0.85rem" }}>
+            Säker vinnare, överodds och administrerad 1X2 – som tipprad
+            {safeCount > 0 ? ` · ${safeCount} säker vinnare (2)` : ""}
+          </div>
+        </div>
+        <div className="coupon-cost">{tips.length}</div>
+      </div>
+      {tips.map((t) => (
+        <div
+          className={`coupon-row tip-kind-${t.kind}`}
+          key={`atip-${t.eventNumber}-${t.kind}`}
+        >
+          <strong>{t.eventNumber}</strong>
+          <div>
+            <div className="tip-row-title">
+              <span className={`tip-kind-tag ${t.kind}`}>{t.kindLabel}</span>{" "}
+              {t.description}
+            </div>
+            <div className="tip-row-odds">{t.oddsLabel}</div>
+            <div style={{ fontSize: "0.75rem", opacity: 0.75 }}>{t.note}</div>
+          </div>
+          <div className="coupon-marks">
+            {(["1", "X", "2"] as Outcome[]).map((o) => (
+              <span
+                key={o}
+                className={`mark ${t.outcomes.includes(o) ? "filled" : ""}`}
+              >
+                {o}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+      <div
+        style={{
+          marginTop: "0.85rem",
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: "0.85rem",
+          color: "rgba(223,247,234,0.8)",
+        }}
+      >
+        <span>{tips.length} tips</span>
+        <span>{productLabel(product)} · analyskupong</span>
+      </div>
+    </div>
+  );
+}
+
 function CouponView({
   system,
   product,
@@ -1740,40 +1883,22 @@ export default function App() {
                     eller sämre för laget.
                   </p>
                 )}
-                {(draw.safeWinners?.length ?? 0) > 0 && (
-                  <>
-                    <h2 style={{ fontSize: "1.05rem" }}>Säker vinnare (1X2)</h2>
-                    <p className="panel-lead">
-                      Utvald spik på bortasegern: oddset måste vara 2 (ca
-                      1,85–2,25). Enkel tipp på 2.
-                    </p>
-                    <ul className="alert-list safe-winner-alerts">
-                      {draw.safeWinners.map((s) => (
-                        <li key={`safe-${s.eventNumber}`}>
-                          Match {s.eventNumber} {s.description}:{" "}
-                          <strong>2 @ {fmtOdds(s.odds)}</strong> — {s.note}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-                {(draw.valueAlerts?.length ?? 0) > 0 && (
+                {(buildAnalysisTips(draw.matches).length > 0 ||
+                  (draw.safeWinners?.length ?? 0) > 0 ||
+                  (draw.valueAlerts?.length ?? 0) > 0) && (
                   <>
                     <h2 style={{ fontSize: "1.05rem" }}>
-                      Överodds & värde
+                      Överodds & 1X2-tips
                     </h2>
                     <p className="panel-lead">
-                      Granskar SVS, Unibet, Paf, ATG och sharp (Pinnacle). Varje
-                      överodds pekas ut som 1, X eller 2 med oddssiffra.
-                      Utifrån det administreras tipset: vilken sida som bedöms
-                      rätt, och fällor undviks. Extremodds 8+ undviks. Säker
-                      vinnare läggs bara ut på 2 @ ca 2,00.
+                      Analysen läggs ut som tipprad med 1/X/2-markering.
+                      Säker vinnare = enkel 2 @ ca 2,00. Överodds och
+                      bedömningar visas som tips, inte bara text.
                     </p>
-                    <ul className="alert-list value-alerts">
-                      {draw.valueAlerts.map((a) => (
-                        <li key={a}>{a}</li>
-                      ))}
-                    </ul>
+                    <AnalysisTipsCoupon
+                      matches={draw.matches}
+                      product={product}
+                    />
                   </>
                 )}
                 {(product === "powerplay" || product === "topptipset") &&
