@@ -12,12 +12,34 @@ import {
   isInPreCloseWindow,
   nextPreCloseRefreshAt,
 } from "../lib/refresh";
+import type {
+  HistoryPick,
+  HistoryProduct,
+  TipHistoryResponse,
+} from "../lib/tipHistory";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
+
+function productHistoryLabel(p: HistoryProduct): string {
+  switch (p) {
+    case "powerplay":
+      return "Powerplay";
+    case "topptipset":
+      return "Topptipset";
+    case "stryktipset":
+      return "Stryktipset";
+    case "maltipset":
+      return "Måltipset";
+    case "oddset":
+      return "Oddset";
+  }
+}
 
 const ODDSET_LS_KEY = "mikaels-oddset-tips-24h";
 const ODDSET_LEARN_LS_KEY = "mikaels-oddset-lessons";
+const HISTORY_LS_KEY = "mikaels-tips-history-24h";
 const ODDSET_RETENTION_MS = 24 * 60 * 60 * 1000;
 const ODDSET_LEARN_RETENTION_MS = 21 * 24 * 60 * 60 * 1000;
+const HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 function loadOddsetLocalTips(): OddsetTrackedTip[] {
   if (typeof window === "undefined") return [];
@@ -85,6 +107,149 @@ function saveOddsetLocalLessons(lessons: OddsetLesson[]): void {
   } catch {
     // private mode / quota
   }
+}
+
+function loadLocalHistoryPicks(): HistoryPick[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as HistoryPick[];
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    return parsed.filter((p) => {
+      const at = Date.parse(p.tippedAt);
+      return Number.isFinite(at) && now - at <= HISTORY_RETENTION_MS;
+    });
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalHistoryPicks(picks: HistoryPick[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const now = Date.now();
+    const byId = new Map<string, HistoryPick>();
+    for (const p of picks) {
+      if (!p?.id) continue;
+      const at = Date.parse(p.tippedAt);
+      if (!Number.isFinite(at) || now - at > HISTORY_RETENTION_MS) continue;
+      const prev = byId.get(p.id);
+      if (!prev) {
+        byId.set(p.id, p);
+        continue;
+      }
+      const rank = (s: HistoryPick["status"]) =>
+        s === "won" || s === "lost" ? 3 : s === "live" ? 2 : 1;
+      byId.set(p.id, rank(p.status) >= rank(prev.status) ? { ...p, tippedAt: prev.tippedAt } : prev);
+    }
+    window.localStorage.setItem(
+      HISTORY_LS_KEY,
+      JSON.stringify([...byId.values()])
+    );
+  } catch {
+    // private mode / quota
+  }
+}
+
+function oddsetToHistoryPicks(
+  tips: OddsetTrackedTip[],
+  tippedAtFallback: string
+): HistoryPick[] {
+  return tips.map((t) => {
+    const tippedAt = t.tippedAt || tippedAtFallback;
+    const status =
+      t.outcome === "won" || t.outcome === "lost" || t.outcome === "live"
+        ? t.outcome
+        : "pending";
+    return {
+      id: `oddset:${t.eventId}`,
+      product: "oddset" as const,
+      gameKey: `oddset:${tippedAt.slice(0, 10)}`,
+      gameLabel: `Oddset · Över 2,5 · ${tippedAt.slice(0, 10)}`,
+      tippedAt,
+      description: `${t.home} – ${t.away}`,
+      home: t.home,
+      away: t.away,
+      market: "over_2_5" as const,
+      pick: ["over_2_5"],
+      kickoff: t.kickoff || null,
+      drawNumber: null,
+      eventNumber: null,
+      eventId: t.eventId,
+      status,
+      actual:
+        t.homeGoals != null && t.awayGoals != null
+          ? `${t.homeGoals}-${t.awayGoals}`
+          : null,
+      resultNote: t.resultNote,
+    };
+  });
+}
+
+function drawToHistoryPicks(
+  draw: DrawBundle,
+  tippedAt: string
+): HistoryPick[] {
+  const product = draw.productKind as HistoryProduct;
+  const system = draw.systems[0];
+  if (!system) return [];
+
+  const gameKey = `${product}:${draw.drawNumber}`;
+  const gameLabel = `${productHistoryLabel(product)} #${draw.drawNumber}`;
+
+  if (system.kind === "mal" || product === "maltipset") {
+    const malNums = new Set(
+      system.malEventNumbers?.length
+        ? system.malEventNumbers
+        : draw.malTip || []
+    );
+    return draw.matches
+      .filter((m) => malNums.has(m.eventNumber) || m.malSelected)
+      .map((m) => ({
+        id: `${product}:${draw.drawNumber}:${m.eventNumber}`,
+        product,
+        gameKey,
+        gameLabel: `${gameLabel} · Mål`,
+        tippedAt,
+        description: m.description,
+        home: m.home.name,
+        away: m.away.name,
+        market: "mal" as const,
+        pick: ["mal"],
+        kickoff: m.matchStart || null,
+        drawNumber: draw.drawNumber,
+        eventNumber: m.eventNumber,
+        eventId: null,
+        status: "pending" as const,
+        actual: null,
+        resultNote: null,
+      }));
+  }
+
+  return system.picks.map((p) => {
+    const match = draw.matches.find((m) => m.eventNumber === p.eventNumber);
+    return {
+      id: `${product}:${draw.drawNumber}:${p.eventNumber}`,
+      product,
+      gameKey,
+      gameLabel,
+      tippedAt,
+      description: p.description || match?.description || `Match ${p.eventNumber}`,
+      home: match?.home.name || "",
+      away: match?.away.name || "",
+      market: "1x2" as const,
+      pick: p.outcomes,
+      kickoff: match?.matchStart || null,
+      drawNumber: draw.drawNumber,
+      eventNumber: p.eventNumber,
+      eventId: null,
+      status: "pending" as const,
+      actual: null,
+      resultNote: null,
+    };
+  });
 }
 
 function outcomeRank(o: OddsetTrackedTip["outcome"] | undefined): number {
@@ -588,6 +753,142 @@ function OddsetPickCard({
   );
 }
 
+function HistoryView({
+  history,
+  loading,
+  onClose,
+  onRefresh,
+}: {
+  history: TipHistoryResponse | null;
+  loading: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="history-overlay" role="dialog" aria-modal="true">
+      <div className="history-panel rise">
+        <div className="history-panel-top">
+          <h2>Alla tips · 24 timmar</h2>
+          <div className="history-actions">
+            <button type="button" className="history-btn ghost" onClick={onRefresh}>
+              Uppdatera resultat
+            </button>
+            <button type="button" className="history-btn" onClick={onClose}>
+              Stäng
+            </button>
+          </div>
+        </div>
+        <p className="panel-lead">
+          Sparade spel från i går och i dag. Visar hur många rätt i varje tips.
+          Tipsen behålls {history?.retentionHours ?? 24} timmar.
+        </p>
+
+        {loading && <div className="loading">Hämtar resultat…</div>}
+
+        {history && !loading && (
+          <>
+            <div className="history-totals">
+              <div>
+                <strong>{history.totals.won}</strong>
+                <span>rätt</span>
+              </div>
+              <div>
+                <strong>{history.totals.lost}</strong>
+                <span>fel</span>
+              </div>
+              <div>
+                <strong>{history.totals.pending + history.totals.live}</strong>
+                <span>väntar</span>
+              </div>
+              <div>
+                <strong>
+                  {history.totals.settled > 0
+                    ? `${Math.round(
+                        (100 * history.totals.won) / history.totals.settled
+                      )}%`
+                    : "–"}
+                </strong>
+                <span>träffsäkerhet</span>
+              </div>
+            </div>
+
+            {history.games.length === 0 ? (
+              <p className="panel-lead">
+                Inga sparade tips ännu. Öppna ett spel så sparas tipset
+                automatiskt i 24 h.
+              </p>
+            ) : (
+              history.games.map((g) => {
+                const picks = history.picks.filter(
+                  (p) => p.gameKey === g.gameKey
+                );
+                return (
+                  <section key={g.gameKey} className="panel history-game">
+                    <h3>
+                      {g.label}{" "}
+                      <span className="history-score">
+                        {g.won} rätt / {g.lost} fel
+                        {g.pending + g.live > 0
+                          ? ` · ${g.pending + g.live} väntar`
+                          : ""}
+                      </span>
+                    </h3>
+                    <ul className="history-pick-list">
+                      {picks.map((p) => (
+                        <li
+                          key={p.id}
+                          className={`history-pick ${p.status}`}
+                        >
+                          <div>
+                            <strong>{p.description}</strong>
+                            <div className="reason">
+                              Tipset:{" "}
+                              {p.market === "over_2_5"
+                                ? "Över 2,5"
+                                : p.market === "mal"
+                                  ? "Målmatch"
+                                  : p.pick.join("")}
+                              {p.actual ? ` · resultat ${p.actual}` : ""}
+                            </div>
+                            {p.resultNote && (
+                              <div className="oddset-result-note">
+                                {p.resultNote}
+                              </div>
+                            )}
+                          </div>
+                          <span
+                            className={`oddset-result-badge ${
+                              p.status === "won"
+                                ? "won"
+                                : p.status === "lost"
+                                  ? "lost"
+                                  : p.status === "live"
+                                    ? "live"
+                                    : ""
+                            }`}
+                          >
+                            {p.status === "won"
+                              ? "Rätt"
+                              : p.status === "lost"
+                                ? "Fel"
+                                : p.status === "live"
+                                  ? "Live"
+                                  : "Väntar"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OddsetView({ tip }: { tip: OddsetDayTip }) {
   const picks = tip.selected;
   const picksPerDay = tip.picksPerDay ?? 5;
@@ -741,6 +1042,9 @@ export default function App() {
   const [selectedSystem, setSelectedSystem] = useState(0);
   const [preCloseNote, setPreCloseNote] = useState<string | null>(null);
   const [lastFreshAt, setLastFreshAt] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<TipHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const selectedDrawRef = useRef<number | null>(null);
   const preCloseStartedRef = useRef(false);
   selectedDrawRef.current = selectedDraw;
@@ -806,6 +1110,10 @@ export default function App() {
             ...localLessons,
             ...(json.learning?.lessons || []),
           ]);
+          saveLocalHistoryPicks([
+            ...loadLocalHistoryPicks(),
+            ...oddsetToHistoryPicks(merged, tippedAt),
+          ]);
           setOddset({ ...json, tracked: merged });
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else {
@@ -825,6 +1133,14 @@ export default function App() {
             setSelectedDraw(json.draws[0]?.drawNumber ?? null);
             setSelectedSystem(0);
           }
+          const tippedAt = json.generatedAt || new Date().toISOString();
+          const drawPicks = (json.draws || []).flatMap((d) =>
+            drawToHistoryPicks(d, tippedAt)
+          );
+          saveLocalHistoryPicks([
+            ...loadLocalHistoryPicks(),
+            ...drawPicks,
+          ]);
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         }
       } catch (e) {
@@ -865,6 +1181,70 @@ export default function App() {
     }, 6 * 60 * 1000);
     return () => clearInterval(id);
   }, [product, oddset, loadProduct]);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const local = loadLocalHistoryPicks();
+      const res = await fetch("/api/history", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ picks: local }),
+      });
+      const json = (await res.json()) as TipHistoryResponse & {
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || "Kunde inte hämta historik");
+      saveLocalHistoryPicks(json.picks || []);
+      setHistory(json);
+    } catch {
+      const picks = loadLocalHistoryPicks();
+      const won = picks.filter((p) => p.status === "won").length;
+      const lost = picks.filter((p) => p.status === "lost").length;
+      const live = picks.filter((p) => p.status === "live").length;
+      const pending = picks.filter((p) => p.status === "pending").length;
+      const byGame = new Map<string, HistoryPick[]>();
+      for (const p of picks) {
+        const list = byGame.get(p.gameKey) || [];
+        list.push(p);
+        byGame.set(p.gameKey, list);
+      }
+      setHistory({
+        generatedAt: new Date().toISOString(),
+        retentionHours: 24,
+        picks,
+        games: [...byGame.entries()].map(([gameKey, list]) => ({
+          gameKey,
+          product: list[0].product,
+          label: list[0].gameLabel,
+          tippedAt: list[0].tippedAt,
+          total: list.length,
+          settled: list.filter((x) => x.status === "won" || x.status === "lost")
+            .length,
+          won: list.filter((x) => x.status === "won").length,
+          lost: list.filter((x) => x.status === "lost").length,
+          pending: list.filter((x) => x.status === "pending").length,
+          live: list.filter((x) => x.status === "live").length,
+        })),
+        totals: {
+          total: picks.length,
+          settled: won + lost,
+          won,
+          lost,
+          pending,
+          live,
+        },
+      });
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const openHistory = useCallback(() => {
+    setShowHistory(true);
+    void loadHistory();
+  }, [loadHistory]);
 
   const draw = useMemo(() => {
     if (!data || data.product !== product) return null;
@@ -985,10 +1365,9 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Alla spel uppdateras 12 min före spelstopp. Powerplay/Topptipset lär
-            av förra omgångens missar automatiskt. Stryk/Mål: lagnyheter ca 15
-            min före avspark. Oddset: fem Över 2,5-tips som sparas 24 h
-            (grönt/rött).
+            Alla spel uppdateras 12 min före spelstopp. Tips sparas 24 h – tryck
+            på Tips 24h för rätt/fel per spel. Powerplay/Topptipset lär av
+            missar. Stryk/Mål: lagnyheter ca 15 min före avspark.
           </p>
           <div className="product-switch" role="tablist" aria-label="Produkt">
             {DRAW_PRODUCTS.map((p) => (
@@ -1008,6 +1387,13 @@ export default function App() {
             >
               Oddset
             </button>
+            <button
+              type="button"
+              className="product-btn history-launch"
+              onClick={openHistory}
+            >
+              Tips 24h
+            </button>
           </div>
         </div>
         <div className="meta-chip">
@@ -1022,6 +1408,15 @@ export default function App() {
           {lastFreshAt ? ` · färsk före stopp ${fmtTime(lastFreshAt)}` : ""}
         </div>
       </header>
+
+      {showHistory && (
+        <HistoryView
+          history={history}
+          loading={historyLoading}
+          onClose={() => setShowHistory(false)}
+          onRefresh={() => void loadHistory()}
+        />
+      )}
 
       {preCloseNote && (
         <div className="preclose-banner" role="status">
