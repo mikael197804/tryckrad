@@ -256,6 +256,27 @@ function scoreOutcomes(
   applyRest(homeRest, true);
   applyRest(awayRest, false);
 
+  // Djup konsensus: odds + folk + tabell samma håll → spetsa favoriten (säkrare enkel)
+  const oddsEntries: Array<{ o: Outcome; v: number }> = [];
+  if (odds.one != null) oddsEntries.push({ o: "1", v: odds.one });
+  if (odds.x != null) oddsEntries.push({ o: "X", v: odds.x });
+  if (odds.two != null) oddsEntries.push({ o: "2", v: odds.two });
+  oddsEntries.sort((a, b) => a.v - b.v);
+  const oddsFav = oddsEntries[0]?.o;
+  const folkFav = favouriteFromDist(dist);
+  if (oddsFav && oddsFav === folkFav) {
+    if (oddsFav === "1") score1 += 0.055;
+    if (oddsFav === "X") scoreX += 0.055;
+    if (oddsFav === "2") score2 += 0.055;
+    // Kort favoritodds → ännu säkrare enkel
+    const favOdds = oddsEntries[0]?.v;
+    if (favOdds != null && favOdds <= 1.55) {
+      if (oddsFav === "1") score1 += 0.04;
+      if (oddsFav === "X") scoreX += 0.04;
+      if (oddsFav === "2") score2 += 0.04;
+    }
+  }
+
   const sum = Math.max(score1 + scoreX + score2, 0.01);
   return {
     score1: score1 / sum,
@@ -291,14 +312,20 @@ function buildPick(
 
   let pick: Outcome[] = [top.o];
 
-  if (gap < 0.07) {
+  // Högre ribba för enkel – 48 kr-system kräver säkra enklar
+  if (gap < 0.1 || top.s < 0.52) {
     pick = [top.o, second.o];
-    reasons.push("jämnt läge – halvgardering");
-  } else if (gap < 0.14 && second.s > 0.22) {
+    reasons.push("jämnt/svagt läge – halvgardering för träffsäkerhet");
+  } else if (gap < 0.18 && second.s > 0.2) {
     pick = [top.o, second.o];
     reasons.push("osäker favorit – halv för säkerhet");
+  } else if (top.s >= 0.62 && gap >= 0.2) {
+    reasons.push(
+      `stark enkel ${top.o} (${Math.round(top.s * 100)}%, marginal ${Math.round(gap * 100)}%)`
+    );
   } else {
-    reasons.push(`starkast stöd för ${top.o} (${Math.round(top.s * 100)}%)`);
+    pick = [top.o, second.o];
+    reasons.push("medelstark favorit – halv för att skydda 48 kr-system");
   }
 
   if (homeFatigue.level === "high" || awayFatigue.level === "high") {

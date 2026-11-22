@@ -13,6 +13,20 @@ const TARGET_COSTS = [
   48, 72, 96, 144, 192, 216, 288, 384, 432, 576, 648,
 ] as const;
 
+type CoverPlan = "enkel" | "halv" | "hel";
+
+type MatchProb = {
+  p1: number;
+  pX: number;
+  p2: number;
+  bestSingle: Outcome;
+  bestSingleP: number;
+  bestHalf: Outcome[];
+  bestHalfP: number;
+  /** Hur mycket halv förbättrar vs enkel (högre = behöver gardering). */
+  hedgeNeed: number;
+};
+
 function coverLabel(outcomes: Outcome[]): SystemPick["cover"] {
   if (outcomes.length >= 3) return "hel";
   if (outcomes.length === 2) return "halv";
@@ -23,56 +37,357 @@ function rowCost(picks: SystemPick[]): number {
   return picks.reduce((acc, p) => acc * Math.max(1, p.outcomes.length), 1);
 }
 
+function normalize3(a: number, b: number, c: number): [number, number, number] {
+  const s = Math.max(a + b + c, 0.01);
+  return [a / s, b / s, c / s];
+}
+
+/** Djupare sannolikhet: scores + odds + folk, kalibrerad mot säkra enklar. */
+export function matchProbabilities(m: MatchAnalysis): MatchProb {
+  let s1 = Math.max(m.score1, 0.01);
+  let sX = Math.max(m.scoreX, 0.01);
+  let s2 = Math.max(m.score2, 0.01);
+
+  // Odds-implicit
+  const o1 = m.odds.one != null && m.odds.one > 1 ? 1 / m.odds.one : null;
+  const oX = m.odds.x != null && m.odds.x > 1 ? 1 / m.odds.x : null;
+  const o2 = m.odds.two != null && m.odds.two > 1 ? 1 / m.odds.two : null;
+  if (o1 != null && oX != null && o2 != null) {
+    const [n1, nX, n2] = normalize3(o1, oX, o2);
+    s1 = s1 * 0.55 + n1 * 0.45;
+    sX = sX * 0.55 + nX * 0.45;
+    s2 = s2 * 0.55 + n2 * 0.45;
+  }
+
+  // Folk
+  const fSum = Math.max(
+    m.svenskaFolket.one + m.svenskaFolket.x + m.svenskaFolket.two,
+    0.01
+  );
+  const f1 = m.svenskaFolket.one / fSum;
+  const fX = m.svenskaFolket.x / fSum;
+  const f2 = m.svenskaFolket.two / fSum;
+  s1 = s1 * 0.85 + f1 * 0.15;
+  sX = sX * 0.85 + fX * 0.15;
+  s2 = s2 * 0.85 + f2 * 0.15;
+
+  // Konsensusboost: när modell/odds/folk pekar samma håll → spetsa enkel
+  const modelTop = (
+    [
+      ["1", s1],
+      ["X", sX],
+      ["2", s2],
+    ] as [Outcome, number][]
+  ).sort((a, b) => b[1] - a[1])[0][0];
+  const oddsTop =
+    o1 != null && oX != null && o2 != null
+      ? (
+          [
+            ["1", o1],
+            ["X", oX],
+            ["2", o2],
+          ] as [Outcome, number][]
+        ).sort((a, b) => b[1] - a[1])[0][0]
+      : null;
+  const folkTop = (
+    [
+      ["1", f1],
+      ["X", fX],
+      ["2", f2],
+    ] as [Outcome, number][]
+  ).sort((a, b) => b[1] - a[1])[0][0];
+
+  if (oddsTop && modelTop === oddsTop && modelTop === folkTop) {
+    if (modelTop === "1") s1 += 0.11;
+    if (modelTop === "X") sX += 0.11;
+    if (modelTop === "2") s2 += 0.11;
+  } else if (oddsTop && modelTop === oddsTop) {
+    if (modelTop === "1") s1 += 0.055;
+    if (modelTop === "X") sX += 0.055;
+    if (modelTop === "2") s2 += 0.055;
+  }
+
+  // Osäkerhetssignaler → mer X / plattare
+  if (m.homeFatigue.level === "high" || m.awayFatigue.level === "high") {
+    sX += 0.05;
+  }
+  if (m.homeRest.level === "likely" || m.awayRest.level === "likely") {
+    sX += 0.04;
+  }
+  if (
+    m.homeTable.rankGapToOpponent != null &&
+    m.homeTable.rankGapToOpponent <= 2
+  ) {
+    sX += 0.03;
+  }
+
+  [s1, sX, s2] = normalize3(s1, sX, s2);
+
+  const singles: { o: Outcome; p: number }[] = [
+    { o: "1", p: s1 },
+    { o: "X", p: sX },
+    { o: "2", p: s2 },
+  ];
+  singles.sort((a, b) => b.p - a.p);
+  const bestSingle = singles[0].o;
+  const bestSingleP = singles[0].p;
+
+  const halves: { outcomes: Outcome[]; p: number }[] = [
+    { outcomes: ["1", "X"], p: s1 + sX },
+    { outcomes: ["1", "2"], p: s1 + s2 },
+    { outcomes: ["X", "2"], p: sX + s2 },
+  ];
+  halves.sort((a, b) => b.p - a.p);
+  const bestHalf = halves[0].outcomes;
+  const bestHalfP = halves[0].p;
+
+  // Behöver gardering om enkel är svag eller halv ger stor lyft
+  const hedgeNeed =
+    1 - bestSingleP + Math.max(0, bestHalfP - bestSingleP) * 0.85;
+
+  return {
+    p1: s1,
+    pX: sX,
+    p2: s2,
+    bestSingle,
+    bestSingleP,
+    bestHalf,
+    bestHalfP,
+    hedgeNeed,
+  };
+}
+
+function estimatedCoverP(m: MatchAnalysis, cover: CoverPlan): number {
+  const pr = matchProbabilities(m);
+  if (cover === "hel") return 0.997;
+  if (cover === "halv") return Math.min(0.98, Math.max(0.58, pr.bestHalfP));
+  // Enkel: kräv kalibrering – spetsade konsensusfavoriter behåller mer
+  const peak = pr.bestSingleP;
+  const cal = peak >= 0.7 ? 0.99 : peak >= 0.62 ? 0.97 : 0.94;
+  return Math.min(0.93, Math.max(0.36, peak * cal));
+}
+
+function estimateSystemHitPct(
+  matches: MatchAnalysis[],
+  plan: CoverPlan[]
+): number {
+  let p = 1;
+  for (let i = 0; i < matches.length; i++) {
+    p *= estimatedCoverP(matches[i], plan[i] ?? "enkel");
+  }
+  return Math.round(p * 1000) / 10;
+}
+
+/** P(minst k matcher täcks) med olika p per match (DP). */
+function estimateAtLeastK(coverPs: number[], k: number): number {
+  const n = coverPs.length;
+  let dp = Array(n + 1).fill(0);
+  dp[0] = 1;
+  for (const p of coverPs) {
+    const next = Array(n + 1).fill(0);
+    for (let s = 0; s <= n; s++) {
+      if (!dp[s]) continue;
+      next[s] += dp[s] * (1 - p);
+      if (s + 1 <= n) next[s + 1] += dp[s] * p;
+    }
+    dp = next;
+  }
+  let sum = 0;
+  for (let s = k; s <= n; s++) sum += dp[s];
+  return Math.round(Math.min(1, Math.max(0, sum)) * 1000) / 10;
+}
+
+function coverPsForPlan(
+  matches: MatchAnalysis[],
+  plan: CoverPlan[]
+): number[] {
+  return matches.map((m, i) => estimatedCoverP(m, plan[i] ?? "enkel"));
+}
+
+function estimateWinPct(
+  matches: MatchAnalysis[],
+  plan: CoverPlan[]
+): number {
+  const ps = coverPsForPlan(matches, plan);
+  const n = ps.length;
+  // 8-matcherspel (PP/Topp): vinstnivå ≈ minst 7 rätt täckta
+  if (n >= 7 && n <= 9) {
+    return estimateAtLeastK(ps, n - 1);
+  }
+  if (n >= 13) {
+    // Stryk: visa P(≥10) som mjuk vinstproxy
+    return estimateAtLeastK(ps, 10);
+  }
+  return estimateSystemHitPct(matches, plan);
+}
+
+/**
+ * Välj hel/halv/enkel så att P(hela kupongen täcks) maximeras
+ * för given radkostnad 2^halv * 3^hel.
+ */
+function planForHighHit(
+  matches: MatchAnalysis[],
+  target: number
+): CoverPlan[] | null {
+  const n = matches.length;
+  const probs = matches.map(matchProbabilities);
+
+  // Kandidater: (hel, halv) som ger exakt target
+  const candidates: Array<{ hel: number; halv: number }> = [];
+  for (let hel = 0; hel <= n; hel++) {
+    for (let halv = 0; halv <= n - hel; halv++) {
+      if (Math.pow(2, halv) * Math.pow(3, hel) === target) {
+        candidates.push({ hel, halv });
+      }
+    }
+  }
+  if (!candidates.length) return null;
+
+  let bestPlan: CoverPlan[] | null = null;
+  let bestP = -1;
+
+  for (const { hel, halv } of candidates) {
+    // Sortera: störst hedgeNeed först (behöver täckning)
+    const order = probs
+      .map((pr, i) => ({
+        i,
+        need: pr.hedgeNeed,
+        // Bland lika: lägre bestHalfP ska ha hel före halv
+        halfP: pr.bestHalfP,
+        singleP: pr.bestSingleP,
+      }))
+      .sort(
+        (a, b) =>
+          b.need - a.need || a.halfP - b.halfP || a.singleP - b.singleP
+      );
+
+    const plan: CoverPlan[] = Array(n).fill("enkel");
+    let idx = 0;
+    // Hel först på de som halv fortfarande missar mest
+    const helOrder = [...order].sort(
+      (a, b) => a.halfP - b.halfP || b.need - a.need
+    );
+    for (let h = 0; h < hel; h++) {
+      plan[helOrder[h].i] = "hel";
+    }
+    for (const o of order) {
+      if (idx >= halv) break;
+      if (plan[o.i] === "hel") continue;
+      // Enkel bara om riktigt stark – annars prioritera halv-slot hit
+      plan[o.i] = "halv";
+      idx++;
+    }
+
+    // Om vi har halv-slots kvar (borde inte hända): fyll
+    for (let i = 0; i < n && idx < halv; i++) {
+      if (plan[i] === "enkel") {
+        plan[i] = "halv";
+        idx++;
+      }
+    }
+
+    // Flytta halv → enkel bara på extremt säkra matcher om vi har för många halv?
+    // Nej – för target är antalet fixerat.
+
+    // Extra: om en "enkel" har bestSingleP < 0.58, byt med en halv som är säkrare enkel
+    const enkelIdx = plan
+      .map((c, i) => ({ c, i, p: probs[i].bestSingleP }))
+      .filter((x) => x.c === "enkel");
+    const halvIdx = plan
+      .map((c, i) => ({ c, i, p: probs[i].bestSingleP, halfP: probs[i].bestHalfP }))
+      .filter((x) => x.c === "halv");
+
+    for (const e of enkelIdx) {
+      if (e.p >= 0.62) continue;
+      // Byt med halv som har högre singleP (den halv-matchen är säkrare som enkel)
+      const swap = halvIdx
+        .filter((h) => h.p > e.p + 0.04)
+        .sort((a, b) => b.p - a.p)[0];
+      if (!swap) continue;
+      plan[e.i] = "halv";
+      plan[swap.i] = "enkel";
+      swap.p = -1; // förbrukad
+    }
+
+    // Maximera vinstnivå (≥ n-1) i första hand, helträff som tiebreak
+    const win = estimateWinPct(matches, plan);
+    const hit = estimateSystemHitPct(matches, plan);
+    const score = win * 10 + hit;
+    if (score > bestP) {
+      bestP = score;
+      bestPlan = plan;
+    }
+  }
+
+  return bestPlan;
+}
+
+/** Äldre osäkerhetsrank – fallback. */
 function uncertaintyRank(m: MatchAnalysis): number {
-  const spread = Math.max(m.score1, m.scoreX, m.score2) -
+  const spread =
+    Math.max(m.score1, m.scoreX, m.score2) -
     [m.score1, m.scoreX, m.score2].sort((a, b) => b - a)[1];
   const fatigueBoost =
-    (m.homeFatigue.level === "high" ? 0.15 : m.homeFatigue.level === "medium" ? 0.07 : 0) +
-    (m.awayFatigue.level === "high" ? 0.15 : m.awayFatigue.level === "medium" ? 0.07 : 0);
+    (m.homeFatigue.level === "high"
+      ? 0.15
+      : m.homeFatigue.level === "medium"
+        ? 0.07
+        : 0) +
+    (m.awayFatigue.level === "high"
+      ? 0.15
+      : m.awayFatigue.level === "medium"
+        ? 0.07
+        : 0);
   return m.uncertainty + (1 - spread) + fatigueBoost;
 }
 
-function rankedOutcomes(m: MatchAnalysis): Outcome[] {
-  return (
-    [
-      { o: "1" as const, s: m.score1 },
-      { o: "X" as const, s: m.scoreX },
-      { o: "2" as const, s: m.score2 },
-    ] satisfies { o: Outcome; s: number }[]
-  )
-    .sort((a, b) => b.s - a.s)
-    .map((x) => x.o);
-}
+function planForCost(
+  matches: MatchAnalysis[],
+  target: number
+): CoverPlan[] | null {
+  // Primärt: maximera träffsannolikhet
+  const highHit = planForHighHit(matches, target);
+  if (highHit) return highHit;
 
-function baseOutcomes(m: MatchAnalysis): Outcome[] {
-  return [rankedOutcomes(m)[0]];
-}
+  const n = matches.length;
+  const order = matches
+    .map((m, i) => ({ i, u: uncertaintyRank(m) }))
+    .sort((a, b) => b.u - a.u)
+    .map((x) => x.i);
 
-function halfOutcomes(m: MatchAnalysis): Outcome[] {
-  const ranked = rankedOutcomes(m);
-  return [ranked[0], ranked[1]];
-}
-
-function fullOutcomes(): Outcome[] {
-  return ["1", "X", "2"];
+  for (let hel = 0; hel <= n; hel++) {
+    for (let halv = 0; halv <= n - hel; halv++) {
+      const cost = Math.pow(2, halv) * Math.pow(3, hel);
+      if (cost === target) {
+        const plan = Array<CoverPlan>(n).fill("enkel");
+        let idx = 0;
+        for (let h = 0; h < hel; h++) plan[order[idx++]] = "hel";
+        for (let h = 0; h < halv; h++) plan[order[idx++]] = "halv";
+        return plan;
+      }
+    }
+  }
+  return null;
 }
 
 function makePicks(
   matches: MatchAnalysis[],
-  coverPlan: ("enkel" | "halv" | "hel")[]
+  coverPlan: CoverPlan[]
 ): SystemPick[] {
   return matches.map((m, i) => {
     const plan = coverPlan[i] ?? "enkel";
+    const pr = matchProbabilities(m);
     let outcomes: Outcome[];
     let reason = m.pickReason;
     if (plan === "hel") {
-      outcomes = fullOutcomes();
-      reason = `helgardering – ${m.pickReason}`;
+      outcomes = ["1", "X", "2"];
+      reason = `helgardering (osäker) – ${m.pickReason}`;
     } else if (plan === "halv") {
-      outcomes = halfOutcomes(m);
-      reason = `halvgardering – ${m.pickReason}`;
+      outcomes = pr.bestHalf;
+      reason = `halv ${outcomes.join("")} (~${Math.round(pr.bestHalfP * 100)}%) – ${m.pickReason}`;
     } else {
-      outcomes = baseOutcomes(m);
+      outcomes = [pr.bestSingle];
+      reason = `enkel ${pr.bestSingle} (~${Math.round(pr.bestSingleP * 100)}%) – ${m.pickReason}`;
     }
     return {
       eventNumber: m.eventNumber,
@@ -84,40 +399,19 @@ function makePicks(
   });
 }
 
-function planForCost(
-  matches: MatchAnalysis[],
-  target: number
-): ("enkel" | "halv" | "hel")[] | null {
-  const n = matches.length;
-  const order = matches
-    .map((m, i) => ({ i, u: uncertaintyRank(m) }))
-    .sort((a, b) => b.u - a.u)
-    .map((x) => x.i);
+function riskFromHitPct(hitPct: number, cost: number): GeneratedSystem["risk"] {
+  if (hitPct >= 75) return "lågt";
+  if (hitPct >= 55 || cost >= 288) return "medel";
+  return "högt";
+}
 
-  // Find a,b such that 2^a * 3^b == target and a+b <= n
-  for (let hel = 0; hel <= n; hel++) {
-    for (let halv = 0; halv <= n - hel; halv++) {
-      const cost = Math.pow(2, halv) * Math.pow(3, hel);
-      if (cost === target) {
-        const plan = Array<"enkel" | "halv" | "hel">(n).fill("enkel");
-        let idx = 0;
-        for (let h = 0; h < hel; h++) plan[order[idx++]] = "hel";
-        for (let h = 0; h < halv; h++) plan[order[idx++]] = "halv";
-        return plan;
-      }
-    }
+function systemName(cost: number, hitPct: number, index: number): string {
+  if (cost === 48) {
+    return hitPct >= 70
+      ? `Säkerhet ${cost} kr`
+      : `Skarp säkerhet ${cost} kr`;
   }
-  return null;
-}
-
-function riskFromCost(cost: number): GeneratedSystem["risk"] {
-  if (cost <= 96) return "högt";
-  if (cost <= 288) return "medel";
-  return "lågt";
-}
-
-function systemName(cost: number, index: number): string {
-  const labels = ["Skarp", "Balanserad", "Bred"];
+  const labels = ["Skarp", "Balanserad", "Bred", "Maximal"];
   return `${labels[index] ?? "System"} ${cost} kr`;
 }
 
@@ -144,7 +438,6 @@ export function generateMaltipsetSystems(
   if (ranked.length < 8) return [];
 
   const systems: GeneratedSystem[] = [];
-  // M8–M12: radkostnad = C(n,8) * 2,50
   for (const n of [8, 9, 10, 11, 12]) {
     if (n > ranked.length) break;
     const rows = combinations(n, 8);
@@ -157,7 +450,7 @@ export function generateMaltipsetSystems(
         eventNumber: m.eventNumber,
         description: m.description,
         outcomes: on ? (["1"] as Outcome[]) : [],
-        cover: on ? "enkel" : "enkel",
+        cover: "enkel",
         reason: on
           ? `Markerad (målrank ${m.goalRank})`
           : `Ej markerad (rank ${m.goalRank})`,
@@ -172,16 +465,21 @@ export function generateMaltipsetSystems(
       risk: n <= 8 ? "högt" : n <= 10 ? "medel" : "lågt",
       kind: "mal",
       malEventNumbers: selected.map((m) => m.eventNumber),
+      estimatedHitPct: null,
     });
   }
   return systems;
 }
 
+/**
+ * Bygg system 48–720 kr. För 48 kr (Powerplay/Topptipset) maximeras
+ * uppskattad träffsannolikhet via djupare p-modell och optimal gardering.
+ */
 export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   if (matches.length === 0) return [];
 
-  const preferred = [48, 96, 144, 288, 432, 72, 192, 576];
-  // Stryktipset (13): fler större system behövs ibland
+  // 48 först – säkerhetsfokus för PP/Topp
+  const preferred = [48, 96, 72, 144, 192, 288, 432, 576];
   if (matches.length >= 13) {
     preferred.push(64, 108, 162, 216, 324, 486, 729);
   }
@@ -198,47 +496,79 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
     if (cost < MIN_COST || cost > MAX_COST) continue;
     used.add(cost);
 
+    const hitPct = estimateSystemHitPct(matches, plan);
+    const winPct = estimateWinPct(matches, plan);
     const halv = picks.filter((p) => p.cover === "halv").length;
     const hel = picks.filter((p) => p.cover === "hel").length;
+    const enklar = picks.filter((p) => p.cover === "enkel");
+    const minEnkel = enklar.length
+      ? Math.min(
+          ...enklar.map((p) => {
+            const m = matches.find((x) => x.eventNumber === p.eventNumber);
+            return m ? matchProbabilities(m).bestSingleP : 0.5;
+          })
+        )
+      : 1;
+
     const fatigueMatches = matches.filter(
       (m) =>
         m.homeFatigue.level !== "low" || m.awayFatigue.level !== "low"
     ).length;
 
+    const safetyNote =
+      cost === 48
+        ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
+        : `${hel} hel · ${halv} halv · ${enklar.length} enkel.`;
+
+    const winLabel =
+      matches.length >= 7 && matches.length <= 9
+        ? `Vinstnivå (≥${matches.length - 1} rätt) ~${String(winPct).replace(".", ",")}%`
+        : `Uppskattad täckning ~${String(hitPct).replace(".", ",")}%`;
+
     systems.push({
-      name: systemName(cost, systems.length),
+      name: systemName(cost, winPct, systems.length),
       costKr: cost,
       rows: cost,
       picks,
-      summary: `${hel} hel · ${halv} halv · ${picks.length - hel - halv} enkel. ${fatigueMatches} matcher med förhöjd belastning vägdes in.`,
-      risk: riskFromCost(cost),
+      summary: `${safetyNote} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${fatigueMatches} matcher med belastning vägdes in.`,
+      risk: riskFromHitPct(winPct, cost),
       kind: "1x2",
+      estimatedHitPct: hitPct,
+      estimatedWinPct: winPct,
     });
 
-    if (systems.length >= 4) break;
+    if (systems.length >= 5) break;
   }
 
-  // Fallback: build closest valid cost in range
   if (systems.length === 0) {
     for (const target of TARGET_COSTS) {
       const plan = planForCost(matches, target);
       if (!plan) continue;
       const picks = makePicks(matches, plan);
       const cost = rowCost(picks);
+      const hitPct = estimateSystemHitPct(matches, plan);
+      const winPct = estimateWinPct(matches, plan);
       systems.push({
         name: `System ${cost} kr`,
         costKr: cost,
         rows: cost,
         picks,
-        summary: `Automatiskt system inom 48–720 kr.`,
-        risk: riskFromCost(cost),
+        summary: `Automatiskt system inom 48–720 kr. Vinstnivå ~${winPct}%.`,
+        risk: riskFromHitPct(winPct, cost),
         kind: "1x2",
+        estimatedHitPct: hitPct,
+        estimatedWinPct: winPct,
       });
       break;
     }
   }
 
-  return systems.sort((a, b) => a.costKr - b.costKr);
+  return systems.sort((a, b) => {
+    // 48 kr säkerhet först, sedan kostnad
+    if (a.costKr === 48 && b.costKr !== 48) return -1;
+    if (b.costKr === 48 && a.costKr !== 48) return 1;
+    return a.costKr - b.costKr;
+  });
 }
 
 export function formatCouponLine(pick: SystemPick): string {

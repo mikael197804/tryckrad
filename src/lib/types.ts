@@ -196,4 +196,11 @@ export type GeneratedSystem = {
   kind?: "1x2" | "mal";
   /** Måltipset: markerade matchnummer (M8–M14) */
   malEventNumbers?: number[];
+  /** Uppskattad chans att hela kupongen täcks (0–100). */
+  estimatedHitPct?: number | null;
+  /**
+   * Uppskattad vinstnivå: för 8 matcher ≈ P(≥7 rätt täckta),
+   * annars samma som estimatedHitPct.
+   */
+  estimatedWinPct?: number | null;
 };

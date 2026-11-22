@@ -477,10 +477,20 @@ function CouponView({
           <h3>{system.name}</h3>
           <div style={{ color: "rgba(223,247,234,0.75)", fontSize: "0.85rem" }}>
             {system.summary} · risk {system.risk}
+            {system.estimatedWinPct != null
+              ? ` · vinstnivå ~${String(system.estimatedWinPct).replace(".", ",")}%`
+              : system.estimatedHitPct != null
+                ? ` · modell ~${String(system.estimatedHitPct).replace(".", ",")}%`
+                : ""}
           </div>
         </div>
         <div className="coupon-cost">
           {String(system.costKr).replace(".", ",")} kr
+          {(system.estimatedWinPct ?? system.estimatedHitPct) != null && (
+            <div className="coupon-hit">
+              ~{String(system.estimatedWinPct ?? system.estimatedHitPct).replace(".", ",")}%
+            </div>
+          )}
         </div>
       </div>
       {system.picks.map((p) => {
@@ -1606,13 +1616,13 @@ export default function App() {
                       : "System 48–720 kr"}
                   </h2>
                   <p className="panel-lead">
+                    {product === "powerplay" || product === "topptipset"
+                      ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad vinstnivå (≥7 rätt) – inte garanti. "
+                      : ""}
                     Kupongen speglar {productLabel(product)}-raden på Svenska
                     Spel. Kostnad = antal kombinationer ×{" "}
                     {String(draw.rowPrice).replace(".", ",")} kr
-                    {product === "maltipset"
-                      ? " (M8–M12)"
-                      : ""}
-                    .
+                    {product === "maltipset" ? " (M8–M12)" : ""}.
                   </p>
                   <div className="system-switch">
                     {draw.systems.map((s, i) => (
@@ -1622,7 +1632,12 @@ export default function App() {
                         className={`system-btn ${selectedSystem === i ? "active" : ""}`}
                         onClick={() => setSelectedSystem(i)}
                       >
-                        {String(s.costKr).replace(".", ",")} kr · {s.risk}
+                        {String(s.costKr).replace(".", ",")} kr
+                        {s.estimatedWinPct != null
+                          ? ` · ~${Math.round(s.estimatedWinPct)}%`
+                          : s.estimatedHitPct != null
+                            ? ` · ~${Math.round(s.estimatedHitPct)}%`
+                            : ` · ${s.risk}`}
                       </button>
                     ))}
                   </div>
