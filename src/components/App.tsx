@@ -942,6 +942,48 @@ function Odds1x2Marked({
   );
 }
 
+function EqualizerBlock({
+  equalizer,
+}: {
+  equalizer: NonNullable<
+    DrawBundle["matches"][number]["goals"]
+  >["equalizer"];
+}) {
+  return (
+    <div className={`equalizer-block eq-${equalizer.level}`}>
+      <div className="equalizer-line">
+        <strong>
+          Utjämnarpress
+          {equalizer.level === "strong"
+            ? " · stark"
+            : equalizer.level === "medium"
+              ? " · medel"
+              : " · svag"}
+        </strong>
+        <span>{equalizer.headline}</span>
+      </div>
+      {equalizer.points.length > 0 && (
+        <div className="equalizer-points">
+          {equalizer.points.map((p) => (
+            <div key={p} className="equalizer-point">
+              {p}
+            </div>
+          ))}
+        </div>
+      )}
+      {equalizer.warnings.length > 0 && (
+        <div className="equalizer-warnings">
+          {equalizer.warnings.map((w) => (
+            <div key={w} className="equalizer-warn">
+              {w}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GoalBlock({
   goals,
   malSelected,
@@ -954,6 +996,7 @@ function GoalBlock({
   const football = goals.sport === "football";
   return (
     <div className={`goal-block ${malSelected ? "mal-on" : ""}`}>
+      {goals.equalizer && <EqualizerBlock equalizer={goals.equalizer} />}
       <div className="goal-line">
         <strong>
           Mål
@@ -1084,6 +1127,7 @@ function OddsetPickCard({
             : "–"}
         </span>
       </div>
+      {c.equalizer && <EqualizerBlock equalizer={c.equalizer} />}
       <div className="match-card-meta">
         <span className="odds">Ö2,5 {fmtOdds(c.odds25)}</span>
         <span className="odds">Ö3,5 {fmtOdds(c.odds35)}</span>
@@ -1095,6 +1139,19 @@ function OddsetPickCard({
           note={c.redCard.note}
           probabilityPct={c.redCard.probabilityPct}
         />
+        {c.equalizer && (
+          <span
+            className={`ctx-pill eq-pill eq-${c.equalizer.level}`}
+            title={c.equalizer.headline}
+          >
+            utjämnarpress{" "}
+            {c.equalizer.level === "strong"
+              ? "stark"
+              : c.equalizer.level === "medium"
+                ? "medel"
+                : "svag"}
+          </span>
+        )}
       </div>
       <div className="reason">{c.reason}</div>
       {"learningNotes" in c &&
@@ -2773,9 +2830,7 @@ export default function App() {
                             {m.svenskaFolket.two}
                           </span>
                         </div>
-                        {(product === "powerplay" ||
-                          product === "maltipset") &&
-                          m.goals && (
+                        {m.goals && (
                           <GoalBlock
                             goals={m.goals}
                             malSelected={m.malSelected}
@@ -2825,10 +2880,21 @@ export default function App() {
                             label={m.away.name}
                           />
                           <ValueOddsPill valueOdds={m.valueOdds} />
-                          {(product === "powerplay" ||
-                            product === "maltipset") &&
-                            m.goals && (
+                          {m.goals && (
                             <>
+                              {m.goals.equalizer && (
+                                <span
+                                  className={`ctx-pill eq-pill eq-${m.goals.equalizer.level}`}
+                                  title={m.goals.equalizer.headline}
+                                >
+                                  utjämnarpress{" "}
+                                  {m.goals.equalizer.level === "strong"
+                                    ? "stark"
+                                    : m.goals.equalizer.level === "medium"
+                                      ? "medel"
+                                      : "svag"}
+                                </span>
+                              )}
                               <GoalNeedPill
                                 need={m.goals.homeAttackNeed}
                                 note={m.goals.homeNeedNote}
@@ -2921,10 +2987,21 @@ export default function App() {
                                 />
                                 <ValueOddsPill valueOdds={m.valueOdds} />
                                 <OverOddsExplain valueOdds={m.valueOdds} />
-                                {(product === "powerplay" ||
-                                  product === "maltipset") &&
-                                  m.goals && (
+                                {m.goals && (
                                   <>
+                                    {m.goals.equalizer && (
+                                      <span
+                                        className={`ctx-pill eq-pill eq-${m.goals.equalizer.level}`}
+                                        title={m.goals.equalizer.headline}
+                                      >
+                                        utjämnarpress{" "}
+                                        {m.goals.equalizer.level === "strong"
+                                          ? "stark"
+                                          : m.goals.equalizer.level === "medium"
+                                            ? "medel"
+                                            : "svag"}
+                                      </span>
+                                    )}
                                     <GoalNeedPill
                                       need={m.goals.homeAttackNeed}
                                       note={m.goals.homeNeedNote}
@@ -2954,9 +3031,7 @@ export default function App() {
                                   </>
                                 )}
                               </div>
-                              {(product === "powerplay" ||
-                                product === "maltipset") &&
-                                m.goals && (
+                              {m.goals && (
                                 <GoalBlock
                                   goals={m.goals}
                                   malSelected={m.malSelected}

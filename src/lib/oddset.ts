@@ -1,3 +1,8 @@
+import {
+  assessEqualizerPressure,
+  equalizerReasonLine,
+  type EqualizerAssessment,
+} from "./equalizerPressure";
 import { upstreamFetchInit } from "./fetch-mode";
 import {
   importOddsetTips,
@@ -18,6 +23,7 @@ import { overMarketValue } from "./valueOdds";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
+export type { EqualizerAssessment } from "./equalizerPressure";
 export type OddsetMarket = "over_1_5" | "over_2_5";
 
 export type RivalryInfo = {
@@ -53,6 +59,8 @@ export type OddsetCandidate = {
   expectedGoals: number | null;
   rivalry: RivalryInfo;
   redCard: RedCardInfo;
+  /** Utjämnarpress – samma analys som övriga tips (jakt på 1–1 vid 0–1). */
+  equalizer?: EqualizerAssessment;
   score: number;
   reason: string;
   url: string;
@@ -267,6 +275,7 @@ type OpenGameCheck = {
   p01Pct: number | null;
   green: string[];
   red: string[];
+  equalizer: EqualizerAssessment;
 };
 
 /**
@@ -287,6 +296,8 @@ function assessOpenGameForOver15(args: {
   drawOdds: number | null;
   homeOver05: number | null;
   awayOver05: number | null;
+  homeName?: string;
+  awayName?: string;
   lambda: number | null;
   p15: number;
 }): OpenGameCheck {
@@ -294,7 +305,6 @@ function assessOpenGameForOver15(args: {
   const red: string[] = [];
   let p01Pct: number | null = null;
   let fatal = false;
-  let equalizerPressure = 0;
 
   const hasLadder =
     (args.under15 != null && args.under15 > 1) ||
@@ -304,7 +314,21 @@ function assessOpenGameForOver15(args: {
       args.under25 > 1);
   if (!hasLadder) {
     red.push("saknar Ö/U-stege – kan inte utesluta 0–0/1-mål");
-    return { ok: false, p01Pct, green, red };
+    return {
+      ok: false,
+      p01Pct,
+      green,
+      red,
+      equalizer: assessEqualizerPressure({
+        homeOdds: args.homeOdds,
+        awayOdds: args.awayOdds,
+        bttsYes: args.bttsYes,
+        bttsNo: args.bttsNo,
+        homeOver05: args.homeOver05,
+        awayOver05: args.awayOver05,
+        under25: args.under25,
+      }),
+    };
   }
 
   if (args.lambda != null) {
@@ -412,94 +436,23 @@ function assessOpenGameForOver15(args: {
     fatal = true;
   }
 
-  // --- Utjämnarpress: vid 0–1 ska laget bakom jaga 1–1 ---
-  const homeO = args.homeOdds;
-  const awayO = args.awayOdds;
-  if (homeO != null && awayO != null && homeO > 1 && awayO > 1) {
-    const favIsHome = homeO <= awayO;
-    const favOdds = favIsHome ? homeO : awayO;
-    const dogOdds = favIsHome ? awayO : homeO;
-    const favSide = favIsHome ? "hemmafavorit" : "bortafavorit";
-
-    // Tydlig favorit bakunder: “det här är fel” → kastar framåt mot 1–1
-    if (favOdds <= 1.9) {
-      green.push(
-        `${favSide} @ ${favOdds.toFixed(2).replace(".", ",")} – 0–1 bakunder ger jakt på 1–1`
-      );
-      equalizerPressure += 2;
-    } else if (favOdds <= 2.25 && favIsHome) {
-      green.push(
-        `hemmalag @ ${homeO.toFixed(2).replace(".", ",")} – hemmapress jagar utjämning vid 0–1`
-      );
-      equalizerPressure += 1;
-    }
-
-    // Jämnt byte: båda lagen tar 0–1 personligt
-    if (
-      homeO >= 2.05 &&
-      homeO <= 3.2 &&
-      awayO >= 2.05 &&
-      awayO <= 3.2 &&
-      Math.abs(homeO - awayO) <= 0.55
-    ) {
-      green.push("jämnt oddsbyte – båda jagar poäng/utjämning vid 0–1");
-      equalizerPressure += 1;
-    }
-
-    // Stor underdog som kan stjäla 0–1 och parkera – klassisk Ö1,5-fälla
-    if (
-      dogOdds >= 4.2 &&
-      args.under25 != null &&
-      args.under25 <= 1.85 &&
-      (args.bttsNo == null ||
-        args.bttsYes == null ||
-        args.bttsNo <= args.bttsYes)
-    ) {
-      red.push(
-        `stor underdog @ ${dogOdds.toFixed(2).replace(".", ",")} + kort Under 2,5 – risk 0–1 och parkering`
-      );
-      fatal = true;
-    }
-  }
-
-  if (args.bttsYes != null && args.bttsNo != null) {
-    if (args.bttsYes <= 1.7 && args.bttsYes < args.bttsNo * 0.9) {
-      green.push(
-        `BTTS Ja @ ${args.bttsYes.toFixed(2).replace(".", ",")} – laget bakom förväntas kunna göra 1–1`
-      );
-      equalizerPressure += 2;
-    }
-  }
-
-  // Båda lagen prissatta att göra minst ett mål → 0–1 sällan blir stående
-  if (
-    args.homeOver05 != null &&
-    args.awayOver05 != null &&
-    args.homeOver05 <= 1.28 &&
-    args.awayOver05 <= 1.28
-  ) {
-    green.push(
-      `båda lagen Ö0,5 korta (${args.homeOver05
-        .toFixed(2)
-        .replace(".", ",")} / ${args.awayOver05
-        .toFixed(2)
-        .replace(".", ",")}) – utjämning trolig`
-    );
-    equalizerPressure += 2;
-  } else if (
-    args.homeOver05 != null &&
-    args.awayOver05 != null &&
-    (args.homeOver05 >= 1.55 || args.awayOver05 >= 1.55)
-  ) {
-    red.push(
-      "ett lag har lång Ö0,5 – risk att 0–1 blir stående utan utjämning"
-    );
-  }
-
-  if (equalizerPressure < 2) {
-    red.push(
-      "för svag utjämnarpress – oklart att laget bakom jagar 1–1 vid 0–1"
-    );
+  // --- Utjämnarpress (samma modul som Powerplay/Topptips/Måltipset) ---
+  const equalizer = assessEqualizerPressure({
+    homeOdds: args.homeOdds,
+    awayOdds: args.awayOdds,
+    drawOdds: args.drawOdds,
+    bttsYes: args.bttsYes,
+    bttsNo: args.bttsNo,
+    homeOver05: args.homeOver05,
+    awayOver05: args.awayOver05,
+    under25: args.under25,
+    homeName: args.homeName,
+    awayName: args.awayName,
+  });
+  for (const p of equalizer.points) green.push(p);
+  for (const w of equalizer.warnings) red.push(w);
+  if (!equalizer.okForOver15 || equalizer.level === "weak") {
+    red.push(equalizer.headline);
     fatal = true;
   }
 
@@ -508,14 +461,14 @@ function assessOpenGameForOver15(args: {
   const ok =
     !fatal &&
     green.length >= 2 &&
-    equalizerPressure >= 2 &&
+    equalizer.okForOver15 &&
     (red.length === 0 || (red.length === 1 && green.length >= 4));
 
   if (!ok && !fatal && green.length < 2) {
     red.push("för få öppet-spel-signaler runt matchen");
   }
 
-  return { ok, p01Pct, green, red };
+  return { ok, p01Pct, green, red, equalizer };
 }
 
 /** Uppskatta λ (förväntade mål) från Ö/U-stegen. */
@@ -967,6 +920,8 @@ function buildCandidate(
     drawOdds: markets.drawOdds,
     homeOver05: markets.homeOver05,
     awayOver05: markets.awayOver05,
+    homeName: home,
+    awayName: away,
     lambda,
     p15,
   });
@@ -976,7 +931,9 @@ function buildCandidate(
   const redCard = analyzeRedCard(markets, rivalry);
 
   const over25ProbPct = Math.round(p15 * 1000) / 10;
+  const equalizer = openCheck.equalizer;
   const reasons: string[] = [];
+  reasons.push(equalizerReasonLine(equalizer));
   reasons.push(
     `Modell: ${over25ProbPct.toFixed(1).replace(".", ",")}% chans till minst 2 mål`
   );
@@ -1006,15 +963,8 @@ function buildCandidate(
       `BTTS Ja @ ${markets.bttsYes.toFixed(2).replace(".", ",")}`
     );
   }
-  // Prioritera utjämnar-/öppet-spel-signaler i motiveringen
-  const prefer = openCheck.green.filter((g) =>
-    /jakt på 1–1|utjämning|BTTS Ja|båda lagen Ö0,5|jämnt oddsbyte|hemmapress/i.test(
-      g
-    )
-  );
-  const rest = openCheck.green.filter((g) => !prefer.includes(g));
-  for (const g of [...prefer, ...rest].slice(0, 3)) {
-    reasons.push(g);
+  for (const g of equalizer.points.slice(0, 2)) {
+    if (!reasons.includes(g)) reasons.push(g);
   }
   if (rivalry.level !== "none") reasons.push(rivalry.note);
   if (redCard.level !== "low") reasons.push(`rött kort: ${redCard.note}`);
@@ -1025,7 +975,8 @@ function buildCandidate(
   if (openCheck.p01Pct != null) {
     score += Math.max(0, (28 - openCheck.p01Pct) * 0.6);
   }
-  score += openCheck.green.length * 3;
+  score += equalizer.score * 4;
+  score += openCheck.green.length * 2;
   score -= openCheck.red.length * 6;
 
   const topCountry =
@@ -1079,6 +1030,7 @@ function buildCandidate(
     expectedGoals: lambda,
     rivalry,
     redCard,
+    equalizer,
     score,
     reason: reasons.join(". "),
     url: eventUrl(event.id),

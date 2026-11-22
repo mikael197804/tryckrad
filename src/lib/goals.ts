@@ -1,3 +1,7 @@
+import {
+  assessEqualizerPressure,
+  type EqualizerAssessment,
+} from "./equalizerPressure";
 import { upstreamFetchInit } from "./fetch-mode";
 import type {
   FatigueInfo,
@@ -186,6 +190,9 @@ function emptyGoals(
     awayAttackNeed: "medium",
     homeNeedNote: "",
     awayNeedNote: "",
+    equalizer: weakEqualizer(
+      "Utjämnarpress saknas – för lite data för att bedöma jakt på 1–1"
+    ),
     note,
   };
 }
@@ -226,17 +233,129 @@ function needNote(
 ): string {
   if (need === "high") {
     if (table.comfort === "fighting") {
-      return `${team.name} behöver poäng – jagar mål`;
+      return `${team.name} behöver poäng – vid 0–1 jagar de 1–1`;
     }
-    return `${team.name} måste skapa mer – utmanare`;
+    return `${team.name} måste skapa mer – bakunder 0–1 ger jakt på utjämning`;
   }
   if (need === "low") {
     if (table.comfort === "comfortable") {
-      return `${team.name} har råd att lugna – färre forcerade mål`;
+      return `${team.name} har råd att lugna – mindre press att jaga 1–1`;
     }
-    return `${team.name} kan prioritera vila/kontroll`;
+    return `${team.name} kan prioritera vila/kontroll – svagare utjämnarjakt`;
   }
-  return `${team.name} normal målhunger`;
+  return `${team.name} normal målhunger – kan jaga 1–1 vid 0–1`;
+}
+
+function weakEqualizer(note: string): EqualizerAssessment {
+  return {
+    level: "weak",
+    score: 0,
+    headline: note,
+    points: [],
+    warnings: [],
+    okForOver15: false,
+  };
+}
+
+function normalizeTeam(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Plocka 1X2 / BTTS / Ö0,5 / Under 2,5 för utjämnaranalys. */
+function extractEqualizerMarkets(
+  betOffers: KambiBetOffer[],
+  homeName: string,
+  awayName: string
+): {
+  homeOdds: number | null;
+  awayOdds: number | null;
+  bttsYes: number | null;
+  bttsNo: number | null;
+  homeOver05: number | null;
+  awayOver05: number | null;
+  under25: number | null;
+} {
+  let homeOdds: number | null = null;
+  let awayOdds: number | null = null;
+  let bttsYes: number | null = null;
+  let bttsNo: number | null = null;
+  let homeOver05: number | null = null;
+  let awayOver05: number | null = null;
+  let under25: number | null = null;
+  const homeN = normalizeTeam(homeName);
+  const awayN = normalizeTeam(awayName);
+
+  for (const bo of betOffers) {
+    const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
+
+    if (label === "Total Goals" || label === "Antal mål") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const line = parseLine(o.line);
+        const odds = parseOdds(o.odds);
+        if (odds == null || line == null) continue;
+        if (side === "under" && line === 2.5) under25 = odds;
+      }
+    }
+
+    if (label === "Both Teams To Score" || label === "Båda lagen gör mål") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const odds = parseOdds(o.odds);
+        if (odds == null) continue;
+        if (side === "ja" || side === "yes") bttsYes = odds;
+        if (side === "nej" || side === "no") bttsNo = odds;
+      }
+    }
+
+    if (label === "Full Time" || label === "Match Odds" || label === "Matchodds") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const odds = parseOdds(o.odds);
+        if (odds == null) continue;
+        if (side === "1" || side === "home") homeOdds = odds;
+        if (side === "2" || side === "away") awayOdds = odds;
+      }
+    }
+
+    if (
+      /^Total Goals by /i.test(label) ||
+      /^Antal mål (av|för) /i.test(label)
+    ) {
+      const teamRaw = label
+        .replace(/^Total Goals by /i, "")
+        .replace(/^Antal mål (av|för) /i, "");
+      const teamN = normalizeTeam(teamRaw);
+      const isHome =
+        !!homeN && (teamN.includes(homeN) || homeN.includes(teamN));
+      const isAway =
+        !!awayN && (teamN.includes(awayN) || awayN.includes(teamN));
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const line = parseLine(o.line);
+        const odds = parseOdds(o.odds);
+        if (odds == null || line !== 0.5) continue;
+        if (side !== "över" && side !== "over") continue;
+        if (isHome) homeOver05 = odds;
+        if (isAway) awayOver05 = odds;
+      }
+    }
+  }
+
+  return {
+    homeOdds,
+    awayOdds,
+    bttsYes,
+    bttsNo,
+    homeOver05,
+    awayOver05,
+    under25,
+  };
 }
 
 export async function analyzeMatchGoals(args: {
@@ -252,6 +371,9 @@ export async function analyzeMatchGoals(args: {
   awayRest: RestSignal;
   score1: number;
   score2: number;
+  /** Matchodds 1/2 om kända (för utjämnarpress). */
+  homeOdds?: number | null;
+  awayOdds?: number | null;
   /** Extra justering t.ex. från sen laganalys */
   lambdaAdjust?: number;
 }): Promise<GoalAnalysis> {
@@ -268,6 +390,8 @@ export async function analyzeMatchGoals(args: {
     awayRest,
     score1,
     score2,
+    homeOdds = null,
+    awayOdds = null,
     lambdaAdjust = 0,
   } = args;
 
@@ -275,13 +399,38 @@ export async function analyzeMatchGoals(args: {
   const homeNeed = attackNeed(homeTable, homeRest, homeFatigue, homeFav);
   const awayNeed = attackNeed(awayTable, awayRest, awayFatigue, !homeFav);
 
+  const buildEqualizer = (offers: KambiBetOffer[]): EqualizerAssessment => {
+    const m = extractEqualizerMarkets(offers, home.name, away.name);
+    return assessEqualizerPressure({
+      homeOdds: homeOdds ?? m.homeOdds,
+      awayOdds: awayOdds ?? m.awayOdds,
+      bttsYes: m.bttsYes,
+      bttsNo: m.bttsNo,
+      homeOver05: m.homeOver05,
+      awayOver05: m.awayOver05,
+      under25: m.under25,
+      homeAttackNeed: homeNeed,
+      awayAttackNeed: awayNeed,
+      homeName: home.name,
+      awayName: away.name,
+    });
+  };
+
   if (!kambiEventId) {
     const g = emptyGoals("ingen målmarknad kopplad", sport);
     g.homeAttackNeed = homeNeed;
     g.awayAttackNeed = awayNeed;
     g.homeNeedNote = needNote(home, homeNeed, homeTable);
     g.awayNeedNote = needNote(away, awayNeed, awayTable);
-    g.note = `${g.homeNeedNote}. ${g.awayNeedNote}`;
+    g.equalizer = assessEqualizerPressure({
+      homeOdds,
+      awayOdds,
+      homeAttackNeed: homeNeed,
+      awayAttackNeed: awayNeed,
+      homeName: home.name,
+      awayName: away.name,
+    });
+    g.note = `${g.equalizer.headline}. ${g.homeNeedNote}. ${g.awayNeedNote}`;
     return g;
   }
 
@@ -300,7 +449,8 @@ export async function analyzeMatchGoals(args: {
     g.awayAttackNeed = awayNeed;
     g.homeNeedNote = needNote(home, homeNeed, homeTable);
     g.awayNeedNote = needNote(away, awayNeed, awayTable);
-    g.note = `${g.homeNeedNote}. ${g.awayNeedNote}`;
+    g.equalizer = buildEqualizer(offers);
+    g.note = `${g.equalizer.headline}. ${g.homeNeedNote}. ${g.awayNeedNote}`;
     return g;
   }
 
@@ -351,7 +501,9 @@ export async function analyzeMatchGoals(args: {
 
   const homeNeedNote = needNote(home, homeNeed, homeTable);
   const awayNeedNote = needNote(away, awayNeed, awayTable);
+  const equalizer = buildEqualizer(offers);
   const parts: string[] = [];
+  parts.push(equalizer.headline);
   if (lambda != null) {
     parts.push(
       `ca ${lambda.toFixed(1).replace(".", ",")} mål totalt (troligen ${likelyRange(lambda)})`
@@ -364,6 +516,7 @@ export async function analyzeMatchGoals(args: {
     if (over45 != null) parts.push(`Över 4,5 ≈ ${Math.round(over45 * 100)}%`);
     if (over55 != null) parts.push(`Över 5,5 ≈ ${Math.round(over55 * 100)}%`);
   }
+  if (equalizer.points[0]) parts.push(equalizer.points[0]);
   parts.push(homeNeedNote);
   parts.push(awayNeedNote);
 
@@ -381,6 +534,7 @@ export async function analyzeMatchGoals(args: {
     awayAttackNeed: awayNeed,
     homeNeedNote,
     awayNeedNote,
+    equalizer,
     note: parts.join(". "),
   };
 }

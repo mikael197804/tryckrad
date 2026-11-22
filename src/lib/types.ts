@@ -53,6 +53,15 @@ export type RestSignal = {
   hoursUntilNext: number | null;
 };
 
+export type EqualizerPressureInfo = {
+  level: "strong" | "medium" | "weak";
+  score: number;
+  headline: string;
+  points: string[];
+  warnings: string[];
+  okForOver15: boolean;
+};
+
 export type GoalAnalysis = {
   sport: "hockey" | "football";
   expectedGoals: number | null;
@@ -67,6 +76,10 @@ export type GoalAnalysis = {
   awayAttackNeed: "low" | "medium" | "high";
   homeNeedNote: string;
   awayNeedNote: string;
+  /**
+   * Inbakad i varje matchanalys: vid 0–1 ska laget bakom jaga 1–1.
+   */
+  equalizer: EqualizerPressureInfo; // alltid satt av analyzeMatchGoals
   note: string;
 };
 

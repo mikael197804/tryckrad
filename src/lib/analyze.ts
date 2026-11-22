@@ -889,11 +889,21 @@ export async function analyzeDraw(
         awayRest: draft.awayRest,
         score1,
         score2,
+        homeOdds: draft.odds.one,
+        awayOdds: draft.odds.two,
         lambdaAdjust: football ? lineupGoalAdjust(lineup) : 0,
       });
-      if (goals.expectedGoals != null) {
+      // Utjämnarpress är inbakad i varje tips motivering
+      pickReason = `${pickReason}. ${goals.equalizer.headline}${
+        goals.equalizer.points[0] ? ` · ${goals.equalizer.points[0]}` : ""
+      }`;
+      if (goals.expectedGoals != null || goals.equalizer.level !== "weak") {
         goalAlerts.push(
-          `Match ${draft.eventNumber}: ca ${goals.expectedGoals.toFixed(1).replace(".", ",")} mål (${goals.likelyRange}) · ${goals.homeNeedNote} · ${goals.awayNeedNote}`
+          `Match ${draft.eventNumber}: ${goals.equalizer.headline}${
+            goals.expectedGoals != null
+              ? ` · ca ${goals.expectedGoals.toFixed(1).replace(".", ",")} mål (${goals.likelyRange})`
+              : ""
+          }`
         );
       }
 
@@ -924,6 +934,10 @@ export async function analyzeDraw(
           m.goals.over25ProbPct != null ? m.goals.over25ProbPct / 100 : null,
       });
       if (ov.isValue) s += 0.18;
+      // Stark utjämnarpress (jakt på 1–1 vid 0–1) lyfter måltips
+      if (m.goals.equalizer.level === "strong") s += 0.22;
+      else if (m.goals.equalizer.level === "medium") s += 0.1;
+      else s -= 0.08;
       return s;
     };
     const ranked = [...matches].sort((a, b) => {
