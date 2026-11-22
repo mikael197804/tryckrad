@@ -1,17 +1,25 @@
 import type { AppUser, SessionPayload } from "./types";
 
-/** Enda huvudpersonen – kan inte ersättas eller skapas om. */
+/**
+ * Enda personen som får ändra Mikael’s tips (behörighet, konton, kontroll).
+ * Inbjudna får bara spela – aldrig styra.
+ */
 export const OWNER_ID = "usr_mikael";
 export const OWNER_NAME = "Mikael";
 
-export function isOwnerUser(user: Pick<AppUser, "id" | "name"> | null | undefined): boolean {
+export function isOwnerUser(
+  user: Pick<AppUser, "id" | "name"> | null | undefined
+): boolean {
   if (!user) return false;
-  return user.id === OWNER_ID || user.name.trim().toLowerCase() === OWNER_NAME.toLowerCase();
+  // Huvudkontot identifieras på id – namnet Mikael är dessutom reserverat
+  return user.id === OWNER_ID;
 }
 
-export function isOwnerSession(session: SessionPayload | null | undefined): boolean {
+export function isOwnerSession(
+  session: SessionPayload | null | undefined
+): boolean {
   if (!session) return false;
-  return session.uid === OWNER_ID || session.name.trim().toLowerCase() === OWNER_NAME.toLowerCase();
+  return session.uid === OWNER_ID;
 }
 
 export function assertNotOwnerName(name: string) {

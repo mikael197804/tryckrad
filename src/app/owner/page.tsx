@@ -224,8 +224,8 @@ export default function OwnerPage() {
             Mikael’s <span>kontroll</span>
           </h1>
           <p className="brand-tag">
-            Andra betalar per dag för att få in. Du sparkar ut missbruk och
-            styr alla konton – ingen annan är huvudperson.
+            Bara du (Mikael) kan ändra något här. Inbjudna betalar per dag och
+            får bara se spelen – aldrig medlemmar, behörighet eller kontroll.
           </p>
         </div>
         <div className="owner-top-actions">

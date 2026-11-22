@@ -40,7 +40,8 @@ function LoginForm() {
         <p className="login-kicker">Mikael’s tips</p>
         <h1>Logga in</h1>
         <p className="login-lead">
-          Ange ditt namn och lösenord för att öppna tipset.
+          Ange ditt namn och lösenord för att öppna tipset. Bara Mikael kan
+          ändra behörighet och konton – inbjudna får endast spela.
         </p>
 
         <label className="login-field">

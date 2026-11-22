@@ -1888,8 +1888,8 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="panel-lead">
-          Bara du är huvudperson. Inbjudna får endast access till spelen – inte
-          medlemmar, behörighet eller kontroll. De betalar per dag. Öppna{" "}
+          Bara du (Mikael) kan ändra Mikael’s tips. Inbjudna får endast spela –
+          inte medlemmar, behörighet eller kontroll. De betalar per dag. Öppna{" "}
           <a href="/owner">Mikael’s kontroll</a>.
         </p>
 

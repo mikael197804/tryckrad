@@ -35,8 +35,7 @@ export type SessionPayload = {
 };
 
 export function toPublicUser(u: AppUser): PublicUser {
-  const isOwner =
-    u.id === "usr_mikael" || u.name.trim().toLowerCase() === "mikael";
+  const isOwner = u.id === "usr_mikael";
   const until = u.accessUntil || null;
   const accessActive =
     isOwner ||
@@ -44,7 +43,7 @@ export function toPublicUser(u: AppUser): PublicUser {
   return {
     id: u.id,
     name: u.name,
-    role: isOwner ? "admin" : u.role,
+    role: isOwner ? "admin" : "user",
     active: u.active,
     createdAt: u.createdAt,
     isOwner,
