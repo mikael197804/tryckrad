@@ -80,7 +80,28 @@ export type OverOddsAdmin = {
   confidence: "high" | "medium" | "low";
   /** Kort verdict t.ex. "1 bedöms rätt …" */
   verdict: string;
+  /**
+   * Säker vinnare: endast utgång 2 med odds runt 2,00
+   * (krav: oddset måste vara 2).
+   */
+  safeWinner: {
+    outcome: "2";
+    odds: number;
+    note: string;
+  } | null;
 };
+
+/** Oddsband för "säker vinnare" – oddset ska vara ca 2. */
+export const SAFE_WINNER_2_ODDS = {
+  min: 1.85,
+  max: 2.25,
+  target: 2.0,
+} as const;
+
+export function isSafeWinnerTwoOdds(o: number | null | undefined): boolean {
+  if (o == null || !Number.isFinite(o)) return false;
+  return o >= SAFE_WINNER_2_ODDS.min && o <= SAFE_WINNER_2_ODDS.max;
+}
 
 export type ValueOddsAnalysis = {
   outcomes: OutcomeValue[];
@@ -495,6 +516,44 @@ function sharpFavouriteFromOdds(odds: Odds | null | undefined): Outcome | null {
   return favouriteFromOdds(odds);
 }
 
+function attachSafeWinner(
+  base: Omit<OverOddsAdmin, "safeWinner">,
+  args: {
+    outcomes: OutcomeValue[];
+    oddsFavourite: Outcome | null;
+    folkFavourite: Outcome | null;
+    multiBook: MultiBookMatchOdds | null;
+  }
+): OverOddsAdmin {
+  const two = args.outcomes.find((o) => o.outcome === "2");
+  const odds2 = two?.odds ?? null;
+  const sharpFav = sharpFavouriteFromOdds(args.multiBook?.sharp ?? null);
+  const soft2 = softEdgeForOutcome(args.multiBook, "2");
+
+  // Krav: säker vinnare = utgång 2 OCH odds runt 2,00
+  if (
+    odds2 != null &&
+    isSafeWinnerTwoOdds(odds2) &&
+    !base.avoid.includes("2") &&
+    !two?.isTrap &&
+    !two?.isTrashLongshot &&
+    (sharpFav === "2" || args.oddsFavourite === "2") &&
+    (soft2 == null || soft2 <= VALUE_ODDS_INSIGHTS.trapSoftEdgePct) &&
+    (two?.folkPct ?? 0) >= 35
+  ) {
+    const note = `Säker vinnare: 2 (bortavinst) @ ${fmtDec(odds2)} – oddset är ca 2, sharp/odds favorit 2, folk ${Math.round(two?.folkPct ?? 0)} %.`;
+    return {
+      recommended: "2",
+      avoid: base.avoid,
+      confidence: "high",
+      verdict: `Bedömning: 2 är säker vinnare @ ${fmtDec(odds2)}. ${base.verdict}`,
+      safeWinner: { outcome: "2", odds: odds2, note },
+    };
+  }
+
+  return { ...base, safeWinner: null };
+}
+
 /**
  * Avgör om 1, X eller 2 bedöms rätt utifrån överodds + sharp/folk.
  */
@@ -508,6 +567,20 @@ export function administer1x2(args: {
   antiFolkLean: Outcome | null;
   multiBook: MultiBookMatchOdds | null;
 }): OverOddsAdmin {
+  const raw = administer1x2Core(args);
+  return attachSafeWinner(raw, args);
+}
+
+function administer1x2Core(args: {
+  outcomes: OutcomeValue[];
+  overOddsOutcomes: Outcome[];
+  trapOverOddsOutcomes: Outcome[];
+  oddsFavourite: Outcome | null;
+  folkFavourite: Outcome | null;
+  folkOddsDisagree: boolean;
+  antiFolkLean: Outcome | null;
+  multiBook: MultiBookMatchOdds | null;
+}): Omit<OverOddsAdmin, "safeWinner"> {
   const {
     overOddsOutcomes,
     trapOverOddsOutcomes,

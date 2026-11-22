@@ -599,8 +599,16 @@ function ValueOddsPill({
   const traps = valueOdds.trapOverOddsOutcomes || [];
   const overs = valueOdds.overOddsOutcomes || [];
   const admin = valueOdds.admin;
+  const safePill = admin?.safeWinner ? (
+    <span
+      className="ctx-pill value-safe"
+      title={admin.safeWinner.note}
+    >
+      säker vinnare 2 @ {fmtOdds(admin.safeWinner.odds)}
+    </span>
+  ) : null;
   const adminPill =
-    admin?.recommended && admin.confidence !== "low" ? (
+    admin?.recommended && admin.confidence !== "low" && !admin.safeWinner ? (
       <span
         className={`ctx-pill value-admin${
           admin.confidence === "high" ? " high" : ""
@@ -610,9 +618,10 @@ function ValueOddsPill({
         rätt: {admin.recommended}
       </span>
     ) : null;
-  if (traps.length || overs.length || adminPill) {
+  if (traps.length || overs.length || adminPill || safePill) {
     return (
       <>
+        {safePill}
         {adminPill}
         {traps.map((o) => (
           <span
@@ -672,13 +681,19 @@ function OverOddsExplain({
 }: {
   valueOdds?: DrawBundle["matches"][number]["valueOdds"] | null;
 }) {
+  const safe = valueOdds?.admin?.safeWinner || null;
   const verdict = valueOdds?.admin?.verdict || null;
   const conf = valueOdds?.admin?.confidence;
   const recommended = valueOdds?.admin?.recommended;
   const lines = valueOdds?.explanations?.filter(Boolean) ?? [];
-  if (!verdict && !lines.length) return null;
+  if (!safe && !verdict && !lines.length) return null;
   return (
     <div className="overodds-explain">
+      {safe && (
+        <div className="overodds-safe">
+          <span className="overodds-admin-pick">2</span> {safe.note}
+        </div>
+      )}
       {verdict && (
         <div
           className={`overodds-admin${
@@ -1725,6 +1740,23 @@ export default function App() {
                     eller sämre för laget.
                   </p>
                 )}
+                {(draw.safeWinners?.length ?? 0) > 0 && (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>Säker vinnare (1X2)</h2>
+                    <p className="panel-lead">
+                      Utvald spik på bortasegern: oddset måste vara 2 (ca
+                      1,85–2,25). Enkel tipp på 2.
+                    </p>
+                    <ul className="alert-list safe-winner-alerts">
+                      {draw.safeWinners.map((s) => (
+                        <li key={`safe-${s.eventNumber}`}>
+                          Match {s.eventNumber} {s.description}:{" "}
+                          <strong>2 @ {fmtOdds(s.odds)}</strong> — {s.note}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
                 {(draw.valueAlerts?.length ?? 0) > 0 && (
                   <>
                     <h2 style={{ fontSize: "1.05rem" }}>
@@ -1734,7 +1766,8 @@ export default function App() {
                       Granskar SVS, Unibet, Paf, ATG och sharp (Pinnacle). Varje
                       överodds pekas ut som 1, X eller 2 med oddssiffra.
                       Utifrån det administreras tipset: vilken sida som bedöms
-                      rätt, och fällor undviks. Extremodds 8+ undviks.
+                      rätt, och fällor undviks. Extremodds 8+ undviks. Säker
+                      vinnare läggs bara ut på 2 @ ca 2,00.
                     </p>
                     <ul className="alert-list value-alerts">
                       {draw.valueAlerts.map((a) => (

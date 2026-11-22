@@ -28,6 +28,7 @@ import type {
   MatchAnalysis,
   Outcome,
   RestSignal,
+  SafeWinnerTip,
   TableContext,
   UpcomingMatch,
   ValueOddsInfo,
@@ -365,6 +366,21 @@ function buildPick(
     reasons.push(admin.verdict);
   }
 
+  // Säker vinnare: alltid 2 @ odds ca 2,00 → enkel 2
+  if (admin?.safeWinner?.outcome === "2") {
+    pick = ["2"];
+    reasons.push(
+      `SÄKER VINNARE: 2 @ ${admin.safeWinner.odds.toFixed(2).replace(".", ",")} – oddset är 2`
+    );
+    const orderSafe: Outcome[] = ["1", "X", "2"];
+    pick = orderSafe.filter((o) => pick.includes(o));
+    return {
+      pick,
+      reason: reasons.join(". "),
+      valueOutcomes: ["2"],
+    };
+  }
+
   // Administrera tipset utifrån överodds-granskning
   if (admin?.recommended) {
     const rec = admin.recommended;
@@ -499,6 +515,7 @@ export async function analyzeDraw(
   lineupAlerts: string[];
   valueAlerts: string[];
   learningAlerts: string[];
+  safeWinners: SafeWinnerTip[];
   malTip: number[];
   leagueSummary: string;
 }> {
@@ -714,6 +731,11 @@ export async function analyzeDraw(
       booksChecked: valueRaw.booksChecked,
       note: valueRaw.note,
     };
+    if (valueOdds.admin?.safeWinner) {
+      valueAlerts.push(
+        `Match ${event.eventNumber}: ${valueOdds.admin.safeWinner.note}`
+      );
+    }
     if (valueOdds.admin?.verdict) {
       valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.admin.verdict}`);
     }
@@ -737,6 +759,18 @@ export async function analyzeDraw(
     const pickReason = learningNotes.length
       ? `${reason}. ${learningNotes[0]}`
       : reason;
+
+    const safeWinner: SafeWinnerTip | null = valueOdds.admin?.safeWinner
+      ? {
+          eventNumber: event.eventNumber,
+          description: event.eventDescription,
+          league,
+          outcome: "2",
+          odds: valueOdds.admin.safeWinner.odds,
+          note: valueOdds.admin.safeWinner.note,
+          confidence: valueOdds.admin.confidence,
+        }
+      : null;
 
     drafts.push({
       eventNumber: event.eventNumber,
@@ -764,6 +798,7 @@ export async function analyzeDraw(
       score1: adjusted.score1,
       scoreX: adjusted.scoreX,
       score2: adjusted.score2,
+      safeWinner,
       startOdds,
     });
   }
@@ -795,7 +830,11 @@ export async function analyzeDraw(
 
       let pick = draft.pick;
       let pickReason = draft.pickReason;
-      if (adj.d1 !== 0 || adj.dX !== 0 || adj.d2 !== 0) {
+      // Säker vinnare (2 @ ca 2) låses – lagnyheter får inte bryta enkel 2
+      if (
+        !draft.safeWinner &&
+        (adj.d1 !== 0 || adj.dX !== 0 || adj.d2 !== 0)
+      ) {
         const rebuilt = buildPick(
           { score1, scoreX, score2 },
           draft.homeFatigue,
@@ -924,6 +963,10 @@ export async function analyzeDraw(
     matches.sort((a, b) => a.eventNumber - b.eventNumber);
   }
 
+  const safeWinners: SafeWinnerTip[] = matches
+    .map((m) => m.safeWinner)
+    .filter((s): s is SafeWinnerTip => s != null);
+
   return {
     matches,
     fatigueAlerts,
@@ -933,6 +976,7 @@ export async function analyzeDraw(
     lineupAlerts,
     valueAlerts,
     learningAlerts,
+    safeWinners,
     malTip,
     leagueSummary: [...leagues].join(", "),
   };

@@ -44,6 +44,7 @@ export async function buildAllDrawBundles(
           lineupAlerts,
           valueAlerts,
           learningAlerts,
+          safeWinners,
           malTip,
           leagueSummary,
         } = await analyzeDraw(draw, draws, product, learning);
@@ -80,6 +81,7 @@ export async function buildAllDrawBundles(
           lineupAlerts: lineupAlerts ?? [],
           valueAlerts: valueAlerts ?? [],
           learningAlerts: learningAlerts ?? [],
+          safeWinners: safeWinners ?? [],
           malTip: malTip ?? [],
         } satisfies DrawBundle;
       } catch (error) {

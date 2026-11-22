@@ -109,6 +109,25 @@ export type OverOddsAdminInfo = {
   avoid: Outcome[];
   confidence: "high" | "medium" | "low";
   verdict: string;
+  /**
+   * Säker vinnare på 1X2: alltid utgång 2, med odds runt 2,00.
+   * Null om kriterierna inte uppfylls.
+   */
+  safeWinner: {
+    outcome: "2";
+    odds: number;
+    note: string;
+  } | null;
+};
+
+export type SafeWinnerTip = {
+  eventNumber: number;
+  description: string;
+  league: string;
+  outcome: "2";
+  odds: number;
+  note: string;
+  confidence: "high" | "medium" | "low";
 };
 
 export type ValueOddsInfo = {
@@ -158,6 +177,8 @@ export type MatchAnalysis = {
   score1: number;
   scoreX: number;
   score2: number;
+  /** Säker vinnare (endast 2 @ ca 2,00) om kriterierna uppfylls */
+  safeWinner: SafeWinnerTip | null;
 };
 
 export type DrawBundle = {
@@ -181,6 +202,8 @@ export type DrawBundle = {
   lineupAlerts: string[];
   valueAlerts: string[];
   learningAlerts: string[];
+  /** Utvalda säkra vinnare: alltid 2 @ odds runt 2 */
+  safeWinners: SafeWinnerTip[];
   /** Måltipset: de 8 högst rankade matchnumren */
   malTip: number[];
 };

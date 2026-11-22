@@ -672,6 +672,23 @@ select {
   background: rgba(40, 90, 60, 0.35);
 }
 
+.ctx-pill.value-safe {
+  border-color: rgba(80, 220, 160, 0.85);
+  color: #7dffb5;
+  background: rgba(20, 80, 50, 0.45);
+  font-weight: 700;
+}
+
+.overodds-safe {
+  font-weight: 700;
+  color: #7dffb5;
+  margin-bottom: 0.4rem;
+}
+
+.alert-list.safe-winner-alerts {
+  color: #7dffb5;
+}
+
 .odds-1x2 .odds-side {
   font-weight: 700;
   opacity: 0.75;
