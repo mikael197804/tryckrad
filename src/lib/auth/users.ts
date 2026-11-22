@@ -338,3 +338,25 @@ export async function kickAndBan(
   const kicked = await kickUserSession(id, storeToken);
   return setUserActive(id, false, storeToken).catch(() => kicked);
 }
+
+export async function setUserAccessUntil(
+  id: string,
+  accessUntil: string,
+  storeToken?: string | null
+): Promise<SaveResult> {
+  const base = await currentDiskUsers();
+  const idx = base.findIndex((u) => u.id === id);
+  if (idx < 0) throw new Error("Användaren hittades inte");
+  if (base[idx]!.id === OWNER_ID || base[idx]!.name === OWNER_NAME) {
+    throw new Error("Huvudkontot behöver ingen dagsbetalning");
+  }
+  const next = base.map((u, i) =>
+    i === idx ? { ...u, accessUntil } : u
+  );
+  const saved = await saveUsers(next, storeToken);
+  return {
+    user: next[idx]!,
+    persisted: saved.persisted,
+    persistError: saved.error,
+  };
+}

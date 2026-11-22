@@ -9,6 +9,8 @@ export type AppUser = {
   createdAt: string;
   /** Ökas när ägaren sparkar ut – gamla sessioner dör. */
   sessionVersion?: number;
+  /** Betald access giltig till (ISO). Saknas/utgången = ingen access (utom ägare). */
+  accessUntil?: string | null;
 };
 
 export type PublicUser = {
@@ -19,6 +21,8 @@ export type PublicUser = {
   createdAt: string;
   isOwner?: boolean;
   sessionVersion?: number;
+  accessUntil?: string | null;
+  accessActive?: boolean;
 };
 
 export type SessionPayload = {
@@ -33,6 +37,10 @@ export type SessionPayload = {
 export function toPublicUser(u: AppUser): PublicUser {
   const isOwner =
     u.id === "usr_mikael" || u.name.trim().toLowerCase() === "mikael";
+  const until = u.accessUntil || null;
+  const accessActive =
+    isOwner ||
+    (!!until && Number.isFinite(Date.parse(until)) && Date.parse(until) > Date.now());
   return {
     id: u.id,
     name: u.name,
@@ -41,5 +49,7 @@ export function toPublicUser(u: AppUser): PublicUser {
     createdAt: u.createdAt,
     isOwner,
     sessionVersion: u.sessionVersion ?? 0,
+    accessUntil: until,
+    accessActive,
   };
 }

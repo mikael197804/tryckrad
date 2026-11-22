@@ -9,13 +9,23 @@
       "createdAt": "2026-11-22T11:00:00.000Z"
     },
     {
-      "id": "usr_2e313ef96e5d",
-      "name": "Diana",
+      "id": "usr_f1694f33c05f",
+      "name": "Eva",
       "role": "user",
       "active": true,
-      "passwordHash": "pbkdf2$100000$mUXABr/9iDLQme0EOLDaug==$HiUGL+Z5TqW5E50MX4WHtruWN8D1pxvolmAEhL+U1nc=",
-      "createdAt": "2026-11-22T13:56:47.083Z",
-      "sessionVersion": 1
+      "passwordHash": "pbkdf2$100000$9sQucwolw4B76sz6j1YCSg==$O7Y+c6A8gdKVb+ufuFC6nlAfHaSdwVwA1h5eEmW5Tvw=",
+      "createdAt": "2026-11-22T13:59:17.425Z",
+      "sessionVersion": 0
+    },
+    {
+      "id": "usr_2f2a2c1ccdf8",
+      "name": "Filip",
+      "role": "user",
+      "active": true,
+      "passwordHash": "pbkdf2$100000$Ye4eoEbjp+tvBXi4O66nCQ==$xopiG/OAyR/jYErH7NB/XeXsScOOdf05csKKapya/9w=",
+      "createdAt": "2026-11-22T13:59:30.539Z",
+      "sessionVersion": 0,
+      "accessUntil": "2026-11-25T13:59:30.609Z"
     }
   ]
 }

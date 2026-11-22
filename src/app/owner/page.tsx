@@ -9,6 +9,8 @@ type PublicUser = {
   role: string;
   active: boolean;
   isOwner?: boolean;
+  accessUntil?: string | null;
+  accessActive?: boolean;
 };
 
 type VisitRow = {
@@ -19,26 +21,23 @@ type VisitRow = {
   kind: string;
 };
 
-type Entry = {
+type Payment = {
   id: string;
   userId: string;
   userName: string;
-  winKr: number;
-  commissionKr: number;
-  percent: number;
+  days: number;
+  amountKr: number;
+  accessUntil: string;
   at: string;
   note: string;
-  paid: boolean;
 };
 
 type Summary = {
-  commissionPercent: number;
-  entries: Entry[];
+  pricePerDayKr: number;
+  payments: Payment[];
   totals: {
-    winsKr: number;
-    commissionKr: number;
-    unpaidKr: number;
     paidKr: number;
+    daysSold: number;
     count: number;
   };
 };
@@ -77,13 +76,15 @@ export default function OwnerPage() {
   const [busy, setBusy] = useState(false);
 
   const [newName, setNewName] = useState("");
-  const [created, setCreated] = useState<{ name: string; password: string } | null>(
-    null
-  );
-  const [winUserId, setWinUserId] = useState("");
-  const [winKr, setWinKr] = useState("");
-  const [winNote, setWinNote] = useState("");
-  const [percent, setPercent] = useState("10");
+  const [created, setCreated] = useState<{
+    name: string;
+    password: string;
+  } | null>(null);
+  const [payUserId, setPayUserId] = useState("");
+  const [days, setDays] = useState("1");
+  const [amountKr, setAmountKr] = useState("");
+  const [payNote, setPayNote] = useState("");
+  const [price, setPrice] = useState("29");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,8 +108,13 @@ export default function OwnerPage() {
       setUsers(json.users || []);
       setSummary(json.summary || null);
       setVisits(json.visits || []);
-      if (json.summary) setPercent(String(json.summary.commissionPercent));
-      setWinUserId((prev) => prev || json.users?.[0]?.id || "");
+      if (json.summary) {
+        setPrice(String(json.summary.pricePerDayKr));
+        setAmountKr((prev) =>
+          prev || String(json.summary!.pricePerDayKr)
+        );
+      }
+      setPayUserId((prev) => prev || json.users?.[0]?.id || "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fel");
     } finally {
@@ -170,7 +176,10 @@ export default function OwnerPage() {
         password: json.password || "",
       });
       setNewName("");
-      setInfo("Konto skapat – skicka uppgifterna till personen.");
+      setInfo(
+        "Konto skapat. Lägg till betalda dagar nedan innan personen kan logga in."
+      );
+      if (json.user?.id) setPayUserId(json.user.id);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fel");
@@ -187,7 +196,11 @@ export default function OwnerPage() {
           <p className="login-lead">
             Den här sidan styr huvudkontot och syns bara för dig.
           </p>
-          <Link href="/" className="login-submit" style={{ display: "block", textAlign: "center" }}>
+          <Link
+            href="/"
+            className="login-submit"
+            style={{ display: "block", textAlign: "center" }}
+          >
             Till tipset
           </Link>
         </div>
@@ -195,7 +208,12 @@ export default function OwnerPage() {
     );
   }
 
-  const winUser = users.find((u) => u.id === winUserId);
+  const payUser = users.find((u) => u.id === payUserId);
+  const dayCount = Math.max(1, Math.floor(Number(days) || 1));
+  const suggested =
+    summary != null
+      ? Math.round(dayCount * summary.pricePerDayKr * 100) / 100
+      : null;
 
   return (
     <div className="app-shell owner-shell">
@@ -206,8 +224,8 @@ export default function OwnerPage() {
             Mikael’s <span>kontroll</span>
           </h1>
           <p className="brand-tag">
-            Här styr du vem som får in, sparkar ut missbruk och tar provision
-            bara på andras vinster – aldrig på förluster.
+            Andra betalar per dag för att få in. Du sparkar ut missbruk och
+            styr alla konton – ingen annan är huvudperson.
           </p>
         </div>
         <div className="owner-top-actions">
@@ -231,27 +249,27 @@ export default function OwnerPage() {
 
       {summary && (
         <section className="panel rise">
-          <h2>Provision på vinster</h2>
+          <h2>Betalning per dag</h2>
           <p className="panel-lead">
-            Du tjänar {summary.commissionPercent} % när någon annan vinner.
-            Förluster ger 0 kr till dig.
+            Pris just nu: <strong>{summary.pricePerDayKr} kr/dag</strong>.
+            När någon betalat registrerar du dagarna – då kan de logga in.
           </p>
           <div className="history-totals">
             <div>
-              <strong>{summary.totals.winsKr}</strong>
-              <span>kr vinster totalt</span>
-            </div>
-            <div>
-              <strong>{summary.totals.commissionKr}</strong>
-              <span>kr din provision</span>
-            </div>
-            <div>
-              <strong>{summary.totals.unpaidKr}</strong>
-              <span>kr att få in</span>
+              <strong>{summary.pricePerDayKr}</strong>
+              <span>kr per dag</span>
             </div>
             <div>
               <strong>{summary.totals.paidKr}</strong>
-              <span>kr mottaget</span>
+              <span>kr inkommet</span>
+            </div>
+            <div>
+              <strong>{summary.totals.daysSold}</strong>
+              <span>dagar sålda</span>
+            </div>
+            <div>
+              <strong>{summary.totals.count}</strong>
+              <span>betalningar</span>
             </div>
           </div>
 
@@ -259,22 +277,22 @@ export default function OwnerPage() {
             className="users-admin-form"
             onSubmit={(e) => {
               e.preventDefault();
-              void post("set_percent", { percent: Number(percent) });
+              void post("set_price", { pricePerDayKr: Number(price) });
             }}
           >
             <label>
-              Din % på vinster
+              Pris per dag (kr)
               <input
                 type="number"
                 min={0}
-                max={50}
-                step={0.5}
-                value={percent}
-                onChange={(e) => setPercent(e.target.value)}
+                max={5000}
+                step={1}
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
               />
             </label>
             <button type="submit" disabled={busy}>
-              Spara %
+              Spara pris
             </button>
           </form>
 
@@ -282,28 +300,28 @@ export default function OwnerPage() {
             className="users-admin-form"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!winUser) return;
-              void post("register_win", {
-                userId: winUser.id,
-                userName: winUser.name,
-                winKr: Number(winKr.replace(",", ".")),
-                note: winNote,
+              if (!payUser) return;
+              void post("register_days", {
+                userId: payUser.id,
+                userName: payUser.name,
+                days: dayCount,
+                amountKr: amountKr
+                  ? Number(amountKr.replace(",", "."))
+                  : undefined,
+                note: payNote,
               }).then((r) => {
                 if (r) {
-                  setWinKr("");
-                  setWinNote("");
-                  setInfo(
-                    `Vinst registrerad – din andel syns under provision.`
-                  );
+                  setDays("1");
+                  setPayNote("");
                 }
               });
             }}
           >
             <label>
-              Användare som vann
+              Vem har betalat
               <select
-                value={winUserId}
-                onChange={(e) => setWinUserId(e.target.value)}
+                value={payUserId}
+                onChange={(e) => setPayUserId(e.target.value)}
               >
                 {users.length === 0 && (
                   <option value="">Inga användare ännu</option>
@@ -311,59 +329,59 @@ export default function OwnerPage() {
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name}
-                    {!u.active ? " (avstängd)" : ""}
+                    {u.accessActive ? " · aktiv" : " · ingen dag kvar"}
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              Vinst (kr)
+              Antal dagar
               <input
-                value={winKr}
-                onChange={(e) => setWinKr(e.target.value)}
-                placeholder="t.ex. 1200"
-                required
+                type="number"
+                min={1}
+                max={365}
+                value={days}
+                onChange={(e) => {
+                  setDays(e.target.value);
+                  if (summary) {
+                    const d = Math.max(1, Math.floor(Number(e.target.value) || 1));
+                    setAmountKr(String(Math.round(d * summary.pricePerDayKr * 100) / 100));
+                  }
+                }}
+              />
+            </label>
+            <label>
+              Betalt belopp (kr)
+              <input
+                value={amountKr}
+                onChange={(e) => setAmountKr(e.target.value)}
+                placeholder={suggested != null ? String(suggested) : "29"}
               />
             </label>
             <label>
               Anteckning
               <input
-                value={winNote}
-                onChange={(e) => setWinNote(e.target.value)}
+                value={payNote}
+                onChange={(e) => setPayNote(e.target.value)}
                 placeholder="valfritt"
               />
             </label>
-            <button type="submit" disabled={busy || !winUserId || !winKr}>
-              Registrera vinst
+            <button type="submit" disabled={busy || !payUserId}>
+              Registrera betalning
             </button>
           </form>
 
-          {summary.entries.length > 0 && (
+          {summary.payments.length > 0 && (
             <ul className="users-list">
-              {summary.entries.slice(0, 40).map((e) => (
-                <li key={e.id} className={e.paid ? "inactive" : ""}>
+              {summary.payments.slice(0, 40).map((p) => (
+                <li key={p.id}>
                   <div>
-                    <strong>{e.userName}</strong> vann {e.winKr} kr → dig{" "}
-                    <strong>{e.commissionKr} kr</strong> ({e.percent} %)
+                    <strong>{p.userName}</strong> · {p.days} dag
+                    {p.days === 1 ? "" : "ar"} · {p.amountKr} kr
                     <div className="reason">
-                      {fmtTime(e.at)}
-                      {e.note ? ` · ${e.note}` : ""}
-                      {e.paid ? " · mottaget" : " · väntar"}
+                      {fmtTime(p.at)} · giltig t.o.m. {fmtTime(p.accessUntil)}
+                      {p.note ? ` · ${p.note}` : ""}
                     </div>
-                  </div>
-                  <div className="users-row-actions">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
-                        void post("mark_paid", {
-                          entryId: e.id,
-                          paid: !e.paid,
-                        })
-                      }
-                    >
-                      {e.paid ? "Markera obetald" : "Markera mottagen"}
-                    </button>
                   </div>
                 </li>
               ))}
@@ -375,8 +393,8 @@ export default function OwnerPage() {
       <section className="panel rise">
         <h2>Konton du styr</h2>
         <p className="panel-lead">
-          Bara du är huvudperson. Andra får egna konton – du kan sparka ut dem
-          direkt om de missbrukar.
+          Skapa konto, ta betalt per dag, sedan kan de logga in. Sparka ut om
+          de missbrukar.
         </p>
 
         <form className="users-admin-form" onSubmit={createAccount}>
@@ -402,19 +420,35 @@ export default function OwnerPage() {
             Namn: <code>{created.name}</code>
             <br />
             Lösenord: <code>{created.password}</code>
+            <br />
+            (Fungerar efter att du registrerat betalda dagar)
           </div>
         )}
 
         <ul className="users-list">
           {users.map((u) => (
-            <li key={u.id} className={u.active ? "" : "inactive"}>
+            <li key={u.id} className={u.active && u.accessActive ? "" : "inactive"}>
               <div>
                 <strong>{u.name}</strong>{" "}
                 <span className="history-score">
-                  {u.active ? "inloggning tillåten" : "avstängd"}
+                  {!u.active
+                    ? "avstängd"
+                    : u.accessActive
+                      ? `betald t.o.m. ${fmtTime(u.accessUntil || "")}`
+                      : "ingen dag kvar"}
                 </span>
               </div>
               <div className="users-row-actions">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setPayUserId(u.id);
+                    setInfo(`Valde ${u.name} för dagsbetalning ovan.`);
+                  }}
+                >
+                  Lägg dagar
+                </button>
                 <button
                   type="button"
                   disabled={busy}

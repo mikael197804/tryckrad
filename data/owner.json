@@ -1,16 +1,15 @@
 {
-  "commissionPercent": 10,
-  "entries": [
+  "pricePerDayKr": 29,
+  "payments": [
     {
-      "id": "win_2f3aae69aa",
-      "userId": "usr_0ddbbc2bfc3d",
-      "userName": "Bertil",
-      "winKr": 1000,
-      "commissionKr": 100,
-      "percent": 10,
-      "at": "2026-11-22T13:55:52.479Z",
-      "note": "test",
-      "paid": false
+      "id": "day_bbefb166b2",
+      "userId": "usr_2f2a2c1ccdf8",
+      "userName": "Filip",
+      "days": 3,
+      "amountKr": 87,
+      "accessUntil": "2026-11-25T13:59:30.609Z",
+      "at": "2026-11-22T13:59:30.609Z",
+      "note": ""
     }
   ]
 }

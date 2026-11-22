@@ -1735,9 +1735,9 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="panel-lead">
-          Bara du är huvudperson. Ge andra egna konton, sparka ut dem om de
-          missbrukar, eller öppna{" "}
-          <a href="/owner">Mikael’s kontroll</a> för provision på vinster.
+          Bara du är huvudperson. Ge andra egna konton (de betalar per dag),
+          sparka ut dem om de missbrukar, eller öppna{" "}
+          <a href="/owner">Mikael’s kontroll</a>.
         </p>
 
         <div className="users-admin-form">

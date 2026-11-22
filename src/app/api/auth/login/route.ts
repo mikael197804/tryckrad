@@ -10,6 +10,8 @@ import {
   clientIpFromHeaders,
   recordVisit,
 } from "../../../../lib/auth/visits";
+import { isOwnerUser } from "../../../../lib/auth/owner";
+import { hasPaidAccess } from "../../../../lib/auth/ledger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +49,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "Fel namn eller lösenord" },
       { status: 401 }
+    );
+  }
+
+  if (!isOwnerUser(user) && !hasPaidAccess(user.accessUntil)) {
+    await recordVisit({
+      ip,
+      userName: user.name,
+      userId: user.id,
+      path: "/login",
+      kind: "login_fail",
+      userAgent: ua,
+    });
+    return NextResponse.json(
+      {
+        error:
+          "Ingen betald dag kvar. Betala dygnsavgiften till Mikael för att komma in.",
+        code: "payment_required",
+      },
+      { status: 403 }
     );
   }
 

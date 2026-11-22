@@ -4,14 +4,14 @@ import {
   kickAndBan,
   kickUserSession,
   listUsers,
+  setUserAccessUntil,
 } from "../../../lib/auth/users";
 import { toPublicUser } from "../../../lib/auth/types";
 import { listVisits } from "../../../lib/auth/visits";
 import {
-  markCommissionPaid,
   ownerSummary,
-  registerWin,
-  setCommissionPercent,
+  registerDayPayment,
+  setPricePerDay,
 } from "../../../lib/auth/ledger";
 import { isOwnerUser } from "../../../lib/auth/owner";
 
@@ -51,12 +51,11 @@ export async function POST(req: NextRequest) {
   let body: {
     action?: string;
     userId?: string;
-    winKr?: number;
-    note?: string;
     userName?: string;
-    percent?: number;
-    entryId?: string;
-    paid?: boolean;
+    days?: number;
+    amountKr?: number;
+    note?: string;
+    pricePerDayKr?: number;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -88,36 +87,43 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (action === "register_win") {
-      if (!body.userId || !body.userName) throw new Error("Saknar användare");
-      const entry = await registerWin({
-        userId: body.userId,
-        userName: body.userName,
-        winKr: Number(body.winKr),
-        note: body.note,
-      });
-      const summary = await ownerSummary();
-      return NextResponse.json({ ok: true, entry, summary });
-    }
-
-    if (action === "set_percent") {
-      const settings = await setCommissionPercent(Number(body.percent));
+    if (action === "set_price") {
+      const settings = await setPricePerDay(Number(body.pricePerDayKr));
       const summary = await ownerSummary();
       return NextResponse.json({
         ok: true,
-        commissionPercent: settings.commissionPercent,
+        pricePerDayKr: settings.pricePerDayKr,
         summary,
       });
     }
 
-    if (action === "mark_paid") {
-      if (!body.entryId) throw new Error("Saknar entryId");
-      const entry = await markCommissionPaid(
-        body.entryId,
-        body.paid !== false
+    if (action === "register_days") {
+      if (!body.userId || !body.userName) throw new Error("Saknar användare");
+      const users = await listUsers();
+      const target = users.find((u) => u.id === body.userId);
+      if (!target) throw new Error("Användaren hittades inte");
+
+      const { payment, accessUntil } = await registerDayPayment({
+        userId: body.userId,
+        userName: body.userName,
+        days: Number(body.days),
+        amountKr: body.amountKr,
+        currentAccessUntil: target.accessUntil,
+        note: body.note,
+      });
+      const updated = await setUserAccessUntil(
+        body.userId,
+        accessUntil,
+        token
       );
       const summary = await ownerSummary();
-      return NextResponse.json({ ok: true, entry, summary });
+      return NextResponse.json({
+        ok: true,
+        payment,
+        user: toPublicUser(updated.user),
+        summary,
+        message: `${body.userName} har access till ${new Date(accessUntil).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}`,
+      });
     }
 
     return NextResponse.json({ error: "Okänd action" }, { status: 400 });

@@ -2,24 +2,24 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 
-export type CommissionEntry = {
+export type DayPayment = {
   id: string;
   userId: string;
   userName: string;
-  /** Användarens vinst i kr (bara vinster registreras). */
-  winKr: number;
-  /** Ägarens andel i kr. */
-  commissionKr: number;
-  percent: number;
+  /** Antal dagar som betalats. */
+  days: number;
+  /** Belopp i kr. */
+  amountKr: number;
+  /** Access giltig t.o.m. denna tidpunkt (ISO). */
+  accessUntil: string;
   at: string;
   note: string;
-  paid: boolean;
 };
 
 export type OwnerSettings = {
-  /** Provision i % på andras vinster (inte förluster). */
-  commissionPercent: number;
-  entries: CommissionEntry[];
+  /** Pris per dag i kr. */
+  pricePerDayKr: number;
+  payments: DayPayment[];
 };
 
 const FILE = path.join(process.cwd(), "data", "owner.json");
@@ -31,16 +31,32 @@ declare global {
 }
 
 function defaultSettings(): OwnerSettings {
-  return { commissionPercent: 10, entries: [] };
+  return { pricePerDayKr: 29, payments: [] };
+}
+
+function normalizeSettings(raw: unknown): OwnerSettings | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  // Migrera bort gammal provision-modell
+  const price =
+    typeof o.pricePerDayKr === "number"
+      ? o.pricePerDayKr
+      : defaultSettings().pricePerDayKr;
+  const payments = Array.isArray(o.payments)
+    ? (o.payments as DayPayment[])
+    : [];
+  return {
+    pricePerDayKr: price,
+    payments: payments.filter(
+      (p) => p && typeof p.id === "string" && typeof p.userId === "string"
+    ),
+  };
 }
 
 async function readFile(p: string): Promise<OwnerSettings | null> {
   try {
     const raw = await fs.readFile(p, "utf8");
-    const parsed = JSON.parse(raw) as OwnerSettings;
-    if (typeof parsed?.commissionPercent !== "number") return null;
-    if (!Array.isArray(parsed.entries)) return null;
-    return parsed;
+    return normalizeSettings(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -67,76 +83,83 @@ async function saveOwnerSettings(settings: OwnerSettings): Promise<void> {
   }
 }
 
-export async function setCommissionPercent(percent: number): Promise<OwnerSettings> {
-  if (!Number.isFinite(percent) || percent < 0 || percent > 50) {
-    throw new Error("Provision måste vara 0–50 %");
+export async function setPricePerDay(kr: number): Promise<OwnerSettings> {
+  if (!Number.isFinite(kr) || kr < 0 || kr > 5000) {
+    throw new Error("Dygnspris måste vara 0–5000 kr");
   }
   const s = await loadOwnerSettings();
-  s.commissionPercent = Math.round(percent * 10) / 10;
+  s.pricePerDayKr = Math.round(kr * 100) / 100;
   await saveOwnerSettings(s);
   return s;
 }
 
-/**
- * Registrera en vinst för en användare.
- * Provision tas bara på vinst (> 0). Förlust → ingen post.
- */
-export async function registerWin(input: {
-  userId: string;
-  userName: string;
-  winKr: number;
-  note?: string;
-}): Promise<CommissionEntry> {
-  const winKr = Number(input.winKr);
-  if (!Number.isFinite(winKr) || winKr <= 0) {
-    throw new Error("Ange en vinst över 0 kr (förluster ger ingen provision)");
-  }
-  const s = await loadOwnerSettings();
-  const commissionKr =
-    Math.round(((winKr * s.commissionPercent) / 100) * 100) / 100;
-  const entry: CommissionEntry = {
-    id: `win_${randomBytes(5).toString("hex")}`,
-    userId: input.userId,
-    userName: input.userName,
-    winKr,
-    commissionKr,
-    percent: s.commissionPercent,
-    at: new Date().toISOString(),
-    note: (input.note || "").trim().slice(0, 200),
-    paid: false,
-  };
-  s.entries.unshift(entry);
-  if (s.entries.length > 500) s.entries.length = 500;
-  await saveOwnerSettings(s);
-  return entry;
+/** Förlänger access med N dagar från max(nu, nuvarande accessUntil). */
+export function extendAccessUntil(
+  currentUntil: string | null | undefined,
+  days: number
+): string {
+  const now = Date.now();
+  const cur = currentUntil ? Date.parse(currentUntil) : NaN;
+  const base = Number.isFinite(cur) && cur > now ? cur : now;
+  return new Date(base + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-export async function markCommissionPaid(id: string, paid: boolean) {
+export function hasPaidAccess(accessUntil: string | null | undefined): boolean {
+  if (!accessUntil) return false;
+  const t = Date.parse(accessUntil);
+  return Number.isFinite(t) && t > Date.now();
+}
+
+export async function registerDayPayment(input: {
+  userId: string;
+  userName: string;
+  days: number;
+  /** Om utelämnad: days * pricePerDayKr */
+  amountKr?: number;
+  currentAccessUntil?: string | null;
+  note?: string;
+}): Promise<{ payment: DayPayment; accessUntil: string }> {
+  const days = Math.floor(Number(input.days));
+  if (!Number.isFinite(days) || days < 1 || days > 365) {
+    throw new Error("Ange 1–365 dagar");
+  }
   const s = await loadOwnerSettings();
-  const idx = s.entries.findIndex((e) => e.id === id);
-  if (idx < 0) throw new Error("Posten hittades inte");
-  s.entries[idx] = { ...s.entries[idx]!, paid };
+  const amountKr =
+    input.amountKr != null && Number.isFinite(Number(input.amountKr))
+      ? Math.round(Number(input.amountKr) * 100) / 100
+      : Math.round(days * s.pricePerDayKr * 100) / 100;
+  if (amountKr < 0) throw new Error("Belopp kan inte vara negativt");
+
+  const accessUntil = extendAccessUntil(input.currentAccessUntil, days);
+  const payment: DayPayment = {
+    id: `day_${randomBytes(5).toString("hex")}`,
+    userId: input.userId,
+    userName: input.userName,
+    days,
+    amountKr,
+    accessUntil,
+    at: new Date().toISOString(),
+    note: (input.note || "").trim().slice(0, 200),
+  };
+  s.payments.unshift(payment);
+  if (s.payments.length > 500) s.payments.length = 500;
   await saveOwnerSettings(s);
-  return s.entries[idx]!;
+  return { payment, accessUntil };
 }
 
 export async function ownerSummary() {
   const s = await loadOwnerSettings();
-  const unpaid = s.entries.filter((e) => !e.paid);
-  const paid = s.entries.filter((e) => e.paid);
-  const sum = (list: CommissionEntry[]) =>
-    Math.round(list.reduce((a, e) => a + e.commissionKr, 0) * 100) / 100;
-  const winSum = (list: CommissionEntry[]) =>
-    Math.round(list.reduce((a, e) => a + e.winKr, 0) * 100) / 100;
+  const totalKr = Math.round(
+    s.payments.reduce((a, p) => a + p.amountKr, 0) * 100
+  ) / 100;
+  const totalDays = s.payments.reduce((a, p) => a + p.days, 0);
   return {
-    commissionPercent: s.commissionPercent,
-    entries: s.entries,
+    pricePerDayKr: s.pricePerDayKr,
+    payments: s.payments,
     totals: {
-      winsKr: winSum(s.entries),
-      commissionKr: sum(s.entries),
-      unpaidKr: sum(unpaid),
-      paidKr: sum(paid),
-      count: s.entries.length,
+      paidKr: totalKr,
+      daysSold: totalDays,
+      count: s.payments.length,
     },
   };
 }
