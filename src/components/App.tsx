@@ -2284,14 +2284,15 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="top-menu-fixed" role="navigation" aria-label="Huvudmeny">
-        <div className="product-switch" role="tablist" aria-label="Produkt">
+        <div className="product-switch top-menu-row" role="tablist" aria-label="Produkt">
           <button
             type="button"
             className="product-btn history-launch"
             onClick={openHistory}
             title="Gamla resultat – tips med rätt/fel i 24 timmar efter färdigt spel"
           >
-            Gamla resultat
+            <span className="btn-label-full">Gamla resultat</span>
+            <span className="btn-label-short">Resultat</span>
           </button>
           <button
             type="button"
@@ -2300,7 +2301,7 @@ export default function App() {
             disabled={product === "oddset"}
             title="Hoppa till 1X2-tips från analys"
           >
-            1X2-tips
+            1X2
           </button>
           {DRAW_PRODUCTS.map((p) => (
             <button
@@ -2309,7 +2310,16 @@ export default function App() {
               className={`product-btn ${product === p ? "active" : ""}`}
               onClick={() => setProduct(p)}
             >
-              {productLabel(p)}
+              <span className="btn-label-full">{productLabel(p)}</span>
+              <span className="btn-label-short">
+                {p === "topptipset"
+                  ? "Topp"
+                  : p === "powerplay"
+                    ? "PP"
+                    : p === "stryktipset"
+                      ? "Stryk"
+                      : "Mål"}
+              </span>
             </button>
           ))}
           <button
@@ -2326,17 +2336,19 @@ export default function App() {
               onClick={() => setShowUsers(true)}
               title="Styr vilka som får öppna appen"
             >
-              Behörighet
+              <span className="btn-label-full">Behörighet</span>
+              <span className="btn-label-short">Access</span>
             </button>
           )}
           {authUser && (
             <button
               type="button"
-              className="product-btn"
+              className="product-btn menu-logout"
               onClick={() => void logout()}
               title={`Inloggad som ${authUser.name}`}
             >
-              Logga ut
+              <span className="btn-label-full">Logga ut</span>
+              <span className="btn-label-short">Ut</span>
             </button>
           )}
         </div>

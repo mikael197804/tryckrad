@@ -68,8 +68,8 @@ select {
   left: 0;
   right: 0;
   z-index: 50;
-  padding: max(0.55rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
-    0.55rem max(1rem, env(safe-area-inset-left));
+  padding: max(0.45rem, env(safe-area-inset-top)) max(0.65rem, env(safe-area-inset-right))
+    0.45rem max(0.65rem, env(safe-area-inset-left));
   background: linear-gradient(
     180deg,
     rgba(6, 12, 20, 0.97) 0%,
@@ -85,11 +85,9 @@ select {
   width: min(1180px, 100%);
   margin: 0 auto;
   margin-top: 0;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  gap: 0.4rem;
-  padding-bottom: 0.15rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding-bottom: 0.1rem;
 }
 
 .top-menu-fixed .product-btn {
@@ -98,6 +96,14 @@ select {
   padding: 0.45rem 0.75rem;
   min-height: 40px;
   font-size: 0.82rem;
+}
+
+.btn-label-short {
+  display: none;
+}
+
+.btn-label-full {
+  display: inline;
 }
 
 .brand-bar {
@@ -1279,11 +1285,89 @@ select {
   }
 }
 
+@media (max-width: 640px) {
+  .app-shell {
+    padding-top: max(6.75rem, calc(5.6rem + env(safe-area-inset-top)));
+  }
+
+  .top-menu-fixed {
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+  }
+
+  .top-menu-fixed .product-switch {
+    gap: 0.3rem;
+  }
+
+  .top-menu-fixed .product-btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.8rem;
+    border-radius: 8px;
+  }
+
+  .btn-label-full {
+    display: none;
+  }
+
+  .btn-label-short {
+    display: inline;
+  }
+
+  #analysis-tips {
+    scroll-margin-top: 6.5rem;
+  }
+
+  .history-overlay {
+    padding: 0.5rem;
+    align-items: stretch;
+  }
+
+  .history-panel {
+    max-height: calc(100dvh - 1rem);
+    width: 100%;
+    border-radius: 12px;
+    overflow: auto;
+  }
+
+  .history-panel-top {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .history-actions {
+    width: 100%;
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .history-actions .history-btn {
+    flex: 1;
+    min-height: 44px;
+  }
+
+  .users-list li {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .users-row-actions {
+    width: 100%;
+  }
+
+  .users-row-actions button {
+    flex: 1;
+    min-height: 40px;
+  }
+}
+
 @media (max-width: 480px) {
   .app-shell {
     width: 100%;
     padding-left: max(0.85rem, env(safe-area-inset-left));
     padding-right: max(0.85rem, env(safe-area-inset-right));
+    padding-top: max(7.25rem, calc(6rem + env(safe-area-inset-top)));
   }
 
   .brand-bar {
