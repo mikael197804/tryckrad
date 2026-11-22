@@ -98,6 +98,7 @@ export type OutcomeValueInfo = {
   isOverOdds: boolean;
   isValue: boolean;
   isTrashLongshot: boolean;
+  isTrap: boolean;
   scoreBoost: number;
   note: string;
 };
@@ -105,8 +106,12 @@ export type OutcomeValueInfo = {
 export type ValueOddsInfo = {
   outcomes: OutcomeValueInfo[];
   bestValue: Outcome | null;
+  /** Överodds som bedöms genuina (mot folk + ej uppblåsta vs sharp) */
   overOddsOutcomes: Outcome[];
+  /** Överodds som ser ut som fällor (mjukare än sharp / folkfälla) */
+  trapOverOddsOutcomes: Outcome[];
   folkOddsDisagree: boolean;
+  booksChecked: string[];
   note: string;
 };
 

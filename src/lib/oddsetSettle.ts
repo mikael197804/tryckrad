@@ -57,10 +57,11 @@ function normalizeName(s: string): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(
-      /\b(fc|cf|sc|ac|as|afc|fk|if|bk|sk|cd|ud|rcd|ssc|sv|vfl|vfb|tsg|1)\b/g,
+      /\b(fc|cf|sc|ac|as|afc|fk|if|bk|sk|cd|ud|rcd|ssc|sv|vfl|vfb|tsg|hf|hc|1)\b/g,
       " "
     )
     .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b([a-z]+)\s+(\d+)\b/g, "$1$2")
     .replace(/\s+/g, " ")
     .trim();
   for (const [re, rep] of NAME_ALIASES) {

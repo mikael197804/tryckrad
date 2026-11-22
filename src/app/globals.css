@@ -614,6 +614,11 @@ select {
   color: #c9b6ff;
 }
 
+.ctx-pill.value-trap {
+  border-color: rgba(255, 120, 100, 0.6);
+  color: #ffb0a0;
+}
+
 .ctx-pill.value-disagree {
   border-color: rgba(255, 200, 120, 0.5);
   color: #ffd28a;

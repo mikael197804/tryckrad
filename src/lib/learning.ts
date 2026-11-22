@@ -252,12 +252,16 @@ function classifyLesson(
     why.push("enkelrad fel sida – halvgardering hade räddat");
   }
 
-  // Överodds vi missade
+  // Överodds vi missade (inte fällor – de ska undvikas)
   const value = analyzeValueOdds({
     odds: model.odds,
     dist: model.dist,
   });
-  if (value.overOddsOutcomes.includes(actual) && !model.pick.includes(actual)) {
+  if (
+    value.overOddsOutcomes.includes(actual) &&
+    !value.trapOverOddsOutcomes.includes(actual) &&
+    !model.pick.includes(actual)
+  ) {
     kinds.push("overodds_missed");
     why.push(`överodds på ${actual} fanns men togs inte med`);
     next.push(`Ta med överodds-${actual} i gardering nästa gång`);

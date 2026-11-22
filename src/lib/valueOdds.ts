@@ -1,3 +1,8 @@
+import type { MultiBookMatchOdds } from "./multiBookOdds";
+import {
+  sharpOddsForOutcome,
+  softEdgeForOutcome,
+} from "./multiBookOdds";
 import type { Distribution, Odds, Outcome } from "./types";
 
 /**
@@ -10,6 +15,9 @@ import type { Distribution, Odds, Outcome } from "./types";
  * - Folk-andel tydligt högre än oddsimplicit + odds ≥2,2: också +EV.
  * - Extremt höga odds (8+) nästan aldrig värda; 5–8 blandat (bättre i fotboll).
  * - När folkfavorit ≠ oddsfavorit: "anti-folk" träffade oftare (~54–69%).
+ *
+ * Multi-book (2026): många "överodds" är fällor – SVS/Unibet/Paf/ATG (Kambi)
+ * ligger mjukare än sharp (Pinnacle). Då förlorar vanliga spelare pengar.
  */
 export const VALUE_ODDS_INSIGHTS = {
   sampleNote:
@@ -21,6 +29,10 @@ export const VALUE_ODDS_INSIGHTS = {
   longshot8HitEv: 0.35,
   antiFolkWhenDisagree: 0.6,
   xMidHitRate: 0.25,
+  /** SVS ≥8% högre än Pinnacle → behandla som soft-trap */
+  trapSoftEdgePct: 8,
+  /** SVS inom 3% av sharp → överodds mer trovärdig */
+  trustedSoftEdgePct: 3,
 } as const;
 
 export type OutcomeValue = {
@@ -32,8 +44,10 @@ export type OutcomeValue = {
   isOverOdds: boolean;
   isValue: boolean;
   isTrashLongshot: boolean;
+  isTrap: boolean;
   band: string | null;
   edgePct: number | null;
+  softEdgePct: number | null;
   scoreBoost: number;
   note: string;
 };
@@ -42,10 +56,12 @@ export type ValueOddsAnalysis = {
   outcomes: OutcomeValue[];
   bestValue: Outcome | null;
   overOddsOutcomes: Outcome[];
+  trapOverOddsOutcomes: Outcome[];
   folkOddsDisagree: boolean;
   folkFavourite: Outcome | null;
   oddsFavourite: Outcome | null;
   antiFolkLean: Outcome | null;
+  booksChecked: string[];
   note: string;
   insights: string[];
 };
@@ -84,8 +100,9 @@ export function analyzeValueOdds(args: {
   odds: Odds;
   dist: Distribution;
   sport?: "football" | "hockey";
+  multiBook?: MultiBookMatchOdds | null;
 }): ValueOddsAnalysis {
-  const { odds, dist, sport = "football" } = args;
+  const { odds, dist, sport = "football", multiBook = null } = args;
   const oddsFavourite = favouriteFromOdds(odds);
   const folkFavourite = favouriteFromFolk(dist);
   const folkOddsDisagree =
@@ -119,16 +136,67 @@ export function analyzeValueOdds(args: {
         ? Math.round(((o / fairFromFolk - 1) * 100) * 10) / 10
         : null;
 
+    const softEdge = softEdgeForOutcome(multiBook, outcome);
+    const sharpO = sharpOddsForOutcome(multiBook, outcome);
+
+    // Trap: överodds vs folk men SVS tydligt mjukare/högre än sharp
+    let isTrap = false;
+    if (isOverOdds && !isTrashLongshot && softEdge != null) {
+      if (softEdge >= VALUE_ODDS_INSIGHTS.trapSoftEdgePct) {
+        isTrap = true;
+      }
+    }
+    // Extra fälla: underdog-överodds (≥2,4) där folk redan ligger tungt på favoriten
+    // och sharp inte stödjer samma uppsida – folk jagar "billiga" underdogs.
+    if (
+      !isTrap &&
+      isOverOdds &&
+      !isTrashLongshot &&
+      o != null &&
+      o >= 2.4 &&
+      folkFavourite &&
+      folkFavourite !== outcome &&
+      (dist[folkFavourite === "1" ? "one" : folkFavourite === "X" ? "x" : "two"] ??
+        0) >= 55 &&
+      softEdge != null &&
+      softEdge >= 5
+    ) {
+      isTrap = true;
+    }
+
     let scoreBoost = 0;
     const bits: string[] = [];
 
-    if (isOverOdds) {
-      // Empiriskt +EV
-      const strength = Math.min(0.08, 0.035 + Math.max(0, (edgePct ?? 0) - 12) * 0.002);
-      scoreBoost += strength;
+    if (isOverOdds && isTrap) {
+      scoreBoost -= 0.055;
       bits.push(
-        `överodds (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk) – historiskt +EV`
+        softEdge != null && sharpO != null
+          ? `överodds-fälla (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk, men SVS ${softEdge > 0 ? "+" : ""}${softEdge.toFixed(0)} % mjukare än sharp ${sharpO.toFixed(2).replace(".", ",")}) – vanliga spelare förlorar här`
+          : `överodds-fälla (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk) – undvik`
       );
+    } else if (isOverOdds) {
+      const trusted =
+        softEdge == null ||
+        softEdge <= VALUE_ODDS_INSIGHTS.trustedSoftEdgePct;
+      const strength = trusted
+        ? Math.min(0.08, 0.035 + Math.max(0, (edgePct ?? 0) - 12) * 0.002)
+        : Math.min(0.04, 0.015 + Math.max(0, (edgePct ?? 0) - 12) * 0.001);
+      scoreBoost += strength;
+      if (trusted && softEdge != null) {
+        bits.push(
+          `överodds OK (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk, nära sharp)`
+        );
+      } else if (softEdge == null) {
+        bits.push(
+          `överodds (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk) – sharp saknas, försiktig vikt`
+        );
+        // Utan sharp: tona ner classic överodds-boost (folk förlorar ofta)
+        scoreBoost = Math.min(scoreBoost, 0.025);
+      } else {
+        bits.push(
+          `överodds (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk, +${softEdge.toFixed(0)} % vs sharp) – begränsad vikt`
+        );
+      }
     }
     if (isValue && !isOverOdds) {
       scoreBoost += 0.03;
@@ -138,13 +206,11 @@ export function analyzeValueOdds(args: {
       scoreBoost -= 0.06;
       bits.push("extremt högt odds (8+) – sällan värt");
     } else if (o != null && o > 5.5 && o < 8) {
-      // Fotboll 5–8 hade bättre EV än hockey i stickprov
       scoreBoost += sport === "football" ? 0.01 : -0.025;
       if (sport === "hockey") bits.push("högt underdog-odds i hockey – försiktig");
     }
 
-    // X i "sött" oddsintervall
-    if (outcome === "X" && o != null && o >= 3.0 && o <= 4.8) {
+    if (outcome === "X" && o != null && o >= 3.0 && o <= 4.8 && !isTrap) {
       scoreBoost += 0.015;
     }
 
@@ -157,14 +223,15 @@ export function analyzeValueOdds(args: {
       isOverOdds,
       isValue,
       isTrashLongshot,
+      isTrap,
       band: o != null ? bandOf(o) : null,
       edgePct,
+      softEdgePct: softEdge,
       scoreBoost,
       note: bits.join(". "),
     };
   });
 
-  // När folk och odds favorit skiljer: lätta upp folkfavoriten
   if (folkOddsDisagree && folkFavourite && oddsFavourite) {
     for (const ov of outcomes) {
       if (ov.outcome === folkFavourite) {
@@ -172,7 +239,7 @@ export function analyzeValueOdds(args: {
         ov.note = [ov.note, "folk ≠ oddsfavorit – tona ner folkfavorit"]
           .filter(Boolean)
           .join(". ");
-      } else if (ov.outcome === oddsFavourite) {
+      } else if (ov.outcome === oddsFavourite && !ov.isTrap) {
         ov.scoreBoost += 0.025;
         ov.note = [ov.note, "oddsfavorit mot folk – historiskt oftare rätt"]
           .filter(Boolean)
@@ -181,12 +248,18 @@ export function analyzeValueOdds(args: {
     }
   }
 
+  const trapOverOddsOutcomes = outcomes
+    .filter((o) => o.isOverOdds && o.isTrap && !o.isTrashLongshot)
+    .map((o) => o.outcome);
+
   const overOddsOutcomes = outcomes
-    .filter((o) => o.isOverOdds && !o.isTrashLongshot)
+    .filter((o) => o.isOverOdds && !o.isTrashLongshot && !o.isTrap)
     .map((o) => o.outcome);
 
   const rankedValue = [...outcomes]
-    .filter((o) => (o.isOverOdds || o.isValue) && !o.isTrashLongshot)
+    .filter(
+      (o) => (o.isOverOdds || o.isValue) && !o.isTrashLongshot && !o.isTrap
+    )
     .sort((a, b) => b.scoreBoost - a.scoreBoost);
   const bestValue = rankedValue[0]?.outcome ?? null;
 
@@ -195,12 +268,21 @@ export function analyzeValueOdds(args: {
       ? oddsFavourite
       : null;
 
+  const booksChecked = multiBook?.booksChecked ?? [];
   const insights: string[] = [];
+
+  if (trapOverOddsOutcomes.length) {
+    insights.push(
+      `Överodds-fälla på ${trapOverOddsOutcomes.join("/")}: högre än sharp/folk-fälla – undvik (vanliga spelare förlorar här)`
+    );
+  }
   if (overOddsOutcomes.length) {
     insights.push(
-      `Överodds på ${overOddsOutcomes.join("/")}: historiskt ca ${Math.round(
+      `Överodds på ${overOddsOutcomes.join("/")}: granskad mot böcker${
+        multiBook?.sharpLabel ? ` + ${multiBook.sharpLabel}` : ""
+      } – historiskt ca ${Math.round(
         VALUE_ODDS_INSIGHTS.overOddsHitRate * 100
-      )}% träff och +EV mot folk`
+      )}% träff när den inte är uppblåst`
     );
   }
   if (folkOddsDisagree && folkFavourite && oddsFavourite) {
@@ -213,6 +295,9 @@ export function analyzeValueOdds(args: {
   if (outcomes.some((o) => o.isTrashLongshot && o.outcome !== "X")) {
     insights.push("Extremodds 8+ undviks – mycket låg historisk EV");
   }
+  if (multiBook?.note) {
+    insights.push(multiBook.note);
+  }
   if (!insights.length) {
     insights.push(
       "Inga tydliga överodds just nu – lutar mot oddsfavorit/folkbalans"
@@ -223,10 +308,12 @@ export function analyzeValueOdds(args: {
     outcomes,
     bestValue,
     overOddsOutcomes,
+    trapOverOddsOutcomes,
     folkOddsDisagree,
     folkFavourite,
     oddsFavourite,
     antiFolkLean,
+    booksChecked,
     note: insights.join(". "),
     insights,
   };
@@ -261,7 +348,6 @@ export function overMarketValue(args: {
   }
   const implied = 1 / overOdds;
   const edgePct = Math.round((modelProb - implied) * 1000) / 10;
-  // Modell tror mer än oddsen → värde på Över
   const isValue = modelProb >= implied * 1.08 && modelProb >= 0.52;
   return {
     isValue,

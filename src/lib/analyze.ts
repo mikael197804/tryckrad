@@ -36,6 +36,7 @@ import {
   learningAdjustForMatch,
   type LearningMemory,
 } from "./learning";
+import { resolveMultiBookOdds } from "./multiBookOdds";
 import {
   analyzeValueOdds,
   applyValueOddsToScores,
@@ -359,6 +360,11 @@ function buildPick(
     }
   }
 
+  if (valueOdds?.trapOverOddsOutcomes?.length) {
+    reasons.push(
+      `överodds-fälla ${valueOdds.trapOverOddsOutcomes.join("/")} undviks`
+    );
+  }
   if (valueOdds?.overOddsOutcomes.length) {
     reasons.push(`överodds ${valueOdds.overOddsOutcomes.join("/")}`);
     for (const o of valueOdds.overOddsOutcomes) {
@@ -446,12 +452,38 @@ export async function analyzeDraw(
 
   const tables = await loadLeagueTables([...leagues]);
 
-  for (const event of draw.drawEvents) {
-    if (event.cancelled) continue;
+  const activeEvents = draw.drawEvents.filter((e) => !e.cancelled);
+  for (const event of activeEvents) {
+    kambiByEvent.set(
+      event.eventNumber,
+      kambiIdFromProviders(event.providerIds)
+    );
+  }
+
+  // Prefetch multi-book (SE-Kambi + Pinnacle sharp) parallellt
+  const multiBookByEvent = new Map<
+    number,
+    Awaited<ReturnType<typeof resolveMultiBookOdds>>
+  >();
+  await Promise.all(
+    activeEvents.map(async (event) => {
+      const { home, away } = participants(event);
+      const multi = await resolveMultiBookOdds({
+        home: home.name,
+        away: away.name,
+        matchStart: event.match.matchStart,
+        sport: goalSport,
+        kambiEventId: kambiByEvent.get(event.eventNumber),
+        svsOdds: parseOdds(event.odds),
+      });
+      multiBookByEvent.set(event.eventNumber, multi);
+    })
+  );
+
+  for (const event of activeEvents) {
     const { home, away } = participants(event);
     const league = event.match.league.name;
     const table: LeagueTable | null = tables.get(league) ?? null;
-    kambiByEvent.set(event.eventNumber, kambiIdFromProviders(event.providerIds));
     const startOdds = parseOdds(event.startOdds);
 
     let homeFatigue = fatigueForTeam(home.id, event.match.matchStart, schedule);
@@ -554,6 +586,7 @@ export async function analyzeDraw(
       odds: scored.odds,
       dist: scored.dist,
       sport: goalSport,
+      multiBook: multiBookByEvent.get(event.eventNumber) ?? null,
     });
     let adjusted = applyValueOddsToScores(
       {
@@ -584,15 +617,22 @@ export async function analyzeDraw(
         isOverOdds: o.isOverOdds,
         isValue: o.isValue,
         isTrashLongshot: o.isTrashLongshot,
+        isTrap: o.isTrap,
         scoreBoost: o.scoreBoost,
         note: o.note,
       })),
       bestValue: valueRaw.bestValue,
       overOddsOutcomes: valueRaw.overOddsOutcomes,
+      trapOverOddsOutcomes: valueRaw.trapOverOddsOutcomes,
       folkOddsDisagree: valueRaw.folkOddsDisagree,
+      booksChecked: valueRaw.booksChecked,
       note: valueRaw.note,
     };
-    if (valueOdds.overOddsOutcomes.length || valueOdds.folkOddsDisagree) {
+    if (
+      valueOdds.overOddsOutcomes.length ||
+      valueOdds.trapOverOddsOutcomes.length ||
+      valueOdds.folkOddsDisagree
+    ) {
       valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.note}`);
     }
     const { pick, reason, valueOutcomes } = buildPick(

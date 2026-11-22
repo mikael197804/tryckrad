@@ -588,11 +588,22 @@ function ValueOddsPill({
   valueOdds?: DrawBundle["matches"][number]["valueOdds"] | null;
 }) {
   if (!valueOdds) return null;
-  if (valueOdds.overOddsOutcomes?.length) {
+  const traps = valueOdds.trapOverOddsOutcomes || [];
+  const overs = valueOdds.overOddsOutcomes || [];
+  if (traps.length || overs.length) {
     return (
-      <span className="ctx-pill value-over" title={valueOdds.note}>
-        överodds {valueOdds.overOddsOutcomes.join("/")}
-      </span>
+      <>
+        {traps.length > 0 && (
+          <span className="ctx-pill value-trap" title={valueOdds.note}>
+            överodds-fälla {traps.join("/")}
+          </span>
+        )}
+        {overs.length > 0 && (
+          <span className="ctx-pill value-over" title={valueOdds.note}>
+            överodds {overs.join("/")}
+          </span>
+        )}
+      </>
     );
   }
   if (valueOdds.folkOddsDisagree) {
@@ -1600,8 +1611,10 @@ export default function App() {
                       Överodds & värde
                     </h2>
                     <p className="panel-lead">
-                      Historik: överodds mot svenska folket har haft positiv EV
-                      (~+5–13%). Extremodds 8+ undviks.
+                      Granskar SVS, Unibet, Paf, ATG och sharp (Pinnacle).
+                      Överodds vs folk kan vara +EV, men ofta är det fällor när
+                      mjuka böcker ligger högre än sharp – då undviks de.
+                      Extremodds 8+ undviks.
                     </p>
                     <ul className="alert-list value-alerts">
                       {draw.valueAlerts.map((a) => (
