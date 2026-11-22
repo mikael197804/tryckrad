@@ -67,12 +67,14 @@ export async function createSessionToken(user: {
   id: string;
   name: string;
   role: UserRole;
+  sessionVersion?: number;
 }): Promise<string> {
   const payload: SessionPayload = {
     uid: user.id,
     name: user.name,
     role: user.role,
     exp: Math.floor(Date.now() / 1000) + MAX_AGE_SEC,
+    sv: user.sessionVersion ?? 0,
   };
   const payloadB64 = b64urlFromString(JSON.stringify(payload));
   const sig = await hmacSign(payloadB64);

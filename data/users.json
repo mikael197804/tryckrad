@@ -7,6 +7,15 @@
       "active": true,
       "passwordHash": "pbkdf2$100000$hd4Xf97rvk0aaqK0ytl+NA==$zbs+AnlNoJl4sOiqBF87NR5viW84jB9InqRUqOzrenI=",
       "createdAt": "2026-11-22T11:00:00.000Z"
+    },
+    {
+      "id": "usr_2e313ef96e5d",
+      "name": "Diana",
+      "role": "user",
+      "active": true,
+      "passwordHash": "pbkdf2$100000$mUXABr/9iDLQme0EOLDaug==$HiUGL+Z5TqW5E50MX4WHtruWN8D1pxvolmAEhL+U1nc=",
+      "createdAt": "2026-11-22T13:56:47.083Z",
+      "sessionVersion": 1
     }
   ]
 }

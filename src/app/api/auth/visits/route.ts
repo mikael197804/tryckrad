@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readSessionFromRequest } from "../../../../lib/auth/session";
 import {
   clientIpFromHeaders,
   listVisits,
   recordVisit,
   rememberStoreToken,
 } from "../../../../lib/auth/visits";
+import { requireOwner, requireUser } from "../../../../lib/auth/require";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,10 +19,8 @@ function storeTokenFrom(req: NextRequest): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await readSessionFromRequest(req);
-  if (!session || session.role !== "admin") {
-    return NextResponse.json({ error: "Endast admin" }, { status: 403 });
-  }
+  const auth = await requireOwner(req);
+  if (auth instanceof NextResponse) return auth;
   const token = storeTokenFrom(req);
   if (token) await rememberStoreToken(token);
   const visits = await listVisits(150, token);
@@ -34,10 +32,9 @@ export async function GET(req: NextRequest) {
 
 /** Beacon från appen – loggar IP för inloggad användare */
 export async function POST(req: NextRequest) {
-  const session = await readSessionFromRequest(req);
-  if (!session) {
-    return NextResponse.json({ error: "Inloggning krävs" }, { status: 401 });
-  }
+  const auth = await requireUser(req);
+  if (auth instanceof NextResponse) return auth;
+  const session = auth.session;
 
   let pathName = "/";
   try {

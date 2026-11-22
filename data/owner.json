@@ -1,0 +1,16 @@
+{
+  "commissionPercent": 10,
+  "entries": [
+    {
+      "id": "win_2f3aae69aa",
+      "userId": "usr_0ddbbc2bfc3d",
+      "userName": "Bertil",
+      "winKr": 1000,
+      "commissionKr": 100,
+      "percent": 10,
+      "at": "2026-11-22T13:55:52.479Z",
+      "note": "test",
+      "paid": false
+    }
+  ]
+}

@@ -1472,6 +1472,7 @@ type AuthUser = {
   role: "admin" | "user";
   active: boolean;
   createdAt: string;
+  isOwner?: boolean;
 };
 
 const STORE_TOKEN_KEY = "mikaels-tips-user-store-token";
@@ -1518,7 +1519,6 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [visits, setVisits] = useState<VisitRow[]>([]);
   const [name, setName] = useState("");
-  const [role, setRole] = useState<"admin" | "user">("user");
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [created, setCreated] = useState<{
@@ -1580,7 +1580,7 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
       const res = await fetch("/api/auth/users", {
         method: "POST",
         headers: storeHeaders(),
-        body: JSON.stringify({ name, role, autoPassword: true }),
+        body: JSON.stringify({ name, autoPassword: true }),
       });
       const json = (await res.json()) as {
         user?: AuthUser;
@@ -1603,6 +1603,34 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
         setInfo("Personen har nu access och är sparad.");
       }
       setName("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fel");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function kickUser(u: AuthUser, ban: boolean) {
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await fetch("/api/auth/users", {
+        method: "POST",
+        headers: storeHeaders(),
+        body: JSON.stringify({
+          action: ban ? "kick_ban" : "kick",
+          id: u.id,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Kunde inte sparka ut");
+      setInfo(
+        ban
+          ? `${u.name} är utsparkad och avstängd.`
+          : `${u.name} är utsparkad (måste logga in igen).`
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fel");
@@ -1707,8 +1735,9 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p className="panel-lead">
-          Bara personer i listan kan öppna appen. Lägg till någon, skicka
-          namn + lösenord, eller ta bort access när du vill.
+          Bara du är huvudperson. Ge andra egna konton, sparka ut dem om de
+          missbrukar, eller öppna{" "}
+          <a href="/owner">Mikael’s kontroll</a> för provision på vinster.
         </p>
 
         <div className="users-admin-form">
@@ -1720,18 +1749,6 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
               placeholder="t.ex. Anna"
               minLength={2}
             />
-          </label>
-          <label>
-            Roll
-            <select
-              value={role}
-              onChange={(e) =>
-                setRole(e.target.value === "admin" ? "admin" : "user")
-              }
-            >
-              <option value="user">Får titta</option>
-              <option value="admin">Admin (kan styra access)</option>
-            </select>
           </label>
           <button
             type="button"
@@ -1771,21 +1788,35 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
               <div className="users-row-actions">
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !!u.isOwner}
+                  onClick={() => void kickUser(u, false)}
+                >
+                  Sparka ut
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !!u.isOwner}
+                  onClick={() => void kickUser(u, true)}
+                >
+                  Sparka + stäng av
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !!u.isOwner}
                   onClick={() => void resetPassword(u)}
                 >
                   Nytt lösenord
                 </button>
                 <button
                   type="button"
-                  disabled={busy || u.name === "Mikael"}
+                  disabled={busy || !!u.isOwner}
                   onClick={() => void toggleActive(u)}
                 >
                   Stäng av
                 </button>
                 <button
                   type="button"
-                  disabled={busy || u.name === "Mikael"}
+                  disabled={busy || !!u.isOwner}
                   onClick={() => void removeAccess(u)}
                 >
                   Ta bort
@@ -1920,7 +1951,17 @@ export default function App() {
     void (async () => {
       try {
         const res = await fetch("/api/auth/me", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (res.status === 401) {
+            const j = (await res.json().catch(() => null)) as {
+              code?: string;
+            } | null;
+            if (j?.code === "kicked") {
+              window.location.href = "/login";
+            }
+          }
+          return;
+        }
         const json = (await res.json()) as { user?: AuthUser | null };
         if (json.user) setAuthUser(json.user);
       } catch {
@@ -1928,6 +1969,22 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Om ägaren sparkar ut dig → utloggning
+  useEffect(() => {
+    if (!authUser) return;
+    const id = window.setInterval(() => {
+      void fetch("/api/auth/me", { cache: "no-store" }).then(async (res) => {
+        if (res.status === 401) {
+          const j = (await res.json().catch(() => null)) as {
+            code?: string;
+          } | null;
+          if (j?.code === "kicked") window.location.href = "/login";
+        }
+      });
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [authUser]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -2329,7 +2386,17 @@ export default function App() {
           >
             Oddset
           </button>
-          {authUser?.role === "admin" && (
+          {authUser?.isOwner && (
+            <a
+              className="product-btn"
+              href="/owner"
+              title="Din kontrollsida – konton, kick & provision"
+            >
+              <span className="btn-label-full">Min kontroll</span>
+              <span className="btn-label-short">Kontroll</span>
+            </a>
+          )}
+          {authUser?.isOwner && (
             <button
               type="button"
               className="product-btn"

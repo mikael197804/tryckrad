@@ -8,6 +8,7 @@ import {
   fetchUsersFromGitHub,
   pushUsersToGitHub,
 } from "./githubStore";
+import { OWNER_ID, OWNER_NAME, assertNotOwnerName } from "./owner";
 
 type StoreFile = { users: AppUser[] };
 
@@ -190,10 +191,18 @@ export type SaveResult = {
 };
 
 async function currentDiskUsers(): Promise<AppUser[]> {
+  // Använd cache först så nyss skapade konton går att sparka/uppdatera
+  // även när GitHub-push saknas (vanligt på Vercel utan token).
+  const hit = cache();
+  if (hit?.users?.length) return hit.users.map((u) => ({ ...u }));
+
+  const disk = await readFromDisk();
+  if (disk?.users?.length) return disk.users;
+
   const fromGh = await fetchUsersFromGitHub();
   if (fromGh?.length) return fromGh;
-  const disk = await readFromDisk();
-  return disk?.users?.length ? disk.users : seedStore().users;
+
+  return seedStore().users;
 }
 
 export async function createUser(
@@ -208,19 +217,22 @@ export async function createUser(
   if (!name || name.length < 2) {
     throw new Error("Namnet måste vara minst 2 tecken");
   }
+  assertNotOwnerName(name);
   if (!input.password || input.password.length < 6) {
     throw new Error("Lösenordet måste vara minst 6 tecken");
   }
   const existing = await findUserByName(name);
   if (existing) throw new Error("Namnet är redan upptaget");
 
+  // Bara Mikael är huvudperson – nya konton blir alltid vanliga användare
   const user: AppUser = {
     id: `usr_${randomBytes(6).toString("hex")}`,
     name,
-    role: input.role === "admin" ? "admin" : "user",
+    role: "user",
     active: true,
     passwordHash: hashPassword(input.password),
     createdAt: new Date().toISOString(),
+    sessionVersion: 0,
   };
 
   const base = await currentDiskUsers();
@@ -241,8 +253,11 @@ export async function setUserActive(
   const base = await currentDiskUsers();
   const idx = base.findIndex((u) => u.id === id);
   if (idx < 0) throw new Error("Användaren hittades inte");
-  if (base[idx]!.name === "Mikael" && !active) {
-    throw new Error("Kan inte ta bort access för Mikael");
+  if (
+    (base[idx]!.id === OWNER_ID || base[idx]!.name === OWNER_NAME) &&
+    !active
+  ) {
+    throw new Error("Kan inte stänga av huvudkontot");
   }
   const next = base.map((u, i) => (i === idx ? { ...u, active } : u));
   const saved = await saveUsers(next, storeToken);
@@ -260,8 +275,8 @@ export async function removeUser(
   const base = await currentDiskUsers();
   const target = base.find((u) => u.id === id);
   if (!target) throw new Error("Användaren hittades inte");
-  if (target.name === "Mikael") {
-    throw new Error("Kan inte ta bort Mikael");
+  if (target.id === OWNER_ID || target.name === OWNER_NAME) {
+    throw new Error("Kan inte ta bort huvudkontot");
   }
   const next = base.filter((u) => u.id !== id);
   const saved = await saveUsers(next, storeToken);
@@ -288,4 +303,38 @@ export async function resetUserPassword(
     persisted: saved.persisted,
     persistError: saved.error,
   };
+}
+
+/** Sparka ut – ogiltigförklarar alla aktiva inloggningar för användaren. */
+export async function kickUserSession(
+  id: string,
+  storeToken?: string | null
+): Promise<SaveResult> {
+  const base = await currentDiskUsers();
+  const idx = base.findIndex((u) => u.id === id);
+  if (idx < 0) throw new Error("Användaren hittades inte");
+  if (base[idx]!.id === OWNER_ID || base[idx]!.name === OWNER_NAME) {
+    throw new Error("Kan inte sparka ut huvudkontot");
+  }
+  const cur = base[idx]!;
+  const next = base.map((u, i) =>
+    i === idx
+      ? { ...u, sessionVersion: (cur.sessionVersion ?? 0) + 1 }
+      : u
+  );
+  const saved = await saveUsers(next, storeToken);
+  return {
+    user: next[idx]!,
+    persisted: saved.persisted,
+    persistError: saved.error,
+  };
+}
+
+/** Sparka ut och stäng av access. */
+export async function kickAndBan(
+  id: string,
+  storeToken?: string | null
+): Promise<SaveResult> {
+  const kicked = await kickUserSession(id, storeToken);
+  return setUserActive(id, false, storeToken).catch(() => kicked);
 }

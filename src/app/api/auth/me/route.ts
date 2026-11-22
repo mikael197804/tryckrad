@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readSessionFromRequest } from "../../../../lib/auth/session";
-import { findUserById } from "../../../../lib/auth/users";
+import { clearSessionCookieHeader } from "../../../../lib/auth/session";
+import { requireUser } from "../../../../lib/auth/require";
 import { toPublicUser } from "../../../../lib/auth/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const session = await readSessionFromRequest(req);
-  if (!session) {
-    return NextResponse.json({ user: null }, { status: 401 });
+  const auth = await requireUser(req);
+  if (auth instanceof NextResponse) {
+    // Rensa cookie om sparkad
+    const body = await auth.clone().json().catch(() => ({}));
+    if ((body as { code?: string }).code === "kicked") {
+      const res = NextResponse.json(body, { status: 401 });
+      res.headers.set("Set-Cookie", clearSessionCookieHeader());
+      return res;
+    }
+    return auth;
   }
-  const user = await findUserById(session.uid);
-  if (!user || !user.active) {
-    return NextResponse.json({ user: null }, { status: 401 });
-  }
-  return NextResponse.json({ user: toPublicUser(user) });
+  return NextResponse.json({ user: toPublicUser(auth.user) });
 }

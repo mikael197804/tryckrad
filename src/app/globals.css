@@ -172,6 +172,25 @@ select {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-size: 0.9rem;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+a.product-btn:hover {
+  text-decoration: none;
+}
+
+.owner-shell {
+  padding-top: 1.5rem;
+}
+
+.owner-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
 }
 
 .product-btn.active {

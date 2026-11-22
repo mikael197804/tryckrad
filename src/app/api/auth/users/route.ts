@@ -1,23 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generatePassword } from "../../../../lib/auth/password";
-import { readSessionFromRequest } from "../../../../lib/auth/session";
 import {
   createUser,
   listUsers,
   removeUser,
   resetUserPassword,
   setUserActive,
+  kickUserSession,
+  kickAndBan,
 } from "../../../../lib/auth/users";
-import { toPublicUser, type UserRole } from "../../../../lib/auth/types";
+import { toPublicUser } from "../../../../lib/auth/types";
+import { requireOwner } from "../../../../lib/auth/require";
+import { isOwnerUser } from "../../../../lib/auth/owner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-async function requireAdmin(req: NextRequest) {
-  const session = await readSessionFromRequest(req);
-  if (!session || session.role !== "admin") return null;
-  return session;
-}
 
 function storeTokenFrom(req: NextRequest): string | null {
   return (
@@ -28,9 +25,8 @@ function storeTokenFrom(req: NextRequest): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await requireAdmin(req))) {
-    return NextResponse.json({ error: "Endast admin" }, { status: 403 });
-  }
+  const auth = await requireOwner(req);
+  if (auth instanceof NextResponse) return auth;
   const users = await listUsers();
   return NextResponse.json({
     users: users.map(toPublicUser),
@@ -38,15 +34,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireAdmin(req))) {
-    return NextResponse.json({ error: "Endast admin" }, { status: 403 });
-  }
+  const auth = await requireOwner(req);
+  if (auth instanceof NextResponse) return auth;
 
   let body: {
     name?: string;
     password?: string;
-    role?: UserRole;
     autoPassword?: boolean;
+    action?: string;
+    id?: string;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -54,16 +50,48 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Ogiltig begäran" }, { status: 400 });
   }
 
+  const storeToken = storeTokenFrom(req);
+
+  // Kick via samma endpoint
+  if (body.action === "kick" && body.id) {
+    try {
+      const result = await kickUserSession(body.id, storeToken);
+      return NextResponse.json({
+        user: toPublicUser(result.user),
+        kicked: true,
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Kunde inte sparka ut" },
+        { status: 400 }
+      );
+    }
+  }
+  if (body.action === "kick_ban" && body.id) {
+    try {
+      const result = await kickAndBan(body.id, storeToken);
+      return NextResponse.json({
+        user: toPublicUser(result.user),
+        kicked: true,
+        banned: true,
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Kunde inte stänga av" },
+        { status: 400 }
+      );
+    }
+  }
+
   const password =
     body.autoPassword || !body.password ? generatePassword() : body.password;
-  const storeToken = storeTokenFrom(req);
 
   try {
     const result = await createUser(
       {
         name: body.name || "",
         password,
-        role: body.role === "admin" ? "admin" : "user",
+        role: "user",
       },
       storeToken
     );
@@ -82,9 +110,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  if (!(await requireAdmin(req))) {
-    return NextResponse.json({ error: "Endast admin" }, { status: 403 });
-  }
+  const auth = await requireOwner(req);
+  if (auth instanceof NextResponse) return auth;
 
   let body: {
     id?: string;
@@ -133,9 +160,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  if (!(await requireAdmin(req))) {
-    return NextResponse.json({ error: "Endast admin" }, { status: 403 });
-  }
+  const auth = await requireOwner(req);
+  if (auth instanceof NextResponse) return auth;
 
   let body: { id?: string };
   try {
@@ -148,6 +174,11 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
+    // Kick before remove so active sessions die
+    const target = (await listUsers()).find((u) => u.id === body.id);
+    if (target && !isOwnerUser(target)) {
+      await kickUserSession(body.id, storeTokenFrom(req)).catch(() => null);
+    }
     const result = await removeUser(body.id, storeTokenFrom(req));
     return NextResponse.json({
       ok: true,
