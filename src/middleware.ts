@@ -5,12 +5,15 @@ import {
 } from "./lib/auth/session";
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|audio/|.*\\.(?:mp3|m4a|wav|ogg|jpg|jpeg|png|webp|svg|ico)$).*)",
+  ],
 };
 
 function isPublicPath(pathname: string): boolean {
   if (pathname === "/login") return true;
   if (pathname.startsWith("/api/auth/login")) return true;
+  if (pathname.startsWith("/audio/")) return true;
   return false;
 }
 
