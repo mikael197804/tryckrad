@@ -19,6 +19,9 @@ import type { Distribution, Odds, Outcome } from "./types";
  * Multi-book (2026): många "överodds" är fällor – SVS/Unibet/Paf/ATG (Kambi)
  * ligger mjukare än sharp (Pinnacle). Då förlorar vanliga spelare pengar.
  *
+ * Nyckel: jaga inte överodds överallt. När alla leverantörer levererar
+ * samtidigt och oddsen rycker åt samma håll – det är signalen att lita på.
+ *
  * Fältmönster: 1X2 typ 4,30 / 5,10 / 2,36 – mittfält-underdog (~3,2–5,5)
  * mot kort favorit (≤2,6) vinner oftare än folk tror. Då ska 4,30-sidan
  * administreras som rätt kandidat (inte bara favoriten @ 2,36).
@@ -41,6 +44,10 @@ export const VALUE_ODDS_INSIGHTS = {
   midUnderdogMin: 3.2,
   midUnderdogMax: 5.5,
   shortFavMax: 2.6,
+  /** Score-bump när synkat oddsryck pekar på sidan */
+  ryckTowardBoost: 0.08,
+  ryckSyncExtraBoost: 0.04,
+  ryckAwayCut: 0.05,
 } as const;
 
 /** Oddsband där underdog ofta blir vinnare mot kort favorit (ej 8+ longshot). */
@@ -372,6 +379,24 @@ export function analyzeValueOdds(args: {
       scoreBoost += 0.015;
     }
 
+    // Oddsryck: synkad leverans från flera bolag > jaga överodds överallt
+    const ryck = multiBook?.ryck ?? null;
+    if (ryck?.toward === outcome) {
+      scoreBoost += VALUE_ODDS_INSIGHTS.ryckTowardBoost;
+      if (ryck.allProvidersSync) {
+        scoreBoost += VALUE_ODDS_INSIGHTS.ryckSyncExtraBoost;
+      }
+      bits.push(ryck.note || `oddsryck mot ${outcome}`);
+      if (!explain) {
+        explain = `Oddsryck mot ${outcome}: flera spelbolag kortade samtidigt${
+          ryck.allProvidersSync ? " (alla leverantörer synkade)" : ""
+        } – nyckel signal, inte bara lokal överodds.`;
+      }
+    } else if (ryck?.awayFrom === outcome) {
+      scoreBoost -= VALUE_ODDS_INSIGHTS.ryckAwayCut;
+      bits.push(`oddsryck bort från ${outcome} – tona ner`);
+    }
+
     return {
       outcome,
       odds: o,
@@ -462,6 +487,7 @@ export function analyzeValueOdds(args: {
   }
 
   const insights: string[] = [];
+  if (multiBook?.ryck?.note) insights.push(multiBook.ryck.note);
   if (admin.verdict) insights.push(admin.verdict);
   for (const line of explanations) {
     insights.push(line);
@@ -593,12 +619,35 @@ function administer1x2Core(args: {
 
   const avoid = [...trapOverOddsOutcomes];
   const sharpFav = sharpFavouriteFromOdds(multiBook?.sharp ?? null);
+  const ryck = multiBook?.ryck ?? null;
 
   const favOv =
     oddsFavourite != null
       ? args.outcomes.find((x) => x.outcome === oddsFavourite)
       : null;
   const favOdds = favOv?.odds ?? null;
+
+  // -1) Oddsryck när leverantörer levererar samtidigt – starkare än lokal överodds
+  if (ryck?.toward && !avoid.includes(ryck.toward)) {
+    const ov = args.outcomes.find((x) => x.outcome === ryck.toward);
+    const conf =
+      ryck.allProvidersSync || ryck.sharpAligned
+        ? "high"
+        : ryck.booksMoved >= 3
+          ? "medium"
+          : "medium";
+    return {
+      recommended: ryck.toward,
+      avoid: [
+        ...avoid,
+        ...(ryck.awayFrom && ryck.awayFrom !== ryck.toward
+          ? [ryck.awayFrom]
+          : []),
+      ],
+      confidence: conf,
+      verdict: `Bedömning: ${ryck.toward} är rätt (${outcomeSideLabel(ryck.toward)}${ov?.odds != null ? ` @ ${fmtDec(ov.odds)}` : ""}) – oddsryck när ${ryck.booksMoved}/${ryck.booksTotal} leverantörer kortade samtidigt${ryck.allProvidersSync ? " (synkad leverans)" : ""}${ryck.sharpAligned ? ", Pinnacle samma håll" : ""}. Nyckel: följ rycket, jaga inte överodds överallt.`,
+    };
+  }
 
   // 0) Mittfält-underdog FÖRST (t.ex. 4,30 / 5,10 / 2,36 → 4,30 vann)
   //    Kort favorit ≤2,6 + 1/2 i band 3,2–5,5 som inte är fälla.

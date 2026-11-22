@@ -815,9 +815,19 @@ function ValueOddsPill({
         rätt: {admin.recommended}
       </span>
     ) : null;
-  if (traps.length || overs.length || adminPill || safePill) {
+  const ryckPill = valueOdds.ryck?.toward ? (
+    <span
+      className="ctx-pill value-admin high"
+      title={valueOdds.ryck.note}
+    >
+      oddsryck {valueOdds.ryck.toward}
+      {valueOdds.ryck.allProvidersSync ? " · synk" : ""}
+    </span>
+  ) : null;
+  if (traps.length || overs.length || adminPill || safePill || ryckPill) {
     return (
       <>
+        {ryckPill}
         {safePill}
         {adminPill}
         {traps.map((o) => (
@@ -882,7 +892,11 @@ function OverOddsExplain({
   const verdict = valueOdds?.admin?.verdict || null;
   const conf = valueOdds?.admin?.confidence;
   const recommended = valueOdds?.admin?.recommended;
-  const lines = valueOdds?.explanations?.filter(Boolean) ?? [];
+  const ryckLine = valueOdds?.ryck?.note || null;
+  const lines = [
+    ...(ryckLine ? [ryckLine] : []),
+    ...(valueOdds?.explanations?.filter(Boolean) ?? []),
+  ];
   if (!safe && !verdict && !lines.length) return null;
   return (
     <div className="overodds-explain">

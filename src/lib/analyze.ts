@@ -730,7 +730,24 @@ export async function analyzeDraw(
       folkOddsDisagree: valueRaw.folkOddsDisagree,
       booksChecked: valueRaw.booksChecked,
       note: valueRaw.note,
+      ryck: (() => {
+        const r = multiBookByEvent.get(event.eventNumber)?.ryck ?? null;
+        if (!r) return null;
+        return {
+          toward: r.toward,
+          awayFrom: r.awayFrom,
+          booksMoved: r.booksMoved,
+          booksTotal: r.booksTotal,
+          avgDeltaPct: r.avgDeltaPct,
+          allProvidersSync: r.allProvidersSync,
+          sharpAligned: r.sharpAligned,
+          note: r.note,
+        };
+      })(),
     };
+    if (valueOdds.ryck?.note) {
+      valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.ryck.note}`);
+    }
     if (valueOdds.admin?.safeWinner) {
       valueAlerts.push(
         `Match ${event.eventNumber}: ${valueOdds.admin.safeWinner.note}`

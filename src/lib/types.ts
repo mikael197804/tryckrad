@@ -143,6 +143,17 @@ export type SafeWinnerTip = {
   confidence: "high" | "medium" | "low";
 };
 
+export type OddsRyckInfo = {
+  toward: Outcome | null;
+  awayFrom: Outcome | null;
+  booksMoved: number;
+  booksTotal: number;
+  avgDeltaPct: number;
+  allProvidersSync: boolean;
+  sharpAligned: boolean;
+  note: string;
+};
+
 export type ValueOddsInfo = {
   outcomes: OutcomeValueInfo[];
   bestValue: Outcome | null;
@@ -157,6 +168,8 @@ export type ValueOddsInfo = {
   folkOddsDisagree: boolean;
   booksChecked: string[];
   note: string;
+  /** Synkat oddsryck när leverantörer levererar samtidigt */
+  ryck: OddsRyckInfo | null;
 };
 
 export type MatchAnalysis = {

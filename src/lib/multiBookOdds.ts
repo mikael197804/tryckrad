@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { upstreamFetchInit } from "./fetch-mode";
 import { teamNameScore } from "./oddsetSettle";
 import type { Odds, Outcome } from "./types";
@@ -6,6 +8,9 @@ import type { Odds, Outcome } from "./types";
  * Multi-book odds scan for överodds-granskning.
  * Svenska Kambi-böcker (SVS/Unibet/Paf/ATG) har ofta samma priser.
  * Pinnacle används som sharp-referens (regulation 1X2).
+ *
+ * Oddsryck: när flera/alla leverantörer levererar samtidigt och oddsen
+ * rör sig åt samma håll – det är nyckeln (inte att jaga överodds överallt).
  */
 
 export type BookOddsQuote = {
@@ -14,6 +19,25 @@ export type BookOddsQuote = {
   one: number | null;
   x: number | null;
   two: number | null;
+};
+
+/** Synkad oddsleverans / ryck över böcker */
+export type OddsRyck = {
+  /** Utgången oddsen kortats mot (marknaden "köper") */
+  toward: Outcome | null;
+  /** Utgången oddsen längats mot (marknaden "säljer") */
+  awayFrom: Outcome | null;
+  /** Antal SE-böcker som rört sig samma håll */
+  booksMoved: number;
+  booksTotal: number;
+  /** Medel absolut %-rörelse på den starkaste sidan */
+  avgDeltaPct: number;
+  /** Nästan alla böcker + ev. sharp i samma riktning */
+  allProvidersSync: boolean;
+  /** Sharp (Pinnacle) rörde sig samma håll */
+  sharpAligned: boolean;
+  detectedAt: string;
+  note: string;
 };
 
 export type MultiBookMatchOdds = {
@@ -26,7 +50,28 @@ export type MultiBookMatchOdds = {
   softEdgePct: { one: number | null; x: number | null; two: number | null };
   booksChecked: string[];
   note: string;
+  /** Ryck när leverantörer levererar samtidigt */
+  ryck: OddsRyck | null;
 };
+
+type OddsSnapshot = {
+  key: string;
+  at: string;
+  books: BookOddsQuote[];
+  sharp: Odds | null;
+};
+
+const SNAP_FILE = path.join("/tmp", "mikaels-odds-ryck.json");
+const SNAP_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+/** Minsta oddsändring för att räkna som rörelse (andel) */
+const RYCK_MIN_DELTA = 0.035;
+/** Minsta antal böcker som måste röra sig samma håll */
+const RYCK_MIN_BOOKS = 2;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __tryckradOddsSnaps: Record<string, OddsSnapshot> | undefined;
+}
 
 type PinMatchup = {
   id: number;
@@ -235,6 +280,153 @@ export async function fetchSwedishBookQuotes(
   return quotes.filter((q): q is BookOddsQuote => q != null);
 }
 
+function snapshotKey(args: {
+  kambiEventId?: string | null;
+  home: string;
+  away: string;
+  matchStart: string;
+}): string {
+  if (args.kambiEventId) return `kambi:${args.kambiEventId}`;
+  return `m:${args.home}|${args.away}|${args.matchStart}`.toLowerCase();
+}
+
+async function loadSnapshots(): Promise<Record<string, OddsSnapshot>> {
+  if (globalThis.__tryckradOddsSnaps) return globalThis.__tryckradOddsSnaps;
+  try {
+    const raw = await fs.readFile(SNAP_FILE, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, OddsSnapshot>;
+    globalThis.__tryckradOddsSnaps = parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    globalThis.__tryckradOddsSnaps = {};
+  }
+  return globalThis.__tryckradOddsSnaps!;
+}
+
+async function saveSnapshots(store: Record<string, OddsSnapshot>): Promise<void> {
+  globalThis.__tryckradOddsSnaps = store;
+  try {
+    await fs.writeFile(SNAP_FILE, JSON.stringify(store), "utf8");
+  } catch {
+    /* ignore on read-only hosts */
+  }
+}
+
+function sideDeltaPct(
+  prev: number | null | undefined,
+  next: number | null | undefined
+): number | null {
+  if (prev == null || next == null || prev <= 1 || next <= 1) return null;
+  return (next - prev) / prev;
+}
+
+/**
+ * Detekterar synkat oddsryck: flera leverantörer rör oddsen samma håll
+ * när de levererar/uppdaterar samtidigt.
+ */
+export function detectOddsRyck(
+  prev: OddsSnapshot | null | undefined,
+  books: BookOddsQuote[],
+  sharp: Odds | null
+): OddsRyck | null {
+  if (!prev?.books?.length || !books.length) return null;
+  const age = Date.now() - Date.parse(prev.at);
+  if (!Number.isFinite(age) || age < 20_000 || age > SNAP_MAX_AGE_MS) {
+    return null;
+  }
+
+  const prevByBook = new Map(prev.books.map((b) => [b.book, b]));
+  type SideMove = { shorten: number; lengthen: number; abs: number[]; n: number };
+  const sides: Record<"one" | "x" | "two", SideMove> = {
+    one: { shorten: 0, lengthen: 0, abs: [], n: 0 },
+    x: { shorten: 0, lengthen: 0, abs: [], n: 0 },
+    two: { shorten: 0, lengthen: 0, abs: [], n: 0 },
+  };
+
+  let booksCompared = 0;
+  for (const cur of books) {
+    const old = prevByBook.get(cur.book);
+    if (!old) continue;
+    booksCompared += 1;
+    for (const side of ["one", "x", "two"] as const) {
+      const d = sideDeltaPct(old[side], cur[side]);
+      if (d == null || Math.abs(d) < RYCK_MIN_DELTA) continue;
+      sides[side].n += 1;
+      sides[side].abs.push(Math.abs(d) * 100);
+      if (d < 0) sides[side].shorten += 1;
+      else sides[side].lengthen += 1;
+    }
+  }
+  if (booksCompared < RYCK_MIN_BOOKS) return null;
+
+  let bestToward: Outcome | null = null;
+  let bestAway: Outcome | null = null;
+  let bestShorten = 0;
+  let bestLengthen = 0;
+  let bestAbs = 0;
+  let bestMoved = 0;
+
+  const sideToOutcome = { one: "1", x: "X", two: "2" } as const;
+  for (const side of ["one", "x", "two"] as const) {
+    const s = sides[side];
+    if (s.shorten >= RYCK_MIN_BOOKS && s.shorten > bestShorten) {
+      bestShorten = s.shorten;
+      bestToward = sideToOutcome[side];
+      bestAbs = s.abs.reduce((a, b) => a + b, 0) / Math.max(s.abs.length, 1);
+      bestMoved = s.shorten;
+    }
+    if (s.lengthen >= RYCK_MIN_BOOKS && s.lengthen > bestLengthen) {
+      bestLengthen = s.lengthen;
+      bestAway = sideToOutcome[side];
+      if (!bestToward) {
+        bestAbs = s.abs.reduce((a, b) => a + b, 0) / Math.max(s.abs.length, 1);
+        bestMoved = s.lengthen;
+      }
+    }
+  }
+
+  if (!bestToward && !bestAway) return null;
+
+  // Sharp-alignment: Pinnacle kortar samma sida
+  let sharpAligned = false;
+  if (prev.sharp && sharp && bestToward) {
+    const key =
+      bestToward === "1" ? "one" : bestToward === "X" ? "x" : "two";
+    const d = sideDeltaPct(prev.sharp[key], sharp[key]);
+    if (d != null && d <= -RYCK_MIN_DELTA) sharpAligned = true;
+  }
+
+  const syncThreshold = Math.max(RYCK_MIN_BOOKS, Math.ceil(booksCompared * 0.75));
+  const allProvidersSync =
+    bestMoved >= syncThreshold && (sharpAligned || !prev.sharp || !sharp);
+
+  const avgDeltaPct = Math.round(bestAbs * 10) / 10;
+  const bits: string[] = [];
+  if (bestToward) {
+    bits.push(
+      `Oddsryck mot ${bestToward}: ${bestMoved}/${booksCompared} böcker kortade samtidigt (ca ${avgDeltaPct.toFixed(0)} %)`
+    );
+  }
+  if (bestAway && bestAway !== bestToward) {
+    bits.push(`samtidigt längades ${bestAway}`);
+  }
+  if (allProvidersSync) {
+    bits.push("alla leverantörer synkade – leveransryck");
+  }
+  if (sharpAligned) bits.push("Pinnacle samma håll");
+
+  return {
+    toward: bestToward,
+    awayFrom: bestAway,
+    booksMoved: bestMoved,
+    booksTotal: booksCompared,
+    avgDeltaPct,
+    allProvidersSync,
+    sharpAligned,
+    detectedAt: new Date().toISOString(),
+    note: bits.join(". "),
+  };
+}
+
 export async function resolveMultiBookOdds(args: {
   home: string;
   away: string;
@@ -287,6 +479,26 @@ export async function resolveMultiBookOdds(args: {
     ...(sharpLabel ? [sharpLabel] : []),
   ];
 
+  const key = snapshotKey({ kambiEventId, home, away, matchStart });
+  const store = await loadSnapshots();
+  const prev = store[key] ?? null;
+  const ryck = detectOddsRyck(prev, allBooks, sharp);
+
+  // Spara aktuell leverans för nästa jämförelse
+  store[key] = {
+    key,
+    at: new Date().toISOString(),
+    books: allBooks,
+    sharp,
+  };
+  // Rensa gamla
+  const now = Date.now();
+  for (const [k, snap] of Object.entries(store)) {
+    const t = Date.parse(snap.at);
+    if (!Number.isFinite(t) || now - t > SNAP_MAX_AGE_MS) delete store[k];
+  }
+  await saveSnapshots(store);
+
   const bits: string[] = [];
   bits.push(`Böcker: ${allBooks.map((b) => b.label).join(", ") || "SVS"}`);
   if (sharpLabel && sharp) {
@@ -300,6 +512,8 @@ export async function resolveMultiBookOdds(args: {
   // Notera om SE-böcker skiljer sig (ovanligt på Kambi)
   const spread = bookSpread(allBooks);
   if (spread) bits.push(spread);
+  if (ryck?.note) bits.push(ryck.note);
+  else if (!prev) bits.push("Första oddsleverans sparad – ryck syns vid nästa uppdatering");
 
   return {
     home,
@@ -310,6 +524,7 @@ export async function resolveMultiBookOdds(args: {
     softEdgePct,
     booksChecked,
     note: bits.join(". "),
+    ryck,
   };
 }
 
