@@ -54,6 +54,17 @@ export type OutcomeValue = {
   explain: string | null;
 };
 
+/** Administrativ 1X2-bedömning utifrån överodds + sharp/folk. */
+export type OverOddsAdmin = {
+  /** Vilken utgång som bedöms rätt att tippa */
+  recommended: Outcome | null;
+  /** Utgångar som undviks (fällor m.m.) */
+  avoid: Outcome[];
+  confidence: "high" | "medium" | "low";
+  /** Kort verdict t.ex. "1 bedöms rätt …" */
+  verdict: string;
+};
+
 export type ValueOddsAnalysis = {
   outcomes: OutcomeValue[];
   bestValue: Outcome | null;
@@ -61,6 +72,7 @@ export type ValueOddsAnalysis = {
   trapOverOddsOutcomes: Outcome[];
   /** En rad per överodds/fälla: vilket 1X2 + odds + varför */
   explanations: string[];
+  admin: OverOddsAdmin;
   folkOddsDisagree: boolean;
   folkFavourite: Outcome | null;
   oddsFavourite: Outcome | null;
@@ -348,8 +360,37 @@ export function analyzeValueOdds(args: {
     .filter((o) => o.explain)
     .map((o) => o.explain as string);
 
+  const admin = administer1x2({
+    outcomes,
+    overOddsOutcomes,
+    trapOverOddsOutcomes,
+    oddsFavourite,
+    folkFavourite,
+    folkOddsDisagree,
+    antiFolkLean,
+    multiBook: multiBook ?? null,
+  });
+
+  // Extra scoreBoost utifrån administrativ bedömning
+  if (admin.recommended) {
+    for (const ov of outcomes) {
+      if (ov.outcome === admin.recommended) {
+        const bump =
+          admin.confidence === "high"
+            ? 0.07
+            : admin.confidence === "medium"
+              ? 0.045
+              : 0.02;
+        ov.scoreBoost += bump;
+      }
+      if (admin.avoid.includes(ov.outcome)) {
+        ov.scoreBoost -= 0.06;
+      }
+    }
+  }
+
   const insights: string[] = [];
-  // Led med tydlig 1X2-förklaring (vilket odds som är över)
+  if (admin.verdict) insights.push(admin.verdict);
   for (const line of explanations) {
     insights.push(line);
   }
@@ -387,6 +428,7 @@ export function analyzeValueOdds(args: {
     overOddsOutcomes,
     trapOverOddsOutcomes,
     explanations,
+    admin,
     folkOddsDisagree,
     folkFavourite,
     oddsFavourite,
@@ -394,6 +436,148 @@ export function analyzeValueOdds(args: {
     booksChecked,
     note: insights.join(" "),
     insights,
+  };
+}
+
+function sharpFavouriteFromOdds(odds: Odds | null | undefined): Outcome | null {
+  if (!odds) return null;
+  return favouriteFromOdds(odds);
+}
+
+/**
+ * Avgör om 1, X eller 2 bedöms rätt utifrån överodds + sharp/folk.
+ */
+export function administer1x2(args: {
+  outcomes: OutcomeValue[];
+  overOddsOutcomes: Outcome[];
+  trapOverOddsOutcomes: Outcome[];
+  oddsFavourite: Outcome | null;
+  folkFavourite: Outcome | null;
+  folkOddsDisagree: boolean;
+  antiFolkLean: Outcome | null;
+  multiBook: MultiBookMatchOdds | null;
+}): OverOddsAdmin {
+  const {
+    overOddsOutcomes,
+    trapOverOddsOutcomes,
+    oddsFavourite,
+    folkFavourite,
+    folkOddsDisagree,
+    antiFolkLean,
+    multiBook,
+  } = args;
+
+  const avoid = [...trapOverOddsOutcomes];
+  const sharpFav = sharpFavouriteFromOdds(multiBook?.sharp ?? null);
+
+  // 1) Trusted överodds som sammanfaller med sharp-favorit → starkt "rätt"
+  const trustedAligned = overOddsOutcomes.find(
+    (o) => sharpFav != null && o === sharpFav && !avoid.includes(o)
+  );
+  if (trustedAligned) {
+    const ov = args.outcomes.find((x) => x.outcome === trustedAligned);
+    return {
+      recommended: trustedAligned,
+      avoid,
+      confidence: "high",
+      verdict: `Bedömning: ${trustedAligned} är rätt (${outcomeSideLabel(trustedAligned)}${ov?.odds != null ? ` @ ${fmtDec(ov.odds)}` : ""}) – överodds stöds av sharp, inte fälla.`,
+    };
+  }
+
+  // 2) Trusted överodds på oddsfavoriten (chalk) utan sharp-motstrid
+  const chalkOver = overOddsOutcomes.find(
+    (o) => oddsFavourite != null && o === oddsFavourite && !avoid.includes(o)
+  );
+  if (chalkOver) {
+    const ov = args.outcomes.find((x) => x.outcome === chalkOver);
+    const sharpOk =
+      sharpFav == null ||
+      sharpFav === chalkOver ||
+      (ov?.softEdgePct != null &&
+        ov.softEdgePct <= VALUE_ODDS_INSIGHTS.trustedSoftEdgePct);
+    if (sharpOk) {
+      return {
+        recommended: chalkOver,
+        avoid,
+        confidence: sharpFav === chalkOver ? "high" : "medium",
+        verdict: `Bedömning: ${chalkOver} är rätt (${outcomeSideLabel(chalkOver)}${ov?.odds != null ? ` @ ${fmtDec(ov.odds)}` : ""}) – överodds på favoriten mot folk, sharp motsäger inte.`,
+      };
+    }
+  }
+
+  // 3) Fälla finns → tippa sharp/oddsfavorit, undvik fällan
+  if (avoid.length && (sharpFav || oddsFavourite)) {
+    const rec =
+      sharpFav && !avoid.includes(sharpFav)
+        ? sharpFav
+        : oddsFavourite && !avoid.includes(oddsFavourite)
+          ? oddsFavourite
+          : (["1", "X", "2"] as Outcome[]).find((o) => !avoid.includes(o)) ??
+            null;
+    if (rec) {
+      return {
+        recommended: rec,
+        avoid,
+        confidence: sharpFav === rec ? "high" : "medium",
+        verdict: `Bedömning: ${rec} är rätt (${outcomeSideLabel(rec)}) – undvik överodds-fälla ${avoid.join("/")}, lutar mot ${sharpFav ? "sharp" : "oddsfavorit"}.`,
+      };
+    }
+  }
+
+  // 4) Folk ≠ odds: historiskt oftare oddsfavorit rätt (om ej fälla)
+  if (
+    folkOddsDisagree &&
+    antiFolkLean &&
+    !avoid.includes(antiFolkLean) &&
+    (sharpFav == null || sharpFav === antiFolkLean)
+  ) {
+    return {
+      recommended: antiFolkLean,
+      avoid,
+      confidence: sharpFav === antiFolkLean ? "high" : "medium",
+      verdict: `Bedömning: ${antiFolkLean} är rätt (${outcomeSideLabel(antiFolkLean)}) – oddsfavorit mot folk${sharpFav === antiFolkLean ? ", bekräftad av sharp" : ""}.`,
+    };
+  }
+
+  // 5) Sharp ensam peikar tydligt
+  if (sharpFav && !avoid.includes(sharpFav)) {
+    const soft = softEdgeForOutcome(multiBook, sharpFav);
+    // Om SVS är kortare/lika på sharp-favoriten → lita på den
+    if (soft == null || soft <= 5) {
+      return {
+        recommended: sharpFav,
+        avoid,
+        confidence: "medium",
+        verdict: `Bedömning: ${sharpFav} är rätt (${outcomeSideLabel(sharpFav)}) – sharp-favorit efter bokgranskning.`,
+      };
+    }
+  }
+
+  // 6) Trusted överodds (underdog) utan sharp-stöd → försiktig, ej "rätt" ensam
+  if (overOddsOutcomes.length === 1 && !avoid.includes(overOddsOutcomes[0])) {
+    const o = overOddsOutcomes[0];
+    return {
+      recommended: oddsFavourite && !avoid.includes(oddsFavourite) ? oddsFavourite : o,
+      avoid,
+      confidence: "low",
+      verdict: `Bedömning: lutar ${oddsFavourite ?? o} (${outcomeSideLabel(oddsFavourite ?? o)}) – överodds på ${o} finns men styrs inte ensamt till underdog.`,
+    };
+  }
+
+  if (oddsFavourite && !avoid.includes(oddsFavourite)) {
+    return {
+      recommended: oddsFavourite,
+      avoid,
+      confidence: "low",
+      verdict: `Bedömning: ${oddsFavourite} är rätt (${outcomeSideLabel(oddsFavourite)}) – oddsfavorit, ingen tydlig överodds-signal emot.`,
+    };
+  }
+
+  return {
+    recommended: null,
+    avoid,
+    confidence: "low",
+    verdict: "Bedömning: oklart 1X2 – ingen tydlig överodds-/sharp-signal.",
   };
 }
 

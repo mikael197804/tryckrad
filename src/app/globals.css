@@ -630,8 +630,46 @@ select {
   color: #ddd0ff;
 }
 
+.overodds-admin {
+  font-weight: 650;
+  color: #e8fff4;
+  margin-bottom: 0.35rem;
+}
+
+.overodds-admin.high {
+  color: #9eecc0;
+}
+
+.overodds-admin.medium {
+  color: #ffd28a;
+}
+
+.overodds-admin-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  padding: 0.05rem 0.35rem;
+  margin-right: 0.2rem;
+  border-radius: 4px;
+  background: rgba(80, 200, 140, 0.25);
+  border: 1px solid rgba(120, 220, 160, 0.55);
+  color: #9eecc0;
+  font-weight: 800;
+}
+
 .overodds-explain-line + .overodds-explain-line {
   margin-top: 0.35rem;
+}
+
+.ctx-pill.value-admin {
+  border-color: rgba(120, 220, 160, 0.55);
+  color: #9eecc0;
+}
+
+.ctx-pill.value-admin.high {
+  border-color: rgba(100, 230, 150, 0.75);
+  background: rgba(40, 90, 60, 0.35);
 }
 
 .odds-1x2 .odds-side {

@@ -104,6 +104,13 @@ export type OutcomeValueInfo = {
   explain: string | null;
 };
 
+export type OverOddsAdminInfo = {
+  recommended: Outcome | null;
+  avoid: Outcome[];
+  confidence: "high" | "medium" | "low";
+  verdict: string;
+};
+
 export type ValueOddsInfo = {
   outcomes: OutcomeValueInfo[];
   bestValue: Outcome | null;
@@ -113,6 +120,8 @@ export type ValueOddsInfo = {
   trapOverOddsOutcomes: Outcome[];
   /** Tydliga rader: vilket 1X2 + oddssiffra + förklaring */
   explanations: string[];
+  /** Administrativ bedömning: vilken 1X2 som är rätt */
+  admin: OverOddsAdminInfo;
   folkOddsDisagree: boolean;
   booksChecked: string[];
   note: string;

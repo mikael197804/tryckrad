@@ -360,35 +360,92 @@ function buildPick(
     }
   }
 
-  if (valueOdds?.explanations?.length) {
-    // Kort 1X2-pekare i tippskälet (full text visas under matchen)
-    for (const o of valueOdds.trapOverOddsOutcomes || []) {
-      const ov = valueOdds.outcomes.find((x) => x.outcome === o);
+  const admin = valueOdds?.admin;
+  if (admin?.verdict) {
+    reasons.push(admin.verdict);
+  }
+
+  // Administrera tipset utifrån överodds-granskning
+  if (admin?.recommended) {
+    const rec = admin.recommended;
+    const recScore =
+      rec === "1" ? scores.score1 : rec === "X" ? scores.scoreX : scores.score2;
+    if (admin.confidence === "high" && recScore >= 0.42) {
+      // Stark bedömning: enkel på rekommenderad sida om inte extremt jämnt
+      const others = ranked.filter((r) => r.o !== rec);
+      const secondAlt = others[0];
+      if (recScore - (secondAlt?.s ?? 0) >= 0.12 || recScore >= 0.55) {
+        pick = [rec];
+        reasons.push(`tippar enkel ${rec} efter överodds-granskning`);
+      } else {
+        pick = [rec, secondAlt.o].filter(Boolean) as Outcome[];
+        reasons.push(`tippar ${rec} (+halv) efter överodds-granskning`);
+      }
+    } else if (!pick.includes(rec)) {
+      // Medium/low: se till att rekommenderad sida är med
+      if (pick.length < 2) pick = [...pick, rec];
+      else if (admin.confidence !== "low") {
+        // Byt ut den svagaste som inte är top
+        const weak = [...pick]
+          .filter((o) => o !== ranked[0].o)
+          .sort((a, b) => {
+            const sa =
+              a === "1" ? scores.score1 : a === "X" ? scores.scoreX : scores.score2;
+            const sb =
+              b === "1" ? scores.score1 : b === "X" ? scores.scoreX : scores.score2;
+            return sa - sb;
+          })[0];
+        if (weak && weak !== rec) {
+          pick = pick.map((o) => (o === weak ? rec : o));
+        }
+      }
+    }
+  }
+
+  // Ta bort fällor från tipset om det går (behåll minst en)
+  if (admin?.avoid?.length) {
+    for (const o of admin.avoid) {
+      const ov = valueOdds?.outcomes.find((x) => x.outcome === o);
       const oddsTxt =
         ov?.odds != null ? ` @ ${ov.odds.toFixed(2).replace(".", ",")}` : "";
       reasons.push(`överodds-fälla ${o}${oddsTxt} undviks`);
     }
+    const withoutTrap = pick.filter((o) => !admin.avoid.includes(o));
+    if (withoutTrap.length >= 1) {
+      pick = withoutTrap;
+      // Om bara en kvar och läget var osäkert, lägg till näst bästa icke-fälla
+      if (pick.length === 1 && (gap < 0.18 || top.s < 0.55)) {
+        const alt = ranked.find(
+          (r) => !pick.includes(r.o) && !admin.avoid.includes(r.o)
+        );
+        if (alt && alt.s >= 0.18) pick = [...pick, alt.o];
+      }
+    }
+  }
+
+  if (valueOdds?.overOddsOutcomes?.length) {
     for (const o of valueOdds.overOddsOutcomes) {
       const ov = valueOdds.outcomes.find((x) => x.outcome === o);
       const oddsTxt =
         ov?.odds != null ? ` @ ${ov.odds.toFixed(2).replace(".", ",")}` : "";
-      reasons.push(`överodds ${o}${oddsTxt}`);
-      if (!pick.includes(o) && pick.length < 2) {
+      if (!reasons.some((r) => r.includes(`överodds ${o}`))) {
+        reasons.push(`överodds ${o}${oddsTxt}`);
+      }
+      if (
+        !pick.includes(o) &&
+        pick.length < 2 &&
+        !(admin?.avoid || []).includes(o)
+      ) {
         const s =
           o === "1" ? scores.score1 : o === "X" ? scores.scoreX : scores.score2;
         if (s >= 0.18) pick = [...pick, o];
       }
     }
-  } else if (valueOdds?.overOddsOutcomes.length) {
-    reasons.push(`överodds ${valueOdds.overOddsOutcomes.join("/")}`);
-    for (const o of valueOdds.overOddsOutcomes) {
-      if (!pick.includes(o) && pick.length < 2) {
-        const s =
-          o === "1" ? scores.score1 : o === "X" ? scores.scoreX : scores.score2;
-        if (s >= 0.18) pick = [...pick, o];
-      }
-    }
-  } else if (valueOdds?.bestValue && !pick.includes(valueOdds.bestValue)) {
+  } else if (
+    valueOdds?.bestValue &&
+    !pick.includes(valueOdds.bestValue) &&
+    !(admin?.avoid || []).includes(valueOdds.bestValue)
+  ) {
     const o = valueOdds.bestValue;
     const s =
       o === "1" ? scores.score1 : o === "X" ? scores.scoreX : scores.score2;
@@ -398,13 +455,14 @@ function buildPick(
     }
   }
 
-  if (valueOdds?.folkOddsDisagree) {
+  if (valueOdds?.folkOddsDisagree && !admin?.verdict.includes("Folk tippar")) {
     reasons.push("folk och odds favorit skiljer");
   }
 
   // Deduplicate pick order 1-X-2
   const order: Outcome[] = ["1", "X", "2"];
   pick = order.filter((o) => pick.includes(o));
+  if (!pick.length) pick = [top.o];
 
   const valueOutcomes = [
     ...new Set([
@@ -640,15 +698,19 @@ export async function analyzeDraw(
       overOddsOutcomes: valueRaw.overOddsOutcomes,
       trapOverOddsOutcomes: valueRaw.trapOverOddsOutcomes,
       explanations: valueRaw.explanations,
+      admin: valueRaw.admin,
       folkOddsDisagree: valueRaw.folkOddsDisagree,
       booksChecked: valueRaw.booksChecked,
       note: valueRaw.note,
     };
+    if (valueOdds.admin?.verdict) {
+      valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.admin.verdict}`);
+    }
     if (valueOdds.explanations.length) {
       for (const line of valueOdds.explanations) {
         valueAlerts.push(`Match ${event.eventNumber}: ${line}`);
       }
-    } else if (valueOdds.folkOddsDisagree) {
+    } else if (valueOdds.folkOddsDisagree && !valueOdds.admin?.verdict) {
       valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.note}`);
     }
     const { pick, reason, valueOutcomes } = buildPick(

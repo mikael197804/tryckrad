@@ -598,9 +598,22 @@ function ValueOddsPill({
   if (!valueOdds) return null;
   const traps = valueOdds.trapOverOddsOutcomes || [];
   const overs = valueOdds.overOddsOutcomes || [];
-  if (traps.length || overs.length) {
+  const admin = valueOdds.admin;
+  const adminPill =
+    admin?.recommended && admin.confidence !== "low" ? (
+      <span
+        className={`ctx-pill value-admin${
+          admin.confidence === "high" ? " high" : ""
+        }`}
+        title={admin.verdict}
+      >
+        rätt: {admin.recommended}
+      </span>
+    ) : null;
+  if (traps.length || overs.length || adminPill) {
     return (
       <>
+        {adminPill}
         {traps.map((o) => (
           <span
             key={`trap-${o}`}
@@ -659,10 +672,25 @@ function OverOddsExplain({
 }: {
   valueOdds?: DrawBundle["matches"][number]["valueOdds"] | null;
 }) {
+  const verdict = valueOdds?.admin?.verdict || null;
+  const conf = valueOdds?.admin?.confidence;
+  const recommended = valueOdds?.admin?.recommended;
   const lines = valueOdds?.explanations?.filter(Boolean) ?? [];
-  if (!lines.length) return null;
+  if (!verdict && !lines.length) return null;
   return (
     <div className="overodds-explain">
+      {verdict && (
+        <div
+          className={`overodds-admin${
+            conf === "high" ? " high" : conf === "medium" ? " medium" : ""
+          }`}
+        >
+          {recommended ? (
+            <span className="overodds-admin-pick">{recommended}</span>
+          ) : null}{" "}
+          {verdict}
+        </div>
+      )}
       {lines.map((line) => (
         <div key={line} className="overodds-explain-line">
           {line}
@@ -1704,9 +1732,9 @@ export default function App() {
                     </h2>
                     <p className="panel-lead">
                       Granskar SVS, Unibet, Paf, ATG och sharp (Pinnacle). Varje
-                      överodds pekas ut som 1, X eller 2 med oddssiffra och
-                      förklaring (vs folk + sharp). Fällor undviks.
-                      Extremodds 8+ undviks.
+                      överodds pekas ut som 1, X eller 2 med oddssiffra.
+                      Utifrån det administreras tipset: vilken sida som bedöms
+                      rätt, och fällor undviks. Extremodds 8+ undviks.
                     </p>
                     <ul className="alert-list value-alerts">
                       {draw.valueAlerts.map((a) => (
