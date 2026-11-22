@@ -18,6 +18,10 @@ import type { Distribution, Odds, Outcome } from "./types";
  *
  * Multi-book (2026): många "överodds" är fällor – SVS/Unibet/Paf/ATG (Kambi)
  * ligger mjukare än sharp (Pinnacle). Då förlorar vanliga spelare pengar.
+ *
+ * Fältmönster: 1X2 typ 4,30 / 5,10 / 2,36 – mittfält-underdog (~3,2–5,5)
+ * mot kort favorit (≤2,6) vinner oftare än folk tror. Då ska 4,30-sidan
+ * administreras som rätt kandidat (inte bara favoriten @ 2,36).
  */
 export const VALUE_ODDS_INSIGHTS = {
   sampleNote:
@@ -33,7 +37,20 @@ export const VALUE_ODDS_INSIGHTS = {
   trapSoftEdgePct: 8,
   /** SVS inom 3% av sharp → överodds mer trovärdig */
   trustedSoftEdgePct: 3,
+  /** Mittfält-underdog som ofta slår kort favorit (t.ex. 4,30 vs 2,36) */
+  midUnderdogMin: 3.2,
+  midUnderdogMax: 5.5,
+  shortFavMax: 2.6,
 } as const;
+
+/** Oddsband där underdog ofta blir vinnare mot kort favorit (ej 8+ longshot). */
+export function isMidUnderdogOdds(o: number | null | undefined): boolean {
+  if (o == null || !Number.isFinite(o)) return false;
+  return (
+    o >= VALUE_ODDS_INSIGHTS.midUnderdogMin &&
+    o <= VALUE_ODDS_INSIGHTS.midUnderdogMax
+  );
+}
 
 export type OutcomeValue = {
   outcome: Outcome;
@@ -268,6 +285,13 @@ export function analyzeValueOdds(args: {
         ? Math.min(0.08, 0.035 + Math.max(0, (edgePct ?? 0) - 12) * 0.002)
         : Math.min(0.04, 0.015 + Math.max(0, (edgePct ?? 0) - 12) * 0.001);
       scoreBoost += strength;
+      // Extra vikt: mittfält-underdog (t.ex. 4,30) mot kort favorit – ofta vinnare
+      if (o != null && isMidUnderdogOdds(o) && outcome !== "X") {
+        scoreBoost += trusted ? 0.04 : 0.02;
+        bits.push(
+          `mittfält-underdog ${outcome} @ ${fmtDec(o)} (band 3,2–5,5) – mönster där 4,xx ofta slår favorit ~2,x`
+        );
+      }
       if (trusted && softEdge != null) {
         bits.push(
           `överodds på ${outcome} @ ${fmtDec(o)} (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk, nära sharp)`
@@ -276,7 +300,7 @@ export function analyzeValueOdds(args: {
         bits.push(
           `överodds på ${outcome} @ ${fmtDec(o)} (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk) – sharp saknas, försiktig vikt`
         );
-        scoreBoost = Math.min(scoreBoost, 0.025);
+        scoreBoost = Math.min(scoreBoost, 0.045);
       } else {
         bits.push(
           `överodds på ${outcome} @ ${fmtDec(o)} (+${edgePct?.toFixed?.(0) ?? "?"} % vs folk, +${softEdge.toFixed(0)} % vs sharp) – begränsad vikt`
@@ -286,6 +310,33 @@ export function analyzeValueOdds(args: {
     if (isValue && !isOverOdds) {
       scoreBoost += 0.03;
       bits.push(`värde på ${outcome} @ ${fmtDec(o)} – folket högre än oddsen`);
+    }
+    // Mittfält-underdog även utan överodds-flagga (4,30 vs 2,36-mönster)
+    if (
+      !isOverOdds &&
+      !isTrap &&
+      !isTrashLongshot &&
+      outcome !== "X" &&
+      o != null &&
+      isMidUnderdogOdds(o) &&
+      oddsFavourite != null &&
+      outcome !== oddsFavourite
+    ) {
+      const favO =
+        oddsFavourite === "1"
+          ? odds.one
+          : oddsFavourite === "X"
+            ? odds.x
+            : odds.two;
+      if (favO != null && favO <= VALUE_ODDS_INSIGHTS.shortFavMax) {
+        scoreBoost += 0.035;
+        bits.push(
+          `mittfält-underdog ${outcome} @ ${fmtDec(o)} mot favorit @ ${fmtDec(favO)} – 4,xx-mönster`
+        );
+        if (!explain) {
+          explain = `Mittfält-underdog på ${outcome} = ${outcomeSideLabel(outcome)} @ ${fmtDec(o)} mot favorit @ ${fmtDec(favO)}. Samma typ som 4,30 / 5,10 / 2,36 där 4,30 blivit vinnare – väg in ${outcome} i tipset.`;
+        }
+      }
     }
     if (isTrashLongshot) {
       scoreBoost -= 0.06;
@@ -470,6 +521,56 @@ export function administer1x2(args: {
   const avoid = [...trapOverOddsOutcomes];
   const sharpFav = sharpFavouriteFromOdds(multiBook?.sharp ?? null);
 
+  const favOv =
+    oddsFavourite != null
+      ? args.outcomes.find((x) => x.outcome === oddsFavourite)
+      : null;
+  const favOdds = favOv?.odds ?? null;
+
+  // 0) Mittfält-underdog FÖRST (t.ex. 4,30 / 5,10 / 2,36 → 4,30 vann)
+  //    Kort favorit ≤2,6 + 1/2 i band 3,2–5,5 som inte är fälla.
+  //    Gäller även utan klassisk överodds-flagga – mönstret i sig är signalen.
+  if (favOdds != null && favOdds <= VALUE_ODDS_INSIGHTS.shortFavMax) {
+    const midDogs = args.outcomes.filter(
+      (ov) =>
+        !avoid.includes(ov.outcome) &&
+        ov.outcome !== "X" &&
+        ov.outcome !== oddsFavourite &&
+        isMidUnderdogOdds(ov.odds) &&
+        !ov.isTrashLongshot &&
+        !ov.isTrap &&
+        (ov.isOverOdds ||
+          ov.isValue ||
+          (ov.folkPct >= 15 &&
+            (ov.softEdgePct == null ||
+              ov.softEdgePct <= VALUE_ODDS_INSIGHTS.trapSoftEdgePct)))
+    );
+    if (midDogs.length) {
+      const dog = [...midDogs].sort((a, b) => {
+        const aOver = a.isOverOdds ? 1 : 0;
+        const bOver = b.isOverOdds ? 1 : 0;
+        if (bOver !== aOver) return bOver - aOver;
+        return (b.scoreBoost || 0) - (a.scoreBoost || 0);
+      })[0];
+      const nearSharp =
+        dog.softEdgePct == null ||
+        dog.softEdgePct <= VALUE_ODDS_INSIGHTS.trapSoftEdgePct;
+      if (nearSharp) {
+        return {
+          recommended: dog.outcome,
+          avoid,
+          confidence:
+            dog.isOverOdds &&
+            dog.softEdgePct != null &&
+            dog.softEdgePct <= VALUE_ODDS_INSIGHTS.trustedSoftEdgePct
+              ? "high"
+              : "medium",
+          verdict: `Bedömning: ${dog.outcome} är rätt (${outcomeSideLabel(dog.outcome)} @ ${fmtDec(dog.odds)}) – mittfält-underdog mot favorit @ ${fmtDec(favOdds)}; mönster som 4,30 vs 2,36 där 4,xx ofta vinner. Gardera gärna favoriten.`,
+        };
+      }
+    }
+  }
+
   // 1) Trusted överodds som sammanfaller med sharp-favorit → starkt "rätt"
   const trustedAligned = overOddsOutcomes.find(
     (o) => sharpFav != null && o === sharpFav && !avoid.includes(o)
@@ -505,7 +606,7 @@ export function administer1x2(args: {
     }
   }
 
-  // 3) Fälla finns → tippa sharp/oddsfavorit, undvik fällan
+  // 4) Fälla finns → tippa sharp/oddsfavorit, undvik fällan
   if (avoid.length && (sharpFav || oddsFavourite)) {
     const rec =
       sharpFav && !avoid.includes(sharpFav)
@@ -524,7 +625,8 @@ export function administer1x2(args: {
     }
   }
 
-  // 4) Folk ≠ odds: historiskt oftare oddsfavorit rätt (om ej fälla)
+  // 5) Folk ≠ odds: historiskt oftare oddsfavorit rätt (om ej fälla)
+  //    Men om mittfält-underdog finns utanför overOdds-listan, nämns den inte här.
   if (
     folkOddsDisagree &&
     antiFolkLean &&
@@ -539,10 +641,26 @@ export function administer1x2(args: {
     };
   }
 
-  // 5) Sharp ensam peikar tydligt
+  // 6) Sharp ensam peikar tydligt – men hoppa inte över mittfält-underdog utan överodds-flagga
   if (sharpFav && !avoid.includes(sharpFav)) {
     const soft = softEdgeForOutcome(multiBook, sharpFav);
-    // Om SVS är kortare/lika på sharp-favoriten → lita på den
+    const upsetCandidate = args.outcomes.find(
+      (ov) =>
+        ov.outcome !== sharpFav &&
+        ov.outcome !== "X" &&
+        isMidUnderdogOdds(ov.odds) &&
+        !ov.isTrap &&
+        !ov.isTrashLongshot &&
+        (ov.isOverOdds || ov.isValue)
+    );
+    if (upsetCandidate && (soft == null || soft <= 5)) {
+      return {
+        recommended: upsetCandidate.outcome,
+        avoid,
+        confidence: "medium",
+        verdict: `Bedömning: ${upsetCandidate.outcome} är rätt kandidat (${outcomeSideLabel(upsetCandidate.outcome)} @ ${fmtDec(upsetCandidate.odds)}) mot sharp-favorit ${sharpFav} – mittfält-underdog (4,xx-mönster). Tippa/gardera ${upsetCandidate.outcome}.`,
+      };
+    }
     if (soft == null || soft <= 5) {
       return {
         recommended: sharpFav,
@@ -553,15 +671,26 @@ export function administer1x2(args: {
     }
   }
 
-  // 6) Trusted överodds (underdog) utan sharp-stöd → försiktig, ej "rätt" ensam
-  if (overOddsOutcomes.length === 1 && !avoid.includes(overOddsOutcomes[0])) {
-    const o = overOddsOutcomes[0];
-    return {
-      recommended: oddsFavourite && !avoid.includes(oddsFavourite) ? oddsFavourite : o,
-      avoid,
-      confidence: "low",
-      verdict: `Bedömning: lutar ${oddsFavourite ?? o} (${outcomeSideLabel(oddsFavourite ?? o)}) – överodds på ${o} finns men styrs inte ensamt till underdog.`,
-    };
+  // 7) Trusted överodds (underdog) – ta underdog på allvar i mittfältet
+  if (overOddsOutcomes.length >= 1) {
+    const o = overOddsOutcomes.find((x) => !avoid.includes(x));
+    if (o) {
+      const ov = args.outcomes.find((x) => x.outcome === o);
+      if (ov && isMidUnderdogOdds(ov.odds) && ov.outcome !== "X") {
+        return {
+          recommended: o,
+          avoid,
+          confidence: "medium",
+          verdict: `Bedömning: ${o} är rätt (${outcomeSideLabel(o)} @ ${fmtDec(ov.odds)}) – överodds i mittfältet; favoriten @ ${fmtDec(favOdds)} ska inte ensam styra tipset.`,
+        };
+      }
+      return {
+        recommended: o,
+        avoid,
+        confidence: "low",
+        verdict: `Bedömning: lutar ${o} (${outcomeSideLabel(o)}${ov?.odds != null ? ` @ ${fmtDec(ov.odds)}` : ""}) via överodds – väg in i tipset.`,
+      };
+    }
   }
 
   if (oddsFavourite && !avoid.includes(oddsFavourite)) {

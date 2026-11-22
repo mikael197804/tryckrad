@@ -370,7 +370,18 @@ function buildPick(
     const rec = admin.recommended;
     const recScore =
       rec === "1" ? scores.score1 : rec === "X" ? scores.scoreX : scores.score2;
-    if (admin.confidence === "high" && recScore >= 0.42) {
+    const midDogCover =
+      /mittfält-underdog|4,xx|Gardera gärna favoriten/i.test(
+        admin.verdict || ""
+      );
+    if (midDogCover) {
+      // Exempel 4,30 / 5,10 / 2,36 → tippa underdog + favorit
+      const favSide = ranked[0].o === rec ? ranked[1].o : ranked[0].o;
+      pick = [rec, favSide];
+      reasons.push(
+        `tippar ${rec}+${favSide} – mittfält-underdog (t.ex. 4,30) mot favorit`
+      );
+    } else if (admin.confidence === "high" && recScore >= 0.42) {
       // Stark bedömning: enkel på rekommenderad sida om inte extremt jämnt
       const others = ranked.filter((r) => r.o !== rec);
       const secondAlt = others[0];
