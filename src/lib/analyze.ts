@@ -360,12 +360,26 @@ function buildPick(
     }
   }
 
-  if (valueOdds?.trapOverOddsOutcomes?.length) {
-    reasons.push(
-      `överodds-fälla ${valueOdds.trapOverOddsOutcomes.join("/")} undviks`
-    );
-  }
-  if (valueOdds?.overOddsOutcomes.length) {
+  if (valueOdds?.explanations?.length) {
+    // Kort 1X2-pekare i tippskälet (full text visas under matchen)
+    for (const o of valueOdds.trapOverOddsOutcomes || []) {
+      const ov = valueOdds.outcomes.find((x) => x.outcome === o);
+      const oddsTxt =
+        ov?.odds != null ? ` @ ${ov.odds.toFixed(2).replace(".", ",")}` : "";
+      reasons.push(`överodds-fälla ${o}${oddsTxt} undviks`);
+    }
+    for (const o of valueOdds.overOddsOutcomes) {
+      const ov = valueOdds.outcomes.find((x) => x.outcome === o);
+      const oddsTxt =
+        ov?.odds != null ? ` @ ${ov.odds.toFixed(2).replace(".", ",")}` : "";
+      reasons.push(`överodds ${o}${oddsTxt}`);
+      if (!pick.includes(o) && pick.length < 2) {
+        const s =
+          o === "1" ? scores.score1 : o === "X" ? scores.scoreX : scores.score2;
+        if (s >= 0.18) pick = [...pick, o];
+      }
+    }
+  } else if (valueOdds?.overOddsOutcomes.length) {
     reasons.push(`överodds ${valueOdds.overOddsOutcomes.join("/")}`);
     for (const o of valueOdds.overOddsOutcomes) {
       if (!pick.includes(o) && pick.length < 2) {
@@ -620,19 +634,21 @@ export async function analyzeDraw(
         isTrap: o.isTrap,
         scoreBoost: o.scoreBoost,
         note: o.note,
+        explain: o.explain,
       })),
       bestValue: valueRaw.bestValue,
       overOddsOutcomes: valueRaw.overOddsOutcomes,
       trapOverOddsOutcomes: valueRaw.trapOverOddsOutcomes,
+      explanations: valueRaw.explanations,
       folkOddsDisagree: valueRaw.folkOddsDisagree,
       booksChecked: valueRaw.booksChecked,
       note: valueRaw.note,
     };
-    if (
-      valueOdds.overOddsOutcomes.length ||
-      valueOdds.trapOverOddsOutcomes.length ||
-      valueOdds.folkOddsDisagree
-    ) {
+    if (valueOdds.explanations.length) {
+      for (const line of valueOdds.explanations) {
+        valueAlerts.push(`Match ${event.eventNumber}: ${line}`);
+      }
+    } else if (valueOdds.folkOddsDisagree) {
       valueAlerts.push(`Match ${event.eventNumber}: ${valueOdds.note}`);
     }
     const { pick, reason, valueOutcomes } = buildPick(

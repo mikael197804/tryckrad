@@ -582,6 +582,14 @@ function LineupPill({
   );
 }
 
+function oddsForOutcome(
+  valueOdds: DrawBundle["matches"][number]["valueOdds"] | null | undefined,
+  o: Outcome
+): string {
+  const hit = valueOdds?.outcomes?.find((x) => x.outcome === o);
+  return hit?.odds != null ? fmtOdds(hit.odds) : "";
+}
+
 function ValueOddsPill({
   valueOdds,
 }: {
@@ -593,16 +601,36 @@ function ValueOddsPill({
   if (traps.length || overs.length) {
     return (
       <>
-        {traps.length > 0 && (
-          <span className="ctx-pill value-trap" title={valueOdds.note}>
-            överodds-fälla {traps.join("/")}
+        {traps.map((o) => (
+          <span
+            key={`trap-${o}`}
+            className="ctx-pill value-trap"
+            title={
+              valueOdds.outcomes.find((x) => x.outcome === o)?.explain ||
+              valueOdds.note
+            }
+          >
+            överodds-fälla {o}
+            {oddsForOutcome(valueOdds, o)
+              ? ` @ ${oddsForOutcome(valueOdds, o)}`
+              : ""}
           </span>
-        )}
-        {overs.length > 0 && (
-          <span className="ctx-pill value-over" title={valueOdds.note}>
-            överodds {overs.join("/")}
+        ))}
+        {overs.map((o) => (
+          <span
+            key={`over-${o}`}
+            className="ctx-pill value-over"
+            title={
+              valueOdds.outcomes.find((x) => x.outcome === o)?.explain ||
+              valueOdds.note
+            }
+          >
+            överodds {o}
+            {oddsForOutcome(valueOdds, o)
+              ? ` @ ${oddsForOutcome(valueOdds, o)}`
+              : ""}
           </span>
-        )}
+        ))}
       </>
     );
   }
@@ -617,10 +645,74 @@ function ValueOddsPill({
     return (
       <span className="ctx-pill value-over" title={valueOdds.note}>
         värde {valueOdds.bestValue}
+        {oddsForOutcome(valueOdds, valueOdds.bestValue)
+          ? ` @ ${oddsForOutcome(valueOdds, valueOdds.bestValue)}`
+          : ""}
       </span>
     );
   }
   return null;
+}
+
+function OverOddsExplain({
+  valueOdds,
+}: {
+  valueOdds?: DrawBundle["matches"][number]["valueOdds"] | null;
+}) {
+  const lines = valueOdds?.explanations?.filter(Boolean) ?? [];
+  if (!lines.length) return null;
+  return (
+    <div className="overodds-explain">
+      {lines.map((line) => (
+        <div key={line} className="overodds-explain-line">
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Odds1x2Marked({
+  odds,
+  valueOdds,
+}: {
+  odds: DrawBundle["matches"][number]["odds"];
+  valueOdds?: DrawBundle["matches"][number]["valueOdds"] | null;
+}) {
+  const marked = new Set([
+    ...(valueOdds?.overOddsOutcomes || []),
+    ...(valueOdds?.trapOverOddsOutcomes || []),
+  ]);
+  const trap = new Set(valueOdds?.trapOverOddsOutcomes || []);
+  const parts: Array<{ o: Outcome; v: number | null }> = [
+    { o: "1", v: odds.one },
+    { o: "X", v: odds.x },
+    { o: "2", v: odds.two },
+  ];
+  return (
+    <span className="odds odds-1x2">
+      {parts.map((p, i) => (
+        <span key={p.o}>
+          {i > 0 ? " / " : null}
+          <span
+            className={
+              marked.has(p.o)
+                ? trap.has(p.o)
+                  ? "odds-mark trap"
+                  : "odds-mark over"
+                : undefined
+            }
+            title={
+              valueOdds?.outcomes.find((x) => x.outcome === p.o)?.explain ||
+              undefined
+            }
+          >
+            <span className="odds-side">{p.o}</span> {fmtOdds(p.v)}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function GoalBlock({
@@ -1611,9 +1703,9 @@ export default function App() {
                       Överodds & värde
                     </h2>
                     <p className="panel-lead">
-                      Granskar SVS, Unibet, Paf, ATG och sharp (Pinnacle).
-                      Överodds vs folk kan vara +EV, men ofta är det fällor när
-                      mjuka böcker ligger högre än sharp – då undviks de.
+                      Granskar SVS, Unibet, Paf, ATG och sharp (Pinnacle). Varje
+                      överodds pekas ut som 1, X eller 2 med oddssiffra och
+                      förklaring (vs folk + sharp). Fällor undviks.
                       Extremodds 8+ undviks.
                     </p>
                     <ul className="alert-list value-alerts">
@@ -1755,8 +1847,11 @@ export default function App() {
                         </div>
                         <div className="match-card-meta">
                           <span className="odds">
-                            Odds {fmtOdds(m.odds.one)} / {fmtOdds(m.odds.x)} /{" "}
-                            {fmtOdds(m.odds.two)}
+                            Odds{" "}
+                            <Odds1x2Marked
+                              odds={m.odds}
+                              valueOdds={m.valueOdds}
+                            />
                           </span>
                           <span className="odds">
                             Folk {m.svenskaFolket.one}-{m.svenskaFolket.x}-
@@ -1848,6 +1943,7 @@ export default function App() {
                             </>
                           )}
                         </div>
+                        <OverOddsExplain valueOdds={m.valueOdds} />
                         <div className="reason">{m.pickReason}</div>
                         {(m.learningNotes?.length ?? 0) > 0 && (
                           <div className="learning-note">
@@ -1909,6 +2005,7 @@ export default function App() {
                                   label={m.away.name}
                                 />
                                 <ValueOddsPill valueOdds={m.valueOdds} />
+                                <OverOddsExplain valueOdds={m.valueOdds} />
                                 {(product === "powerplay" ||
                                   product === "maltipset") &&
                                   m.goals && (
@@ -1976,8 +2073,10 @@ export default function App() {
                               )}
                             </td>
                             <td className="odds">
-                              {fmtOdds(m.odds.one)} / {fmtOdds(m.odds.x)} /{" "}
-                              {fmtOdds(m.odds.two)}
+                              <Odds1x2Marked
+                                odds={m.odds}
+                                valueOdds={m.valueOdds}
+                              />
                             </td>
                             <td className="odds">
                               {m.svenskaFolket.one}-{m.svenskaFolket.x}-

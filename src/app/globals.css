@@ -619,6 +619,43 @@ select {
   color: #ffb0a0;
 }
 
+.overodds-explain {
+  margin-top: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  border-left: 3px solid rgba(180, 150, 255, 0.55);
+  background: rgba(80, 60, 120, 0.18);
+  border-radius: 0 6px 6px 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #ddd0ff;
+}
+
+.overodds-explain-line + .overodds-explain-line {
+  margin-top: 0.35rem;
+}
+
+.odds-1x2 .odds-side {
+  font-weight: 700;
+  opacity: 0.75;
+  font-size: 0.85em;
+}
+
+.odds-1x2 .odds-mark.over {
+  color: #c9b6ff;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(180, 150, 255, 0.7);
+  text-underline-offset: 2px;
+}
+
+.odds-1x2 .odds-mark.trap {
+  color: #ffb0a0;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 120, 100, 0.75);
+  text-underline-offset: 2px;
+}
+
 .ctx-pill.value-disagree {
   border-color: rgba(255, 200, 120, 0.5);
   color: #ffd28a;

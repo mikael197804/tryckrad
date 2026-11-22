@@ -101,6 +101,7 @@ export type OutcomeValueInfo = {
   isTrap: boolean;
   scoreBoost: number;
   note: string;
+  explain: string | null;
 };
 
 export type ValueOddsInfo = {
@@ -110,6 +111,8 @@ export type ValueOddsInfo = {
   overOddsOutcomes: Outcome[];
   /** Överodds som ser ut som fällor (mjukare än sharp / folkfälla) */
   trapOverOddsOutcomes: Outcome[];
+  /** Tydliga rader: vilket 1X2 + oddssiffra + förklaring */
+  explanations: string[];
   folkOddsDisagree: boolean;
   booksChecked: string[];
   note: string;
