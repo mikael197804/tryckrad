@@ -137,8 +137,14 @@ type MatchMarkets = {
   bttsYes: number | null;
   /** Båda lagen gör mål – Nej (lågmålssignal). */
   bttsNo: number | null;
+  /** 1X2 hemma / borta / kryss. */
+  homeOdds: number | null;
+  awayOdds: number | null;
   /** 1X2-kryss (kort X + låg målbild ≈ 0–0-risk). */
   drawOdds: number | null;
+  /** Lagets Över 0,5 – kort odds ≈ laget förväntas göra mål (utjämnarpress). */
+  homeOver05: number | null;
+  awayOver05: number | null;
   redCardYes: number | null;
   redCardNo: number | null;
   totalCardsOver: { line: number; odds: number } | null;
@@ -266,7 +272,8 @@ type OpenGameCheck = {
 /**
  * Extra läsning runt matchen för Över 1,5:
  * Ö1,5-odds ensamt räcker inte – många “billiga” Ö1,5 blir 0–0 eller 1–0.
- * Kräver Ö/U-stege + öppet-spel-signaler (xG, Under 2,5, BTTS, kryss).
+ * Kräver Ö/U-stege + öppet-spel-signaler (xG, Under 2,5, BTTS, kryss)
+ * + utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.
  */
 function assessOpenGameForOver15(args: {
   odds15: number;
@@ -275,7 +282,11 @@ function assessOpenGameForOver15(args: {
   under25: number | null;
   bttsYes: number | null;
   bttsNo: number | null;
+  homeOdds: number | null;
+  awayOdds: number | null;
   drawOdds: number | null;
+  homeOver05: number | null;
+  awayOver05: number | null;
   lambda: number | null;
   p15: number;
 }): OpenGameCheck {
@@ -283,6 +294,7 @@ function assessOpenGameForOver15(args: {
   const red: string[] = [];
   let p01Pct: number | null = null;
   let fatal = false;
+  let equalizerPressure = 0;
 
   const hasLadder =
     (args.under15 != null && args.under15 > 1) ||
@@ -363,11 +375,8 @@ function assessOpenGameForOver15(args: {
       red.push(
         `BTTS Nej @ ${args.bttsNo.toFixed(2).replace(".", ",")} favorit – 0–0/1–0-risk`
       );
-    } else if (args.bttsYes < args.bttsNo * 0.92) {
-      green.push(
-        `BTTS Ja @ ${args.bttsYes.toFixed(2).replace(".", ",")} – båda lagen förväntas göra mål`
-      );
     }
+    // Positiv BTTS räknas under utjämnarpress längre ner (jakt på 1–1).
   }
 
   if (args.drawOdds != null) {
@@ -403,11 +412,103 @@ function assessOpenGameForOver15(args: {
     fatal = true;
   }
 
+  // --- Utjämnarpress: vid 0–1 ska laget bakom jaga 1–1 ---
+  const homeO = args.homeOdds;
+  const awayO = args.awayOdds;
+  if (homeO != null && awayO != null && homeO > 1 && awayO > 1) {
+    const favIsHome = homeO <= awayO;
+    const favOdds = favIsHome ? homeO : awayO;
+    const dogOdds = favIsHome ? awayO : homeO;
+    const favSide = favIsHome ? "hemmafavorit" : "bortafavorit";
+
+    // Tydlig favorit bakunder: “det här är fel” → kastar framåt mot 1–1
+    if (favOdds <= 1.9) {
+      green.push(
+        `${favSide} @ ${favOdds.toFixed(2).replace(".", ",")} – 0–1 bakunder ger jakt på 1–1`
+      );
+      equalizerPressure += 2;
+    } else if (favOdds <= 2.25 && favIsHome) {
+      green.push(
+        `hemmalag @ ${homeO.toFixed(2).replace(".", ",")} – hemmapress jagar utjämning vid 0–1`
+      );
+      equalizerPressure += 1;
+    }
+
+    // Jämnt byte: båda lagen tar 0–1 personligt
+    if (
+      homeO >= 2.05 &&
+      homeO <= 3.2 &&
+      awayO >= 2.05 &&
+      awayO <= 3.2 &&
+      Math.abs(homeO - awayO) <= 0.55
+    ) {
+      green.push("jämnt oddsbyte – båda jagar poäng/utjämning vid 0–1");
+      equalizerPressure += 1;
+    }
+
+    // Stor underdog som kan stjäla 0–1 och parkera – klassisk Ö1,5-fälla
+    if (
+      dogOdds >= 4.2 &&
+      args.under25 != null &&
+      args.under25 <= 1.85 &&
+      (args.bttsNo == null ||
+        args.bttsYes == null ||
+        args.bttsNo <= args.bttsYes)
+    ) {
+      red.push(
+        `stor underdog @ ${dogOdds.toFixed(2).replace(".", ",")} + kort Under 2,5 – risk 0–1 och parkering`
+      );
+      fatal = true;
+    }
+  }
+
+  if (args.bttsYes != null && args.bttsNo != null) {
+    if (args.bttsYes <= 1.7 && args.bttsYes < args.bttsNo * 0.9) {
+      green.push(
+        `BTTS Ja @ ${args.bttsYes.toFixed(2).replace(".", ",")} – laget bakom förväntas kunna göra 1–1`
+      );
+      equalizerPressure += 2;
+    }
+  }
+
+  // Båda lagen prissatta att göra minst ett mål → 0–1 sällan blir stående
+  if (
+    args.homeOver05 != null &&
+    args.awayOver05 != null &&
+    args.homeOver05 <= 1.28 &&
+    args.awayOver05 <= 1.28
+  ) {
+    green.push(
+      `båda lagen Ö0,5 korta (${args.homeOver05
+        .toFixed(2)
+        .replace(".", ",")} / ${args.awayOver05
+        .toFixed(2)
+        .replace(".", ",")}) – utjämning trolig`
+    );
+    equalizerPressure += 2;
+  } else if (
+    args.homeOver05 != null &&
+    args.awayOver05 != null &&
+    (args.homeOver05 >= 1.55 || args.awayOver05 >= 1.55)
+  ) {
+    red.push(
+      "ett lag har lång Ö0,5 – risk att 0–1 blir stående utan utjämning"
+    );
+  }
+
+  if (equalizerPressure < 2) {
+    red.push(
+      "för svag utjämnarpress – oklart att laget bakom jagar 1–1 vid 0–1"
+    );
+    fatal = true;
+  }
+
   // Minst två positiva signaler och inga fatala lågmålsflaggor.
   // En mild röd tillåts bara om det finns tydligt överskott av gröna.
   const ok =
     !fatal &&
     green.length >= 2 &&
+    equalizerPressure >= 2 &&
     (red.length === 0 || (red.length === 1 && green.length >= 4));
 
   if (!ok && !fatal && green.length < 2) {
@@ -489,7 +590,11 @@ function estimateOver15Probability(
   return fromPoisson * 0.65 + fromOdds * 0.35;
 }
 
-function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
+function extractMarkets(
+  betOffers: KambiBetOffer[],
+  homeName?: string,
+  awayName?: string
+): MatchMarkets {
   let odds15: number | null = null;
   let odds25: number | null = null;
   let odds35: number | null = null;
@@ -497,10 +602,17 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
   let under25: number | null = null;
   let bttsYes: number | null = null;
   let bttsNo: number | null = null;
+  let homeOdds: number | null = null;
+  let awayOdds: number | null = null;
   let drawOdds: number | null = null;
+  let homeOver05: number | null = null;
+  let awayOver05: number | null = null;
   let redCardYes: number | null = null;
   let redCardNo: number | null = null;
   let totalCardsOver: { line: number; odds: number } | null = null;
+
+  const homeN = homeName ? normalizeName(homeName) : "";
+  const awayN = awayName ? normalizeName(awayName) : "";
 
   for (const bo of betOffers) {
     const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
@@ -541,7 +653,44 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
         const side = (o.label || "").toLowerCase();
         const odds = parseOdds(o.odds);
         if (odds == null) continue;
+        if (side === "1" || side === "home") homeOdds = odds;
+        if (side === "2" || side === "away") awayOdds = odds;
         if (side === "x" || side === "draw") drawOdds = odds;
+      }
+    }
+
+    // Lagets antal mål – Över 0,5 signalerar att laget förväntas kunna göra mål
+    if (
+      /^Total Goals by /i.test(label) ||
+      /^Antal mål (av|för) /i.test(label)
+    ) {
+      const teamRaw = label
+        .replace(/^Total Goals by /i, "")
+        .replace(/^Antal mål (av|för) /i, "");
+      const teamN = normalizeName(teamRaw);
+      const isHome =
+        homeN &&
+        (teamN.includes(homeN) ||
+          homeN.includes(teamN) ||
+          teamNameScoreLoose(homeN, teamN) >= 0.72);
+      const isAway =
+        awayN &&
+        (teamN.includes(awayN) ||
+          awayN.includes(teamN) ||
+          teamNameScoreLoose(awayN, teamN) >= 0.72);
+      if (!isHome && !isAway) {
+        // fallthrough – namn matchade inte
+      } else {
+        for (const o of bo.outcomes || []) {
+          const side = (o.label || "").toLowerCase();
+          const line = parseLine(o.line);
+          const odds = parseOdds(o.odds);
+          if (odds == null || line == null) continue;
+          if (line !== 0.5) continue;
+          if (side !== "över" && side !== "over") continue;
+          if (isHome) homeOver05 = odds;
+          if (isAway) awayOver05 = odds;
+        }
       }
     }
 
@@ -581,11 +730,27 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
     under25,
     bttsYes,
     bttsNo,
+    homeOdds,
+    awayOdds,
     drawOdds,
+    homeOver05,
+    awayOver05,
     redCardYes,
     redCardNo,
     totalCardsOver,
   };
+}
+
+/** Enkel namnlikhet för att koppla “Total Goals by X” till hemma/borta. */
+function teamNameScoreLoose(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const ta = new Set(a.split(" ").filter((t) => t.length > 2));
+  const tb = new Set(b.split(" ").filter((t) => t.length > 2));
+  if (!ta.size || !tb.size) return 0;
+  let hits = 0;
+  for (const t of ta) if (tb.has(t)) hits++;
+  return hits / Math.min(ta.size, tb.size);
 }
 
 function eventUrl(eventId: number): string {
@@ -797,7 +962,11 @@ function buildCandidate(
     under25: markets.under25,
     bttsYes: markets.bttsYes,
     bttsNo: markets.bttsNo,
+    homeOdds: markets.homeOdds,
+    awayOdds: markets.awayOdds,
     drawOdds: markets.drawOdds,
+    homeOver05: markets.homeOver05,
+    awayOver05: markets.awayOver05,
     lambda,
     p15,
   });
@@ -837,8 +1006,14 @@ function buildCandidate(
       `BTTS Ja @ ${markets.bttsYes.toFixed(2).replace(".", ",")}`
     );
   }
-  // Visa de starkaste öppet-spel-signalerna
-  for (const g of openCheck.green.slice(0, 2)) {
+  // Prioritera utjämnar-/öppet-spel-signaler i motiveringen
+  const prefer = openCheck.green.filter((g) =>
+    /jakt på 1–1|utjämning|BTTS Ja|båda lagen Ö0,5|jämnt oddsbyte|hemmapress/i.test(
+      g
+    )
+  );
+  const rest = openCheck.green.filter((g) => !prefer.includes(g));
+  for (const g of [...prefer, ...rest].slice(0, 3)) {
     reasons.push(g);
   }
   if (rivalry.level !== "none") reasons.push(rivalry.note);
@@ -923,7 +1098,16 @@ async function fetchMarketsForEvents(
           const data = (await kambiFetch(
             `/betoffer/event/${ev.id}.json?lang=sv_SE&market=SE`
           )) as { betOffers?: KambiBetOffer[] };
-          map.set(ev.id, extractMarkets(data.betOffers || []));
+          const home =
+            ev.homeName || ev.name.split(" - ")[0] || ev.name;
+          const away =
+            ev.awayName ||
+            ev.name.split(" - ").slice(1).join(" - ") ||
+            "";
+          map.set(
+            ev.id,
+            extractMarkets(data.betOffers || [], home, away)
+          );
         } catch {
           map.set(ev.id, {
             odds15: null,
@@ -933,7 +1117,11 @@ async function fetchMarketsForEvents(
             under25: null,
             bttsYes: null,
             bttsNo: null,
+            homeOdds: null,
+            awayOdds: null,
             drawOdds: null,
+            homeOver05: null,
+            awayOver05: null,
             redCardYes: null,
             redCardNo: null,
             totalCardsOver: null,
@@ -1158,6 +1346,7 @@ export async function buildOddsetDayTip(opts?: {
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: grönt = Över 1,5 rätt (≥2 mål), rött = fel.",
       "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel (många Ö1,5 blir annars 0–0/1 mål).",
+      "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1 (favorit/hemmapress, BTTS, båda lagens Ö0,5) – undvik underdog som parkerar.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
       `Sannolikhetsgolv nu: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",

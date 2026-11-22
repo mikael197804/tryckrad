@@ -1407,8 +1407,8 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         <h2>Spela dessa · Över 1,5 ({picks.length}/{picksPerDay})</h2>
         {picks.length === 0 ? (
           <p className="panel-lead">
-            Ingen match klarade lågmålskontrollen för Över 1,5 just nu
-            (0–0/1-mål-risk för hög).
+            Ingen match klarade lågmåls- och utjämnarkontrollen för Över
+            1,5 just nu (0–0/1-mål eller svag jakt på 1–1).
           </p>
         ) : (
           <div className="match-cards">
