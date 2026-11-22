@@ -5,6 +5,11 @@ import {
 } from "./equalizerPressure";
 import { upstreamFetchInit } from "./fetch-mode";
 import {
+  isMidUnderdogOdds,
+  isSafeWinnerTwoOdds,
+  VALUE_ODDS_INSIGHTS,
+} from "./valueOdds";
+import {
   importOddsetTips,
   listTrackedOddsetTips,
   ODDSET_TIP_RETENTION_HOURS,
@@ -24,7 +29,8 @@ import { overMarketValue } from "./valueOdds";
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
 export type { EqualizerAssessment } from "./equalizerPressure";
-export type OddsetMarket = "over_1_5" | "over_2_5";
+export type OddsetMarket = "over_1_5" | "over_2_5" | "1x2";
+export type Oddset1x2Pick = "1" | "X" | "2";
 
 export type RivalryInfo = {
   level: "none" | "possible" | "likely";
@@ -48,13 +54,21 @@ export type OddsetCandidate = {
   country: string;
   kickoff: string;
   market: OddsetMarket;
-  line: 1.5 | 2.5;
+  line: 1.5 | 2.5 | null;
+  /** 1X2-utgång när market === "1x2". */
+  pick1x2?: Oddset1x2Pick | null;
   odds: number;
-  odds15: number;
+  odds15: number | null;
   odds25: number | null;
   odds35: number | null;
   under15?: number | null;
-  /** Uppskattad sannolikhet (%) att matchen får minst 2 mål (Över 1,5). */
+  homeOdds?: number | null;
+  awayOdds?: number | null;
+  drawOdds?: number | null;
+  /**
+   * Över 1,5: modell-p för ≥2 mål.
+   * 1X2: konfidens (%) för tippad utgång.
+   */
   over25ProbPct: number;
   expectedGoals: number | null;
   rivalry: RivalryInfo;
@@ -72,14 +86,18 @@ export type OddsetDayTip = {
   playDate: string;
   playDateLabel: string;
   generatedAt: string;
-  /** Upp till 5 matcher att spela detta svenska dygn. */
+  /** Upp till 5 Över 1,5-tips. */
   selected: OddsetCandidate[];
   candidates: OddsetCandidate[];
+  /** Upp till 5 1X2-tips med samma analysram. */
+  selected1x2: OddsetCandidate[];
+  candidates1x2: OddsetCandidate[];
   /** Tips som sparats senaste 24 h, med grönt/rött när resultatet är klart. */
   tracked: OddsetTrackedTip[];
   retentionHours: number;
   analyzedCount: number;
   eligibleCount: number;
+  eligible1x2Count: number;
   picksPerDay: number;
   rules: string[];
   disclaimer: string;
@@ -1031,6 +1049,201 @@ function buildCandidate(
     rivalry,
     redCard,
     equalizer,
+    homeOdds: markets.homeOdds,
+    awayOdds: markets.awayOdds,
+    drawOdds: markets.drawOdds,
+    pick1x2: null,
+    score,
+    reason: reasons.join(". "),
+    url: eventUrl(event.id),
+  };
+}
+
+/**
+ * Oddset 1X2 med samma analysram: utjämnarpress, rivalitet, rött kort,
+ * mittfält-underdog / säker vinnare 2 @ ca 2,00.
+ */
+function build1x2Candidate(
+  event: KambiEvent,
+  markets: MatchMarkets
+): OddsetCandidate | null {
+  const home = event.homeName || event.name.split(" - ")[0] || event.name;
+  const away =
+    event.awayName || event.name.split(" - ").slice(1).join(" - ") || "";
+  const league = event.group || "";
+  const country = countryOf(event);
+
+  const o1 = markets.homeOdds;
+  const oX = markets.drawOdds;
+  const o2 = markets.awayOdds;
+  if (o1 == null || oX == null || o2 == null || o1 <= 1 || oX <= 1 || o2 <= 1) {
+    return null;
+  }
+
+  const equalizer = assessEqualizerPressure({
+    homeOdds: o1,
+    awayOdds: o2,
+    drawOdds: oX,
+    bttsYes: markets.bttsYes,
+    bttsNo: markets.bttsNo,
+    homeOver05: markets.homeOver05,
+    awayOver05: markets.awayOver05,
+    under25: markets.under25,
+    homeName: home,
+    awayName: away,
+  });
+
+  const rivalry = analyzeRivalry(home, away, league);
+  const redCard = analyzeRedCard(markets, rivalry);
+
+  const favIsHome = o1 <= o2;
+  const fav: Oddset1x2Pick = favIsHome ? "1" : "2";
+  const dog: Oddset1x2Pick = favIsHome ? "2" : "1";
+  const favOdds = favIsHome ? o1 : o2;
+  const dogOdds = favIsHome ? o2 : o1;
+
+  let pick: Oddset1x2Pick | null = null;
+  let confidence = 0;
+  const reasons: string[] = [];
+  let kind = "";
+
+  // 1) Säker vinnare: utgång 2 @ ca 2,00 (samma regel som övriga tips)
+  if (isSafeWinnerTwoOdds(o2) && equalizer.level !== "weak") {
+    pick = "2";
+    confidence = 78;
+    kind = "säker vinnare";
+    reasons.push(
+      `Säker vinnare 2 @ ${o2.toFixed(2).replace(".", ",")} (band ca 2,00)`
+    );
+  }
+
+  // 2) Mittfält-underdog mot kort favorit (4,xx-mönster)
+  if (
+    !pick &&
+    isMidUnderdogOdds(dogOdds) &&
+    favOdds <= VALUE_ODDS_INSIGHTS.shortFavMax &&
+    favOdds >= 1.45
+  ) {
+    pick = dog;
+    confidence = 72;
+    kind = "mittfält-underdog";
+    reasons.push(
+      `Mittfält-underdog ${dog} @ ${dogOdds
+        .toFixed(2)
+        .replace(".", ",")} mot favorit ${fav} @ ${favOdds
+        .toFixed(2)
+        .replace(".", ",")} – samma 4,xx-mönster som övrig analys`
+    );
+  }
+
+  // 3) Tydlig favorit med utjämnarpress (bakunder jagar – matchen “lever”)
+  if (
+    !pick &&
+    favOdds >= 1.35 &&
+    favOdds <= 1.9 &&
+    equalizer.okForOver15 &&
+    equalizer.level !== "weak"
+  ) {
+    pick = fav;
+    confidence = equalizer.level === "strong" ? 76 : 70;
+    kind = "favorit + utjämnarpress";
+    reasons.push(
+      `Favorit ${fav} @ ${favOdds
+        .toFixed(2)
+        .replace(".", ",")} med ${equalizer.level} utjämnarpress`
+    );
+  }
+
+  // 4) Kort kryss + svag utjämnarpress / lågmål = X
+  if (
+    !pick &&
+    oX <= 3.15 &&
+    oX >= 2.7 &&
+    (equalizer.level === "weak" ||
+      (markets.under25 != null && markets.under25 <= 1.75))
+  ) {
+    pick = "X";
+    confidence = 66;
+    kind = "kryss / stängt läge";
+    reasons.push(
+      `Kryss X @ ${oX
+        .toFixed(2)
+        .replace(".", ",")} – stängt läge / svag jakt på mål`
+    );
+  }
+
+  if (!pick) return null;
+
+  // Undvik ultrakorta / longshots som huvudtips
+  const pickOdds = pick === "1" ? o1 : pick === "2" ? o2 : oX;
+  if (pickOdds < 1.28 || pickOdds > 5.5) return null;
+
+  reasons.unshift(equalizerReasonLine(equalizer));
+  reasons.push(`1X2 ${pick} @ ${pickOdds.toFixed(2).replace(".", ",")}`);
+  reasons.push(`1 @ ${o1.toFixed(2).replace(".", ",")} · X @ ${oX
+    .toFixed(2)
+    .replace(".", ",")} · 2 @ ${o2.toFixed(2).replace(".", ",")}`);
+  for (const p of equalizer.points.slice(0, 2)) {
+    if (!reasons.includes(p)) reasons.push(p);
+  }
+  if (rivalry.level !== "none") reasons.push(rivalry.note);
+  if (redCard.level !== "low") reasons.push(`rött kort: ${redCard.note}`);
+
+  let score = confidence * 1.15 + equalizer.score * 3;
+  if (kind === "säker vinnare") score += 10;
+  if (kind === "mittfält-underdog") score += 12;
+  if (kind === "favorit + utjämnarpress") score += 6;
+  if (equalizer.level === "strong" && pick !== "X") score += 4;
+  if (equalizer.warnings.length) score -= equalizer.warnings.length * 5;
+
+  const topCountry =
+    /england|spanien|spain|italien|italy|tyskland|germany|frankrike|france|nederländerna|netherlands|portugal|sverige|sweden|skottland|scotland/i.test(
+      country
+    );
+  if (
+    topCountry &&
+    /premier league|la liga|serie a|bundesliga|ligue 1|championship|eredivisie|primeira|allsvenskan|liga portugal/i.test(
+      league
+    )
+  ) {
+    score += 5;
+  }
+
+  // xG från målstege som extrakontext (samma data som Ö1,5)
+  const lambda = estimateExpectedGoals(
+    markets.odds15,
+    markets.odds25,
+    markets.odds35,
+    markets.under15,
+    markets.under25
+  );
+  if (lambda != null) {
+    reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
+  }
+
+  return {
+    eventId: event.id,
+    home,
+    away,
+    league,
+    country,
+    kickoff: event.start,
+    market: "1x2",
+    line: null,
+    pick1x2: pick,
+    odds: pickOdds,
+    odds15: markets.odds15,
+    odds25: markets.odds25,
+    odds35: markets.odds35,
+    under15: markets.under15,
+    homeOdds: o1,
+    awayOdds: o2,
+    drawOdds: oX,
+    over25ProbPct: confidence,
+    expectedGoals: lambda,
+    rivalry,
+    redCard,
+    equalizer,
     score,
     reason: reasons.join(". "),
     url: eventUrl(event.id),
@@ -1230,47 +1443,69 @@ export async function buildOddsetDayTip(opts?: {
   const minProb = MIN_OVER15_PROB + floorBump;
 
   const candidates: OddsetCandidate[] = [];
+  const candidates1x2: OddsetCandidate[] = [];
   for (const ev of toAnalyze) {
     const m = markets.get(ev.id);
     if (!m) continue;
     const c = buildCandidate(ev, m);
-    if (!c) continue;
-
-    // Dynamisk ribba från missar (övertygade fel → höj golvet)
-    if (c.over25ProbPct / 100 < minProb) continue;
-
-    const adj = oddsetLearningAdjust({
-      memory: learning,
-      candidate: c,
-      recentEventIds,
-      recentTeams,
-      recentLeagues,
-    });
-    c.score += adj.scoreDelta;
-    if (adj.notes.length) {
-      c.learningNotes = adj.notes;
-      c.reason = `${c.reason}. ${adj.notes[0]}`;
+    if (c) {
+      // Dynamisk ribba från missar (övertygade fel → höj golvet)
+      if (c.over25ProbPct / 100 >= minProb) {
+        const adj = oddsetLearningAdjust({
+          memory: learning,
+          candidate: c,
+          recentEventIds,
+          recentTeams,
+          recentLeagues,
+        });
+        c.score += adj.scoreDelta;
+        if (adj.notes.length) {
+          c.learningNotes = adj.notes;
+          c.reason = `${c.reason}. ${adj.notes[0]}`;
+        }
+        candidates.push(c);
+      }
     }
-    candidates.push(c);
+
+    const c1 = build1x2Candidate(ev, m);
+    if (c1) {
+      const adj = oddsetLearningAdjust({
+        memory: learning,
+        candidate: c1,
+        recentEventIds,
+        recentTeams,
+        recentLeagues,
+      });
+      c1.score += adj.scoreDelta * 0.5;
+      if (adj.notes.length) {
+        c1.learningNotes = adj.notes;
+        c1.reason = `${c1.reason}. ${adj.notes[0]}`;
+      }
+      candidates1x2.push(c1);
+    }
   }
 
   const todayIso = today.isoDate;
-  candidates.sort((a, b) => {
-    const aToday = stockholmDateIso(new Date(a.kickoff)) === todayIso ? 1 : 0;
-    const bToday = stockholmDateIso(new Date(b.kickoff)) === todayIso ? 1 : 0;
-    // Nära i score: prioritera matcher som går idag (öppna att spela snart)
-    if (Math.abs(a.score - b.score) < 8 && aToday !== bToday) {
-      return bToday - aToday;
-    }
-    return (
-      b.score - a.score ||
-      b.over25ProbPct - a.over25ProbPct ||
-      new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime()
-    );
-  });
+  const sortCandidates = (list: OddsetCandidate[]) => {
+    list.sort((a, b) => {
+      const aToday = stockholmDateIso(new Date(a.kickoff)) === todayIso ? 1 : 0;
+      const bToday = stockholmDateIso(new Date(b.kickoff)) === todayIso ? 1 : 0;
+      if (Math.abs(a.score - b.score) < 8 && aToday !== bToday) {
+        return bToday - aToday;
+      }
+      return (
+        b.score - a.score ||
+        b.over25ProbPct - a.over25ProbPct ||
+        new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime()
+      );
+    });
+  };
+  sortCandidates(candidates);
+  sortCandidates(candidates1x2);
   const selected = selectUniquePicks(candidates, PICKS_PER_DAY);
+  const selected1x2 = selectUniquePicks(candidates1x2, PICKS_PER_DAY);
 
-  await rememberOddsetTips(selected);
+  await rememberOddsetTips([...selected, ...selected1x2]);
   const tracked = await settleOddsetTips();
   const learningAfter = await loadOddsetLearning();
 
@@ -1280,10 +1515,13 @@ export async function buildOddsetDayTip(opts?: {
     generatedAt: new Date().toISOString(),
     selected,
     candidates: candidates.slice(0, 12),
+    selected1x2,
+    candidates1x2: candidates1x2.slice(0, 12),
     tracked,
     retentionHours: ODDSET_TIP_RETENTION_HOURS,
     analyzedCount: toAnalyze.length,
     eligibleCount: candidates.length,
+    eligible1x2Count: candidates1x2.length,
     picksPerDay: PICKS_PER_DAY,
     learning: {
       updatedAt: learningAfter.updatedAt,
@@ -1292,15 +1530,16 @@ export async function buildOddsetDayTip(opts?: {
       lessons: learningAfter.lessons.slice(0, 12),
     },
     rules: [
-      `${PICKS_PER_DAY} unika öppna Oddset-matcher (Över 1,5) som går att spela nu.`,
+      `${PICKS_PER_DAY} unika Oddset Över 1,5 + ${PICKS_PER_DAY} unika 1X2 som går att spela nu.`,
       `Fönster: ${windowNote}.`,
       "Bara matcher som inte startat ännu (för nya tips).",
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
-      "Efter slutsignal: grönt = Över 1,5 rätt (≥2 mål), rött = fel.",
-      "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel (många Ö1,5 blir annars 0–0/1 mål).",
-      "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1 (favorit/hemmapress, BTTS, båda lagens Ö0,5) – undvik underdog som parkerar.",
+      "Efter slutsignal: Över 1,5 = ≥2 mål; 1X2 = tippad utgång rätt.",
+      "1X2 använder samma analys: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
+      "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel.",
+      "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
-      `Sannolikhetsgolv nu: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
+      `Sannolikhetsgolv Ö1,5: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
       "Uppdateras automatiskt 12 min före avspark och när resultat kommer in.",
     ],

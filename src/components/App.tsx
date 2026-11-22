@@ -189,17 +189,23 @@ function oddsetToHistoryPicks(
       t.outcome === "won" || t.outcome === "lost" || t.outcome === "live"
         ? t.outcome
         : "pending";
+    const is1x2 = t.market === "1x2";
+    const pick1 = t.pick1x2 || "1";
     return {
-      id: `oddset:${t.eventId}`,
+      id: is1x2
+        ? `oddset:${t.eventId}:1x2:${pick1}`
+        : `oddset:${t.eventId}:over`,
       product: "oddset" as const,
       gameKey: `oddset:${tippedAt.slice(0, 10)}`,
-      gameLabel: `Oddset · Över 1,5 · ${tippedAt.slice(0, 10)}`,
+      gameLabel: is1x2
+        ? `Oddset · 1X2 · ${tippedAt.slice(0, 10)}`
+        : `Oddset · Över 1,5 · ${tippedAt.slice(0, 10)}`,
       tippedAt,
       description: `${t.home} – ${t.away}`,
       home: t.home,
       away: t.away,
-      market: "over_1_5" as const,
-      pick: ["over_1_5"],
+      market: is1x2 ? ("1x2" as const) : ("over_1_5" as const),
+      pick: is1x2 ? [pick1] : ["over_1_5"],
       kickoff: t.kickoff || null,
       drawNumber: null,
       eventNumber: null,
@@ -299,16 +305,22 @@ function outcomeRank(o: OddsetTrackedTip["outcome"] | undefined): number {
   return 1;
 }
 
+function oddsetTrackKey(t: OddsetTrackedTip | OddsetCandidate): string {
+  if (t.market === "1x2") return `${t.eventId}:1x2:${t.pick1x2 || "?"}`;
+  return `${t.eventId}:${t.market || "over_1_5"}`;
+}
+
 function mergeOddsetTracked(
   ...groups: Array<OddsetTrackedTip[] | undefined>
 ): OddsetTrackedTip[] {
-  const byId = new Map<number, OddsetTrackedTip>();
+  const byId = new Map<string, OddsetTrackedTip>();
   for (const group of groups) {
     for (const t of group || []) {
       if (!t?.eventId) continue;
-      const prev = byId.get(t.eventId);
+      const key = oddsetTrackKey(t);
+      const prev = byId.get(key);
       if (!prev) {
-        byId.set(t.eventId, t);
+        byId.set(key, t);
         continue;
       }
       const tippedAt =
@@ -318,7 +330,7 @@ function mergeOddsetTracked(
       const preferNew = outcomeRank(t.outcome) >= outcomeRank(prev.outcome);
       const base = preferNew ? t : prev;
       const other = preferNew ? prev : t;
-      byId.set(t.eventId, {
+      byId.set(key, {
         ...base,
         tippedAt,
         homeGoals: base.homeGoals ?? other.homeGoals,
@@ -1086,6 +1098,10 @@ function OddsetPickCard({
 }) {
   const outcome = tracked?.outcome;
   const resultNote = tracked?.resultNote;
+  const is1x2 = c.market === "1x2";
+  const pickLabel = is1x2
+    ? `1X2 · ${c.pick1x2 || "?"}`
+    : "Över 1,5 mål";
   return (
     <article className={`match-card ${outcomeClass(outcome)}`}>
       <div className="match-card-top">
@@ -1110,6 +1126,8 @@ function OddsetPickCard({
             </span>
           ) : outcome === "live" ? (
             <span className="oddset-result-badge live">Live</span>
+          ) : is1x2 ? (
+            <span className="pick-cell on">{c.pick1x2}</span>
           ) : (
             <span className="pick-cell on">{c.over25ProbPct.toFixed(0)}%</span>
           )}
@@ -1119,18 +1137,41 @@ function OddsetPickCard({
         <div className="oddset-result-note">{resultNote}</div>
       )}
       <div className="oddset-pick-line">
-        <span className="ctx-pill table-comfortable">Över 1,5 mål</span>
+        <span
+          className={`ctx-pill ${
+            is1x2 ? "value-admin high" : "table-comfortable"
+          }`}
+        >
+          {pickLabel}
+        </span>
         <span className="odds">
-          Odds {fmtOdds(c.odds)} · xG≈
-          {c.expectedGoals != null
-            ? c.expectedGoals.toFixed(2).replace(".", ",")
-            : "–"}
+          Odds {fmtOdds(c.odds)}
+          {!is1x2 && (
+            <>
+              {" "}
+              · xG≈
+              {c.expectedGoals != null
+                ? c.expectedGoals.toFixed(2).replace(".", ",")
+                : "–"}
+            </>
+          )}
+          {is1x2 && <> · konf. {c.over25ProbPct.toFixed(0)}%</>}
         </span>
       </div>
       {c.equalizer && <EqualizerBlock equalizer={c.equalizer} />}
       <div className="match-card-meta">
-        <span className="odds">Ö2,5 {fmtOdds(c.odds25)}</span>
-        <span className="odds">Ö3,5 {fmtOdds(c.odds35)}</span>
+        {is1x2 ? (
+          <>
+            <span className="odds">1 {fmtOdds(c.homeOdds ?? null)}</span>
+            <span className="odds">X {fmtOdds(c.drawOdds ?? null)}</span>
+            <span className="odds">2 {fmtOdds(c.awayOdds ?? null)}</span>
+          </>
+        ) : (
+          <>
+            <span className="odds">Ö2,5 {fmtOdds(c.odds25)}</span>
+            <span className="odds">Ö3,5 {fmtOdds(c.odds35)}</span>
+          </>
+        )}
       </div>
       <div className="match-card-flags">
         <RivalryPill level={c.rivalry.level} note={c.rivalry.note} />
@@ -1383,29 +1424,37 @@ function HistoryView({
 }
 
 function OddsetView({ tip }: { tip: OddsetDayTip }) {
-  const picks = tip.selected;
+  const picks = tip.selected || [];
+  const picks1x2 = tip.selected1x2 || [];
   const picksPerDay = tip.picksPerDay ?? 5;
   const tracked = tip.tracked || [];
-  const trackedById = new Map(tracked.map((t) => [t.eventId, t]));
-  const openIds = new Set(picks.map((p) => p.eventId));
-  const history = tracked.filter((t) => !openIds.has(t.eventId));
+  const trackedByKey = new Map(tracked.map((t) => [oddsetTrackKey(t), t]));
+  const openKeys = new Set(
+    [...picks, ...picks1x2].map((p) => oddsetTrackKey(p))
+  );
+  const history = tracked.filter((t) => !openKeys.has(oddsetTrackKey(t)));
   const retention = tip.retentionHours ?? 24;
   const won = tracked.filter((t) => t.outcome === "won").length;
   const lost = tracked.filter((t) => t.outcome === "lost").length;
   const learning = tip.learning;
   const missLessons = (learning?.lessons || []).filter((l) => !l.hit).slice(0, 6);
   const hitLessons = (learning?.lessons || []).filter((l) => l.hit).slice(0, 3);
+  const extraOver = (tip.candidates || []).slice(picks.length);
+  const extra1x2 = (tip.candidates1x2 || []).slice(picks1x2.length);
 
   return (
     <div className="rise">
       <section className="panel">
         <h2>Öppna Oddset nu · {tip.playDateLabel}</h2>
         <p className="panel-lead">
-          {picksPerDay} <strong>unika</strong> tips på matcher som går att
-          spela nu. Tipsen ligger kvar <strong>{retention} timmar</strong> –
-          grönt/rött efter slutsignal. Efter varje tips lär sig analysen
-          automatiskt och justerar nästa urval. Analyserat {tip.analyzedCount}{" "}
-          · {tip.eligibleCount} klarade filtret
+          {picksPerDay} Över 1,5 + {picksPerDay} <strong>1X2</strong> – samma
+          analys (utjämnarpress, favorit/underdog). Tipsen ligger kvar{" "}
+          <strong>{retention} timmar</strong> – grönt/rött efter slutsignal.
+          Analyserat {tip.analyzedCount} · Ö1,5 {tip.eligibleCount}
+          {tip.eligible1x2Count != null
+            ? ` · 1X2 ${tip.eligible1x2Count}`
+            : ""}{" "}
+          klarade filtret
           {tracked.length > 0 ? ` · 24h: ${won} rätt / ${lost} fel` : ""}.
         </p>
         <ul className="alert-list table-alerts">
@@ -1461,6 +1510,30 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
       )}
 
       <section className="panel panel-systems">
+        <h2>Spela dessa · 1X2 ({picks1x2.length}/{picksPerDay})</h2>
+        <p className="panel-lead">
+          Samma analys som övriga tips: utjämnarpress, säker vinnare 2 @ ca
+          2,00, mittfält-underdog och favorit med jakt på 1–1.
+        </p>
+        {picks1x2.length === 0 ? (
+          <p className="panel-lead">
+            Ingen match klarade 1X2-filtret just nu.
+          </p>
+        ) : (
+          <div className="match-cards">
+            {picks1x2.map((c, i) => (
+              <OddsetPickCard
+                key={oddsetTrackKey(c)}
+                c={c}
+                index={i + 1}
+                tracked={trackedByKey.get(oddsetTrackKey(c))}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="panel panel-systems">
         <h2>Spela dessa · Över 1,5 ({picks.length}/{picksPerDay})</h2>
         {picks.length === 0 ? (
           <p className="panel-lead">
@@ -1471,10 +1544,10 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
           <div className="match-cards">
             {picks.map((c, i) => (
               <OddsetPickCard
-                key={c.eventId}
+                key={oddsetTrackKey(c)}
                 c={c}
                 index={i + 1}
-                tracked={trackedById.get(c.eventId)}
+                tracked={trackedByKey.get(oddsetTrackKey(c))}
               />
             ))}
           </div>
@@ -1491,7 +1564,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
           <div className="match-cards">
             {history.map((c, i) => (
               <OddsetPickCard
-                key={`hist-${c.eventId}`}
+                key={`hist-${oddsetTrackKey(c)}`}
                 c={c}
                 index={i + 1}
                 tracked={c}
@@ -1501,22 +1574,42 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         </section>
       )}
 
-      {tip.candidates.length > picks.length && (
+      {(extra1x2.length > 0 || extraOver.length > 0) && (
         <section className="panel">
           <h2>Fler godkända</h2>
           <p className="panel-lead">
-            Extra kandidater utöver dagens {picksPerDay} unika tips.
+            Extra kandidater utöver dagens {picksPerDay} tips per marknad.
           </p>
-          <div className="match-cards">
-            {tip.candidates.slice(picks.length).map((c, i) => (
-              <OddsetPickCard
-                key={c.eventId}
-                c={c}
-                index={picks.length + i + 1}
-                tracked={trackedById.get(c.eventId)}
-              />
-            ))}
-          </div>
+          {extra1x2.length > 0 && (
+            <>
+              <h3>1X2</h3>
+              <div className="match-cards">
+                {extra1x2.map((c, i) => (
+                  <OddsetPickCard
+                    key={`x-${oddsetTrackKey(c)}`}
+                    c={c}
+                    index={picks1x2.length + i + 1}
+                    tracked={trackedByKey.get(oddsetTrackKey(c))}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          {extraOver.length > 0 && (
+            <>
+              <h3>Över 1,5</h3>
+              <div className="match-cards">
+                {extraOver.map((c, i) => (
+                  <OddsetPickCard
+                    key={`o-${oddsetTrackKey(c)}`}
+                    c={c}
+                    index={picks.length + i + 1}
+                    tracked={trackedByKey.get(oddsetTrackKey(c))}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </section>
       )}
 

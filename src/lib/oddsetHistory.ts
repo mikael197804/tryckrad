@@ -19,6 +19,15 @@ export type OddsetTrackedTip = OddsetCandidate & {
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 const STORE_PATH = path.join("/tmp", "mikaels-oddset-history.json");
 
+export function oddsetTipKey(
+  t: Pick<OddsetCandidate, "eventId" | "market" | "pick1x2">
+): string {
+  if (t.market === "1x2") {
+    return `${t.eventId}:1x2:${t.pick1x2 || "?"}`;
+  }
+  return `${t.eventId}:${t.market || "over_1_5"}`;
+}
+
 type GlobalStore = {
   tips: OddsetTrackedTip[];
   loaded: boolean;
@@ -96,10 +105,11 @@ export async function rememberOddsetTips(
 ): Promise<void> {
   await ensureLoaded();
   const s = store();
-  const byId = new Map(s.tips.map((t) => [t.eventId, t]));
+  const byId = new Map(s.tips.map((t) => [oddsetTipKey(t), t]));
   for (const c of selected) {
-    const prev = byId.get(c.eventId);
-    byId.set(c.eventId, toTracked(c, tippedAt, prev));
+    const key = oddsetTipKey(c);
+    const prev = byId.get(key);
+    byId.set(key, toTracked(c, tippedAt, prev));
   }
   s.tips = prune([...byId.values()]);
   await persist();
@@ -111,7 +121,7 @@ export async function importOddsetTips(
 ): Promise<void> {
   await ensureLoaded();
   const s = store();
-  const byId = new Map(s.tips.map((t) => [t.eventId, t]));
+  const byId = new Map(s.tips.map((t) => [oddsetTipKey(t), t]));
   const nowIso = new Date().toISOString();
   for (const raw of tips) {
     if (!raw?.eventId || !raw.home || !raw.away || !raw.kickoff) continue;
@@ -120,11 +130,15 @@ export async function importOddsetTips(
     if (!Number.isFinite(tippedMs) || Date.now() - tippedMs > RETENTION_MS) {
       continue;
     }
-    const prev = byId.get(raw.eventId);
-    // Behåll äldre tippedAt och eventuell settlement
+    const key = oddsetTipKey(raw);
+    const prev = byId.get(key);
     byId.set(
-      raw.eventId,
-      toTracked(raw, tippedAt, prev ? { ...prev, tippedAt: prev.tippedAt } : undefined)
+      key,
+      toTracked(
+        raw,
+        tippedAt,
+        prev ? { ...prev, tippedAt: prev.tippedAt } : undefined
+      )
     );
   }
   s.tips = prune([...byId.values()]);
@@ -135,7 +149,18 @@ function applyScore(
   tip: OddsetTrackedTip,
   score: NonNullable<Awaited<ReturnType<typeof lookupMatchScore>>>
 ): OddsetTrackedTip {
+  const is1x2 = tip.market === "1x2";
+  const pick = tip.pick1x2;
+
   if (score.status === "live") {
+    let liveNote = `Live ${score.homeGoals}–${score.awayGoals}`;
+    if (is1x2 && pick) {
+      liveNote += ` · tippat ${pick}`;
+    } else {
+      liveNote += ` · ${
+        score.overLineHit ? "Över 1,5 redan inne" : "väntar på fler mål"
+      }`;
+    }
     return {
       ...tip,
       outcome: "live",
@@ -143,9 +168,28 @@ function applyScore(
       awayGoals: score.awayGoals,
       totalGoals: score.totalGoals,
       settledAt: null,
-      resultNote: `Live ${score.homeGoals}–${score.awayGoals} · ${
-        score.overLineHit ? "Över 1,5 redan inne" : "väntar på fler mål"
-      }`,
+      resultNote: liveNote,
+    };
+  }
+
+  if (is1x2 && pick) {
+    const actual: "1" | "X" | "2" =
+      score.homeGoals > score.awayGoals
+        ? "1"
+        : score.homeGoals < score.awayGoals
+          ? "2"
+          : "X";
+    const won = actual === pick;
+    return {
+      ...tip,
+      outcome: won ? "won" : "lost",
+      homeGoals: score.homeGoals,
+      awayGoals: score.awayGoals,
+      totalGoals: score.totalGoals,
+      settledAt: new Date().toISOString(),
+      resultNote: won
+        ? `Rätt · ${score.homeGoals}–${score.awayGoals} (1X2 ${pick})`
+        : `Fel · ${score.homeGoals}–${score.awayGoals} (tippat ${pick}, blev ${actual})`,
     };
   }
 
@@ -175,7 +219,6 @@ export async function settleOddsetTips(): Promise<OddsetTrackedTip[]> {
       updated.push(tip);
       continue;
     }
-    // Vänta tills matchen rimligen startat
     const kick = Date.parse(tip.kickoff);
     if (Number.isFinite(kick) && Date.now() < kick + 5 * 60 * 1000) {
       updated.push(tip);
@@ -202,7 +245,6 @@ export async function settleOddsetTips(): Promise<OddsetTrackedTip[]> {
 
   s.tips = updated;
   await persist();
-  // Lär av varje avgjort tips (rätt/fel) innan nästa urval
   await learnFromSettledTips(updated);
   return listTrackedOddsetTips();
 }

@@ -268,6 +268,25 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
         resultNote: `Live ${score.homeGoals}–${score.awayGoals}`,
       };
     }
+    if (pick.market === "1x2") {
+      const actual =
+        score.homeGoals > score.awayGoals
+          ? "1"
+          : score.homeGoals < score.awayGoals
+            ? "2"
+            : "X";
+      const tipped = pick.pick[0] || "";
+      const won = tipped === actual;
+      return {
+        ...pick,
+        status: won ? "won" : "lost",
+        actual: `${score.homeGoals}-${score.awayGoals}`,
+        settledAt: pick.settledAt || new Date().toISOString(),
+        resultNote: won
+          ? `Rätt · ${score.homeGoals}–${score.awayGoals} (1X2 ${tipped})`
+          : `Fel · ${score.homeGoals}–${score.awayGoals} (tippat ${tipped}, blev ${actual})`,
+      };
+    }
     const line = pick.market === "over_2_5" ? 2.5 : 1.5;
     const minGoals = line === 2.5 ? 3 : 2;
     const won = score.totalGoals >= minGoals;

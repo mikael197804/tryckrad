@@ -481,6 +481,8 @@ export async function learnFromSettledTips(
   const byId = new Map(s.memory.lessons.map((l) => [l.eventId, l]));
 
   for (const tip of tips) {
+    // Lärdomsmodellen är kalibrerad för Över-mål; 1X2 hanteras separat i analysen.
+    if (tip.market === "1x2") continue;
     const lesson = classifyTip(tip);
     if (!lesson) continue;
     const prev = byId.get(lesson.eventId);
