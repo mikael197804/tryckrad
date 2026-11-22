@@ -7,7 +7,7 @@ import { isOwnerSession } from "./lib/auth/owner";
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|audio/|.*\\.(?:mp3|m4a|wav|ogg|jpg|jpeg|png|webp|svg|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|audio/|demo/|.*\\.(?:mp3|m4a|mp4|wav|ogg|jpg|jpeg|png|webp|svg|ico)$).*)",
   ],
 };
 
@@ -15,16 +15,18 @@ function isPublicPath(pathname: string): boolean {
   if (pathname === "/login") return true;
   if (pathname.startsWith("/api/auth/login")) return true;
   if (pathname.startsWith("/audio/")) return true;
+  if (pathname.startsWith("/demo/")) return true;
   return false;
 }
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Statiska ljudfiler får aldrig skickas till login
+  // Statiska ljud-/videofiler får aldrig skickas till login
   if (
     pathname.startsWith("/audio/") ||
-    /\.(?:mp3|m4a|wav|ogg)$/i.test(pathname)
+    pathname.startsWith("/demo/") ||
+    /\.(?:mp3|m4a|mp4|wav|ogg)$/i.test(pathname)
   ) {
     return NextResponse.next();
   }
