@@ -184,6 +184,9 @@ export type SystemPick = {
   outcomes: Outcome[];
   cover: "enkel" | "halv" | "hel";
   reason: string;
+  /** True när modellen inte kan avgöra matchen (helgardering). */
+  undecided?: boolean;
+  undecidedNote?: string;
 };
 
 export type GeneratedSystem = {
@@ -203,4 +206,6 @@ export type GeneratedSystem = {
    * annars samma som estimatedHitPct.
    */
   estimatedWinPct?: number | null;
+  /** Matchnummer som inte kan avgöras (helgardering). */
+  undecidedEventNumbers?: number[];
 };

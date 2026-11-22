@@ -893,6 +893,44 @@ select {
   font-size: 0.9rem;
 }
 
+.coupon-row.undecided {
+  background: rgba(255, 180, 70, 0.1);
+  border-left: 3px solid rgba(255, 180, 70, 0.75);
+  padding-left: 0.4rem;
+  margin-left: -0.25rem;
+}
+
+.undecided-banner {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 180, 70, 0.45);
+  background: rgba(255, 180, 70, 0.12);
+  color: #ffe0a8;
+  font-size: 0.88rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.undecided-tag {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #1a1208;
+  background: #ffc45c;
+  vertical-align: middle;
+}
+
+.match-card.undecided-match {
+  border-color: rgba(255, 180, 70, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 180, 70, 0.2);
+}
+
 .coupon-marks {
   display: flex;
   gap: 0.3rem;

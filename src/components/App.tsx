@@ -493,17 +493,38 @@ function CouponView({
           )}
         </div>
       </div>
+      {!isMal &&
+        (system.undecidedEventNumbers?.length ?? 0) > 0 && (
+          <div className="undecided-banner" role="status">
+            Kan inte avgöras:{" "}
+            {system.picks
+              .filter((p) => p.undecided)
+              .map((p) => `match ${p.eventNumber} (${p.description})`)
+              .join(" · ")}
+            . Helgarderas (1/X/2).
+          </div>
+        )}
       {system.picks.map((p) => {
         const malOn =
           isMal &&
           (system.malEventNumbers?.includes(p.eventNumber) ||
             p.outcomes.length > 0);
         return (
-          <div className="coupon-row" key={p.eventNumber}>
+          <div
+            className={`coupon-row ${p.undecided ? "undecided" : ""}`}
+            key={p.eventNumber}
+          >
             <strong>{p.eventNumber}</strong>
             <div>
-              <div>{p.description}</div>
-              <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>{p.reason}</div>
+              <div>
+                {p.description}
+                {p.undecided && (
+                  <span className="undecided-tag"> Kan inte avgöras</span>
+                )}
+              </div>
+              <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>
+                {p.undecidedNote || p.reason}
+              </div>
             </div>
             {isMal ? (
               <div className="coupon-marks">
@@ -1665,14 +1686,39 @@ export default function App() {
                   </p>
 
                   <div className="match-cards">
-                    {draw.matches.map((m) => (
-                      <article className="match-card" key={m.eventNumber}>
+                    {draw.matches.map((m) => {
+                      const undecided =
+                        draw.systems[selectedSystem]?.undecidedEventNumbers?.includes(
+                          m.eventNumber
+                        ) ||
+                        draw.systems[selectedSystem]?.picks.find(
+                          (p) => p.eventNumber === m.eventNumber
+                        )?.undecided;
+                      const undecidedNote = draw.systems[
+                        selectedSystem
+                      ]?.picks.find(
+                        (p) => p.eventNumber === m.eventNumber
+                      )?.undecidedNote;
+                      return (
+                      <article
+                        className={`match-card ${undecided ? "undecided-match" : ""}`}
+                        key={m.eventNumber}
+                      >
                         <div className="match-card-top">
                           <span className="match-num">{m.eventNumber}</span>
                           <div>
-                            <strong>{m.description}</strong>
+                            <strong>
+                              {m.description}
+                              {undecided && (
+                                <span className="undecided-tag">
+                                  {" "}
+                                  Kan inte avgöras
+                                </span>
+                              )}
+                            </strong>
                             <div className="reason">
                               {fmtTime(m.matchStart)} · {m.league}
+                              {undecidedNote ? ` · ${undecidedNote}` : ""}
                             </div>
                           </div>
                           <div className="pick-cells">
@@ -1796,7 +1842,8 @@ export default function App() {
                           </div>
                         )}
                       </article>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <div className="match-table-wrap">

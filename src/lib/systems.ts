@@ -374,17 +374,42 @@ function makePicks(
   matches: MatchAnalysis[],
   coverPlan: CoverPlan[]
 ): SystemPick[] {
+  // Den match vi minst kan avgöra = hel, annars svagaste halv
+  let undecidedIdx = coverPlan.findIndex((c) => c === "hel");
+  if (undecidedIdx < 0) {
+    let worst = -1;
+    let worstNeed = -1;
+    for (let i = 0; i < matches.length; i++) {
+      if (coverPlan[i] !== "halv") continue;
+      const need = matchProbabilities(matches[i]).hedgeNeed;
+      if (need > worstNeed) {
+        worstNeed = need;
+        worst = i;
+      }
+    }
+    undecidedIdx = worst;
+  }
+
   return matches.map((m, i) => {
     const plan = coverPlan[i] ?? "enkel";
     const pr = matchProbabilities(m);
     let outcomes: Outcome[];
     let reason = m.pickReason;
+    const undecided = i === undecidedIdx;
+    let undecidedNote: string | undefined;
     if (plan === "hel") {
       outcomes = ["1", "X", "2"];
-      reason = `helgardering (osäker) – ${m.pickReason}`;
+      undecidedNote =
+        "Kan inte avgöras – för jämnt/osäkert. Helgarderas (1/X/2).";
+      reason = `${undecidedNote} ${m.pickReason}`;
     } else if (plan === "halv") {
       outcomes = pr.bestHalf;
-      reason = `halv ${outcomes.join("")} (~${Math.round(pr.bestHalfP * 100)}%) – ${m.pickReason}`;
+      if (undecided) {
+        undecidedNote = `Kan inte avgöras säkert – svåraste matchen. Halv ${outcomes.join("")}.`;
+        reason = `${undecidedNote} ${m.pickReason}`;
+      } else {
+        reason = `halv ${outcomes.join("")} (~${Math.round(pr.bestHalfP * 100)}%) – ${m.pickReason}`;
+      }
     } else {
       outcomes = [pr.bestSingle];
       reason = `enkel ${pr.bestSingle} (~${Math.round(pr.bestSingleP * 100)}%) – ${m.pickReason}`;
@@ -395,6 +420,8 @@ function makePicks(
       outcomes,
       cover: coverLabel(outcomes),
       reason,
+      undecided,
+      undecidedNote,
     };
   });
 }
@@ -515,6 +542,14 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
         m.homeFatigue.level !== "low" || m.awayFatigue.level !== "low"
     ).length;
 
+    const undecidedPicks = picks.filter((p) => p.undecided);
+    const undecidedEventNumbers = undecidedPicks.map((p) => p.eventNumber);
+    const undecidedLabel = undecidedPicks.length
+      ? `Kan inte avgöras: match ${undecidedPicks
+          .map((p) => `${p.eventNumber} (${p.description})`)
+          .join(", ")} – helgarderas.`
+      : "";
+
     const safetyNote =
       cost === 48
         ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
@@ -530,11 +565,12 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
       costKr: cost,
       rows: cost,
       picks,
-      summary: `${safetyNote} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${fatigueMatches} matcher med belastning vägdes in.`,
+      summary: `${safetyNote} ${undecidedLabel} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${fatigueMatches} matcher med belastning vägdes in.`,
       risk: riskFromHitPct(winPct, cost),
       kind: "1x2",
       estimatedHitPct: hitPct,
       estimatedWinPct: winPct,
+      undecidedEventNumbers,
     });
 
     if (systems.length >= 5) break;
