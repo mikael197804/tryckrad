@@ -20,6 +20,14 @@ function isPublicPath(pathname: string): boolean {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // Statiska ljudfiler får aldrig skickas till login
+  if (
+    pathname.startsWith("/audio/") ||
+    /\.(?:mp3|m4a|wav|ogg)$/i.test(pathname)
+  ) {
+    return NextResponse.next();
+  }
+
   if (isPublicPath(pathname)) {
     // Redan inloggad → skicka hem från login
     if (pathname === "/login") {
