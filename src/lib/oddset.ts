@@ -94,8 +94,15 @@ const STOCKHOLM = "Europe/Stockholm";
 /** Oddset-linje: Över 1,5 (vinst vid ≥2 mål). */
 export const ODDSET_GOAL_LINE = 1.5;
 export const ODDSET_MIN_GOALS_TO_WIN = 2;
-/** Visa bara matcher där modellen tror Över 1,5 är sannolikt (högre golv – linjen är lättare). */
-const MIN_OVER15_PROB = 0.62;
+/**
+ * Visa bara matcher där modellen tror Över 1,5 är sannolikt.
+ * Högt golv: Ö1,5-matcher blir ofta 0–0 / 1 mål utan extra stege-check.
+ */
+const MIN_OVER15_PROB = 0.7;
+/** Minsta xG innan Ö1,5 får tippas (annars 0–1-fälla). */
+const MIN_LAMBDA_FOR_OVER15 = 2.2;
+/** Max tillåten Poisson-sannolikhet för ≤1 mål. */
+const MAX_P01_PCT = 32;
 
 type KambiEvent = {
   id: number;
@@ -126,6 +133,12 @@ type MatchMarkets = {
   odds35: number | null;
   under15: number | null;
   under25: number | null;
+  /** Båda lagen gör mål – Ja. */
+  bttsYes: number | null;
+  /** Båda lagen gör mål – Nej (lågmålssignal). */
+  bttsNo: number | null;
+  /** 1X2-kryss (kort X + låg målbild ≈ 0–0-risk). */
+  drawOdds: number | null;
   redCardYes: number | null;
   redCardNo: number | null;
   totalCardsOver: { line: number; odds: number } | null;
@@ -238,6 +251,172 @@ function poissonCdfAtLeast(lambda: number, minGoals: number): number {
   return Math.max(0, Math.min(1, 1 - pLess));
 }
 
+function poissonPExact(lambda: number, k: number): number {
+  if (lambda <= 0) return k === 0 ? 1 : 0;
+  return (Math.exp(-lambda) * Math.pow(lambda, k)) / factorial(k);
+}
+
+type OpenGameCheck = {
+  ok: boolean;
+  p01Pct: number | null;
+  green: string[];
+  red: string[];
+};
+
+/**
+ * Extra läsning runt matchen för Över 1,5:
+ * Ö1,5-odds ensamt räcker inte – många “billiga” Ö1,5 blir 0–0 eller 1–0.
+ * Kräver Ö/U-stege + öppet-spel-signaler (xG, Under 2,5, BTTS, kryss).
+ */
+function assessOpenGameForOver15(args: {
+  odds15: number;
+  under15: number | null;
+  odds25: number | null;
+  under25: number | null;
+  bttsYes: number | null;
+  bttsNo: number | null;
+  drawOdds: number | null;
+  lambda: number | null;
+  p15: number;
+}): OpenGameCheck {
+  const green: string[] = [];
+  const red: string[] = [];
+  let p01Pct: number | null = null;
+  let fatal = false;
+
+  const hasLadder =
+    (args.under15 != null && args.under15 > 1) ||
+    (args.odds25 != null &&
+      args.odds25 > 1 &&
+      args.under25 != null &&
+      args.under25 > 1);
+  if (!hasLadder) {
+    red.push("saknar Ö/U-stege – kan inte utesluta 0–0/1-mål");
+    return { ok: false, p01Pct, green, red };
+  }
+
+  if (args.lambda != null) {
+    const p0 = poissonPExact(args.lambda, 0);
+    const p1 = poissonPExact(args.lambda, 1);
+    p01Pct = Math.round((p0 + p1) * 1000) / 10;
+    if (args.lambda < MIN_LAMBDA_FOR_OVER15) {
+      red.push(
+        `xG≈${args.lambda.toFixed(2).replace(".", ",")} för lågt (0–1-mål-risk)`
+      );
+      fatal = true;
+    } else if (args.lambda >= 2.55) {
+      green.push(
+        `xG≈${args.lambda.toFixed(2).replace(".", ",")} stödjer öppet spel`
+      );
+    }
+
+    if (p01Pct >= MAX_P01_PCT) {
+      red.push(
+        `Poisson P(≤1 mål) ≈ ${p01Pct.toFixed(0)}% – klassisk 0–0/1-0-fälla`
+      );
+      fatal = true;
+    } else if (p01Pct <= 26) {
+      green.push(`P(≤1 mål) ≈ ${p01Pct.toFixed(0)}% – låg lågmålsrisk`);
+    }
+  } else {
+    red.push("kunde inte uppskatta xG från oddsstegen");
+    fatal = true;
+  }
+
+  if (args.under15 != null && args.under15 > 1) {
+    const a = 1 / args.odds15;
+    const b = 1 / args.under15;
+    const pUnder15 = b / (a + b);
+    if (pUnder15 >= 0.36) {
+      red.push(
+        `marknad ger Under 1,5 ~${Math.round(pUnder15 * 100)}% – undvik`
+      );
+      fatal = true;
+    } else if (args.under15 >= 3.1) {
+      green.push(
+        `Under 1,5 @ ${args.under15.toFixed(2).replace(".", ",")} – marknaden tror på mål`
+      );
+    }
+  }
+
+  if (args.under25 != null && args.odds25 != null) {
+    if (args.under25 <= 1.68 && args.odds25 >= 2.05) {
+      red.push(
+        `Under 2,5 @ ${args.under25.toFixed(2).replace(".", ",")} / Ö2,5 @ ${args.odds25
+          .toFixed(2)
+          .replace(".", ",")} – lågmålsprofil`
+      );
+      fatal = true;
+    } else if (args.odds25 <= 1.82 && args.under25 >= 1.9) {
+      green.push(
+        `Ö2,5 @ ${args.odds25.toFixed(2).replace(".", ",")} stödjer mer än ett mål`
+      );
+    } else if (args.under25 <= 1.72) {
+      red.push(
+        `kort Under 2,5 @ ${args.under25.toFixed(2).replace(".", ",")} – ofta 0–1 mål`
+      );
+    }
+  }
+
+  if (args.bttsYes != null && args.bttsNo != null) {
+    if (args.bttsNo < args.bttsYes * 0.95) {
+      red.push(
+        `BTTS Nej @ ${args.bttsNo.toFixed(2).replace(".", ",")} favorit – 0–0/1–0-risk`
+      );
+    } else if (args.bttsYes < args.bttsNo * 0.92) {
+      green.push(
+        `BTTS Ja @ ${args.bttsYes.toFixed(2).replace(".", ",")} – båda lagen förväntas göra mål`
+      );
+    }
+  }
+
+  if (args.drawOdds != null) {
+    const lowGoals =
+      (args.under25 != null && args.under25 <= 1.85) ||
+      (args.lambda != null && args.lambda < 2.45);
+    if (args.drawOdds <= 2.95 && lowGoals) {
+      red.push(
+        `kort kryss @ ${args.drawOdds.toFixed(2).replace(".", ",")} + låg målbild`
+      );
+    } else if (args.drawOdds >= 3.5) {
+      green.push(
+        `kryss @ ${args.drawOdds.toFixed(2).replace(".", ",")} – mindre 0–0-favorit`
+      );
+    }
+  }
+
+  if (
+    args.odds15 >= 1.4 &&
+    args.under25 != null &&
+    args.under25 <= 1.7
+  ) {
+    red.push(
+      `Ö1,5 @ ${args.odds15.toFixed(2).replace(".", ",")} men Under 2,5 kort – ofta exakt 1 mål`
+    );
+    fatal = true;
+  }
+
+  if (args.p15 >= 0.78) {
+    green.push(`modell ${Math.round(args.p15 * 100)}% på ≥2 mål`);
+  } else if (args.p15 < MIN_OVER15_PROB) {
+    red.push(`modell bara ${Math.round(args.p15 * 100)}% – för tunt`);
+    fatal = true;
+  }
+
+  // Minst två positiva signaler och inga fatala lågmålsflaggor.
+  // En mild röd tillåts bara om det finns tydligt överskott av gröna.
+  const ok =
+    !fatal &&
+    green.length >= 2 &&
+    (red.length === 0 || (red.length === 1 && green.length >= 4));
+
+  if (!ok && !fatal && green.length < 2) {
+    red.push("för få öppet-spel-signaler runt matchen");
+  }
+
+  return { ok, p01Pct, green, red };
+}
+
 /** Uppskatta λ (förväntade mål) från Ö/U-stegen. */
 function estimateExpectedGoals(
   odds15: number | null,
@@ -316,6 +495,9 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
   let odds35: number | null = null;
   let under15: number | null = null;
   let under25: number | null = null;
+  let bttsYes: number | null = null;
+  let bttsNo: number | null = null;
+  let drawOdds: number | null = null;
   let redCardYes: number | null = null;
   let redCardNo: number | null = null;
   let totalCardsOver: { line: number; odds: number } | null = null;
@@ -338,6 +520,28 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
           if (line === 1.5) under15 = odds;
           if (line === 2.5) under25 = odds;
         }
+      }
+    }
+
+    if (
+      label === "Both Teams To Score" ||
+      label === "Båda lagen gör mål"
+    ) {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const odds = parseOdds(o.odds);
+        if (odds == null) continue;
+        if (side === "ja" || side === "yes") bttsYes = odds;
+        if (side === "nej" || side === "no") bttsNo = odds;
+      }
+    }
+
+    if (label === "Full Time" || label === "Match Odds" || label === "Matchodds") {
+      for (const o of bo.outcomes || []) {
+        const side = (o.label || "").toLowerCase();
+        const odds = parseOdds(o.odds);
+        if (odds == null) continue;
+        if (side === "x" || side === "draw") drawOdds = odds;
       }
     }
 
@@ -375,6 +579,9 @@ function extractMarkets(betOffers: KambiBetOffer[]): MatchMarkets {
     odds35,
     under15,
     under25,
+    bttsYes,
+    bttsNo,
+    drawOdds,
     redCardYes,
     redCardNo,
     totalCardsOver,
@@ -566,6 +773,8 @@ function buildCandidate(
   if (markets.odds15 == null || markets.odds15 <= 1) return null;
   // För öppna spel: undvik nästan avgjorda/live-lika korta Över-odds
   if (markets.odds15 < 1.12) return null;
+  // För “mjuka” Ö1,5 (≥1,48) krävs ännu tydligare öppet spel – annars 1-målsmatcher
+  if (markets.odds15 > 1.55) return null;
 
   const lambda = estimateExpectedGoals(
     markets.odds15,
@@ -581,6 +790,19 @@ function buildCandidate(
   );
   if (p15 == null || p15 < MIN_OVER15_PROB) return null;
 
+  const openCheck = assessOpenGameForOver15({
+    odds15: markets.odds15,
+    under15: markets.under15,
+    odds25: markets.odds25,
+    under25: markets.under25,
+    bttsYes: markets.bttsYes,
+    bttsNo: markets.bttsNo,
+    drawOdds: markets.drawOdds,
+    lambda,
+    p15,
+  });
+  if (!openCheck.ok) return null;
+
   const rivalry = analyzeRivalry(home, away, league);
   const redCard = analyzeRedCard(markets, rivalry);
 
@@ -589,6 +811,13 @@ function buildCandidate(
   reasons.push(
     `Modell: ${over25ProbPct.toFixed(1).replace(".", ",")}% chans till minst 2 mål`
   );
+  if (openCheck.p01Pct != null) {
+    reasons.push(
+      `lågmålskontroll: P(≤1 mål) ≈ ${openCheck.p01Pct
+        .toFixed(0)
+        .replace(".", ",")}%`
+    );
+  }
   if (lambda != null) {
     reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
   }
@@ -598,12 +827,31 @@ function buildCandidate(
   if (markets.odds25 != null) {
     reasons.push(`Ö2,5 @ ${markets.odds25.toFixed(2).replace(".", ",")}`);
   }
+  if (markets.under25 != null) {
+    reasons.push(
+      `U2,5 @ ${markets.under25.toFixed(2).replace(".", ",")}`
+    );
+  }
+  if (markets.bttsYes != null) {
+    reasons.push(
+      `BTTS Ja @ ${markets.bttsYes.toFixed(2).replace(".", ",")}`
+    );
+  }
+  // Visa de starkaste öppet-spel-signalerna
+  for (const g of openCheck.green.slice(0, 2)) {
+    reasons.push(g);
+  }
   if (rivalry.level !== "none") reasons.push(rivalry.note);
   if (redCard.level !== "low") reasons.push(`rött kort: ${redCard.note}`);
 
-  // Score: sannolikhet först, sedan liga, rivalitet/kort som kontext
+  // Score: sannolikhet först, sedan liga, öppet-spel, rivalitet/kort
   let score = over25ProbPct * 1.2;
-  if (lambda != null) score += Math.min(12, (lambda - 1.8) * 8);
+  if (lambda != null) score += Math.min(14, (lambda - 2.0) * 10);
+  if (openCheck.p01Pct != null) {
+    score += Math.max(0, (28 - openCheck.p01Pct) * 0.6);
+  }
+  score += openCheck.green.length * 3;
+  score -= openCheck.red.length * 6;
 
   const topCountry =
     /england|spanien|spain|italien|italy|tyskland|germany|frankrike|france|nederländerna|netherlands|portugal|sverige|sweden|skottland|scotland/i.test(
@@ -619,11 +867,11 @@ function buildCandidate(
   }
 
   // Liten bonus för derby (underhållning/hets) men inte krav
-  if (rivalry.level === "likely") score += 3;
-  if (redCard.level === "high") score += 2;
+  if (rivalry.level === "likely") score += 2;
+  if (redCard.level === "high") score += 1;
 
-  // Preferera rimliga Över 1,5-odds (ca 1,30–1,50)
-  score += Math.max(0, 12 - Math.abs(markets.odds15 - 1.38) * 8);
+  // Preferera rimliga Över 1,5-odds (ca 1,22–1,40) – inte ultrakorta och inte mjuka
+  score += Math.max(0, 14 - Math.abs(markets.odds15 - 1.3) * 12);
 
   // Överodds/värde: modellens p högre än oddsimplicit
   const ov = overMarketValue({
@@ -683,6 +931,9 @@ async function fetchMarketsForEvents(
             odds35: null,
             under15: null,
             under25: null,
+            bttsYes: null,
+            bttsNo: null,
+            drawOdds: null,
             redCardYes: null,
             redCardNo: null,
             totalCardsOver: null,
@@ -906,6 +1157,7 @@ export async function buildOddsetDayTip(opts?: {
       "Bara matcher som inte startat ännu (för nya tips).",
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: grönt = Över 1,5 rätt (≥2 mål), rött = fel.",
+      "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel (många Ö1,5 blir annars 0–0/1 mål).",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
       `Sannolikhetsgolv nu: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",

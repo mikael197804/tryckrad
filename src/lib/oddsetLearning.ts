@@ -558,14 +558,19 @@ export function oddsetLearningAdjust(args: {
 
   const probFloorBump = biases.raiseProbFloor;
 
-  if (biases.cutShortOverOdds > 0 && candidate.odds <= 1.55) {
+  // Ö1,5 är ofta kort – straffa bara ultrakorta utan öppet-spel-stöd (lågt xG).
+  if (
+    biases.cutShortOverOdds > 0 &&
+    candidate.odds <= 1.18 &&
+    (candidate.expectedGoals == null || candidate.expectedGoals < 2.6)
+  ) {
     scoreDelta -= biases.cutShortOverOdds * 80;
-    notes.push("Lärdom: ultrakorta Över har missat – tona ner");
+    notes.push("Lärdom: ultrakorta Ö1,5 utan målbild har missat – tona ner");
   }
   if (
     biases.cutHighXgBlindTrust > 0 &&
     candidate.expectedGoals != null &&
-    candidate.expectedGoals >= 3.0
+    candidate.expectedGoals >= 2.8
   ) {
     scoreDelta -= biases.cutHighXgBlindTrust * 70;
     notes.push("Lärdom: hög xG har överskattats tidigare");
