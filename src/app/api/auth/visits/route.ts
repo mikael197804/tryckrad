@@ -4,17 +4,28 @@ import {
   clientIpFromHeaders,
   listVisits,
   recordVisit,
+  rememberStoreToken,
 } from "../../../../lib/auth/visits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function storeTokenFrom(req: NextRequest): string | null {
+  return (
+    req.headers.get("x-user-store-token")?.trim() ||
+    req.headers.get("x-github-token")?.trim() ||
+    null
+  );
+}
 
 export async function GET(req: NextRequest) {
   const session = await readSessionFromRequest(req);
   if (!session || session.role !== "admin") {
     return NextResponse.json({ error: "Endast admin" }, { status: 403 });
   }
-  const visits = await listVisits(150);
+  const token = storeTokenFrom(req);
+  if (token) await rememberStoreToken(token);
+  const visits = await listVisits(150, token);
   return NextResponse.json({
     visits,
     generatedAt: new Date().toISOString(),
@@ -38,6 +49,7 @@ export async function POST(req: NextRequest) {
     /* ignore */
   }
 
+  const token = storeTokenFrom(req);
   const ip = clientIpFromHeaders(req.headers);
   await recordVisit({
     ip,
@@ -46,9 +58,9 @@ export async function POST(req: NextRequest) {
     path: pathName,
     kind: "view",
     userAgent: req.headers.get("user-agent"),
+    storeToken: token,
   });
 
-  // IP syns bara i admin-svaret om anroparen är admin
   if (session.role === "admin") {
     return NextResponse.json({ ok: true, ip });
   }

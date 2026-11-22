@@ -1537,8 +1537,8 @@ function UsersAdminPanel({ onClose }: { onClose: () => void }) {
 
   const load = useCallback(async () => {
     const [usersRes, visitsRes] = await Promise.all([
-      fetch("/api/auth/users", { cache: "no-store" }),
-      fetch("/api/auth/visits", { cache: "no-store" }),
+      fetch("/api/auth/users", { cache: "no-store", headers: storeHeaders() }),
+      fetch("/api/auth/visits", { cache: "no-store", headers: storeHeaders() }),
     ]);
     const usersJson = (await usersRes.json()) as {
       users?: AuthUser[];
@@ -1933,7 +1933,7 @@ export default function App() {
     if (!authUser) return;
     void fetch("/api/auth/visits", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: storeHeaders(),
       body: JSON.stringify({ path: window.location.pathname || "/" }),
     }).catch(() => {
       /* ignore */
