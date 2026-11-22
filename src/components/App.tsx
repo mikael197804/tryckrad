@@ -1466,6 +1466,204 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
   );
 }
 
+type AuthUser = {
+  id: string;
+  name: string;
+  role: "admin" | "user";
+  active: boolean;
+  createdAt: string;
+};
+
+function UsersAdminPanel({ onClose }: { onClose: () => void }) {
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<"admin" | "user">("user");
+  const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{
+    name: string;
+    password: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await fetch("/api/auth/users", { cache: "no-store" });
+    const json = (await res.json()) as { users?: AuthUser[]; error?: string };
+    if (!res.ok) throw new Error(json.error || "Kunde inte hämta användare");
+    setUsers(json.users || []);
+  }, []);
+
+  useEffect(() => {
+    void load().catch((e) =>
+      setError(e instanceof Error ? e.message : "Fel")
+    );
+  }, [load]);
+
+  async function createUser() {
+    setBusy(true);
+    setError(null);
+    setCreated(null);
+    try {
+      const res = await fetch("/api/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, role, autoPassword: true }),
+      });
+      const json = (await res.json()) as {
+        user?: AuthUser;
+        password?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || "Kunde inte skapa");
+      setCreated({
+        name: json.user?.name || name,
+        password: json.password || "",
+      });
+      setName("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fel");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleActive(u: AuthUser) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: u.id, active: !u.active }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || "Kunde inte uppdatera");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fel");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetPassword(u: AuthUser) {
+    setBusy(true);
+    setError(null);
+    setCreated(null);
+    try {
+      const res = await fetch("/api/auth/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: u.id, resetPassword: true }),
+      });
+      const json = (await res.json()) as {
+        user?: AuthUser;
+        password?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || "Kunde inte återställa");
+      setCreated({
+        name: json.user?.name || u.name,
+        password: json.password || "",
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fel");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="history-overlay" role="dialog" aria-modal="true">
+      <div className="history-panel rise">
+        <div className="history-panel-top">
+          <h2>Användare</h2>
+          <div className="history-actions">
+            <button type="button" className="history-btn" onClick={onClose}>
+              Stäng
+            </button>
+          </div>
+        </div>
+        <p className="panel-lead">
+          Skapa konton med namn och lösenord. Nya lösenord visas en gång –
+          skicka dem till personen.
+        </p>
+
+        <div className="users-admin-form">
+          <label>
+            Namn
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="t.ex. Anna"
+              minLength={2}
+            />
+          </label>
+          <label>
+            Roll
+            <select
+              value={role}
+              onChange={(e) =>
+                setRole(e.target.value === "admin" ? "admin" : "user")
+              }
+            >
+              <option value="user">Användare</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={busy || name.trim().length < 2}
+            onClick={() => void createUser()}
+          >
+            Skapa konto
+          </button>
+        </div>
+
+        {error && <div className="status-banner error">{error}</div>}
+        {created && (
+          <div className="created-creds">
+            Nytt konto: <strong>{created.name}</strong>
+            <br />
+            Lösenord: <code>{created.password}</code>
+          </div>
+        )}
+
+        <ul className="users-list">
+          {users.map((u) => (
+            <li key={u.id} className={u.active ? "" : "inactive"}>
+              <div>
+                <strong>{u.name}</strong>{" "}
+                <span className="history-score">
+                  {u.role === "admin" ? "admin" : "användare"}
+                  {u.active ? "" : " · inaktiv"}
+                </span>
+              </div>
+              <div className="users-row-actions">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void resetPassword(u)}
+                >
+                  Nytt lösenord
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || u.name === "Mikael"}
+                  onClick={() => void toggleActive(u)}
+                >
+                  {u.active ? "Inaktivera" : "Aktivera"}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [product, setProduct] = useState<ProductKind>("topptipset");
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -1480,9 +1678,29 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TipHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [showUsers, setShowUsers] = useState(false);
   const selectedDrawRef = useRef<number | null>(null);
   const preCloseStartedRef = useRef(false);
   selectedDrawRef.current = selectedDraw;
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { user?: AuthUser | null };
+        if (json.user) setAuthUser(json.user);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
 
   const loadProduct = useCallback(
     async (opts: { fresh?: boolean; silent?: boolean; resetSelection?: boolean }) => {
@@ -1858,6 +2076,26 @@ export default function App() {
           >
             Oddset
           </button>
+          {authUser?.role === "admin" && (
+            <button
+              type="button"
+              className="product-btn"
+              onClick={() => setShowUsers(true)}
+              title="Hantera användare"
+            >
+              Användare
+            </button>
+          )}
+          {authUser && (
+            <button
+              type="button"
+              className="product-btn"
+              onClick={() => void logout()}
+              title={`Inloggad som ${authUser.name}`}
+            >
+              Logga ut
+            </button>
+          )}
         </div>
       </div>
 
@@ -1874,6 +2112,12 @@ export default function App() {
           </p>
         </div>
         <div className="meta-chip">
+          {authUser && (
+            <span className="user-chip">
+              Inloggad: <strong>{authUser.name}</strong>
+              {authUser.role === "admin" ? " · admin" : ""}
+            </span>
+          )}{" "}
           {product === "oddset"
             ? oddset
               ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
@@ -1893,6 +2137,10 @@ export default function App() {
           onClose={() => setShowHistory(false)}
           onRefresh={() => void loadHistory()}
         />
+      )}
+
+      {showUsers && (
+        <UsersAdminPanel onClose={() => setShowUsers(false)} />
       )}
 
       {preCloseNote && (

@@ -1450,3 +1450,183 @@ select {
 .rise {
   animation: rise 0.35s ease both;
 }
+
+/* —— Login —— */
+.login-shell {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(16, 36, 54, 0.95), rgba(8, 20, 32, 0.98));
+  box-shadow: 0 24px 60px var(--shadow);
+}
+
+.login-kicker {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
+.login-card h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  letter-spacing: 0.02em;
+}
+
+.login-lead {
+  margin: 0.45rem 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.login-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.9rem;
+}
+
+.login-field span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.login-field input {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+}
+
+.login-submit {
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.8rem 1rem;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #2aa89c, #3ec7b8);
+  color: #04221f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.login-submit:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.user-chip strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.users-admin {
+  margin-top: 1rem;
+}
+
+.users-admin-form {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.75rem 0 1rem;
+}
+
+@media (min-width: 640px) {
+  .users-admin-form {
+    grid-template-columns: 1fr 1fr auto auto;
+    align-items: end;
+  }
+}
+
+.users-admin-form label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.users-admin-form input,
+.users-admin-form select {
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+}
+
+.users-admin-form button,
+.users-row-actions button {
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(62, 199, 184, 0.15);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.users-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.users-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.users-list li.inactive {
+  opacity: 0.55;
+}
+
+.users-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.created-creds {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid rgba(62, 199, 184, 0.45);
+  background: rgba(62, 199, 184, 0.1);
+  font-size: 0.9rem;
+}
+
+.created-creds code {
+  font-weight: 700;
+  color: var(--accent-2);
+}

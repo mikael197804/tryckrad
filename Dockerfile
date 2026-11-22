@@ -19,5 +19,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public 2>/dev/null || true
 COPY --from=builder /app/next.config.js ./
+COPY --from=builder /app/data ./data
 EXPOSE 3000
 CMD ["npm", "run", "start"]
