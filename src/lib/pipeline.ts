@@ -75,7 +75,7 @@ export async function buildAllDrawBundles(
           Promise.resolve(
             product === "maltipset"
               ? generateMaltipsetSystems(matches, rowPrice)
-              : generateSystems(matches)
+              : generateSystems(matches, { product })
           ),
         ]);
 

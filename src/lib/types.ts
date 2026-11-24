@@ -264,7 +264,7 @@ export type GeneratedSystem = {
   picks: SystemPick[];
   summary: string;
   risk: "lågt" | "medel" | "högt";
-  kind?: "1x2" | "mal";
+  kind?: "1x2" | "mal" | "r";
   /** Måltipset: markerade matchnummer (M8–M14) */
   malEventNumbers?: number[];
   /** Uppskattad chans att hela kupongen täcks (0–100). */
@@ -276,4 +276,8 @@ export type GeneratedSystem = {
   estimatedWinPct?: number | null;
   /** Matchnummer som inte kan avgöras (helgardering). */
   undecidedEventNumbers?: number[];
+  /** Svenska Spel R-system, t.ex. "R 4-4-144". */
+  rSystem?: string | null;
+  /** Garanti antal rätt om alla tecken i ramen sitter (R-system). */
+  guaranteeRights?: number | null;
 };

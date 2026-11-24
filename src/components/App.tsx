@@ -956,7 +956,12 @@ function CouponView({
         }}
       >
         <span>
-          {system.rows} rader × {String(rowPrice).replace(".", ",")} kr
+          {system.kind === "r" && system.rSystem
+            ? `${system.rSystem}: ${system.rows} rader × ${String(rowPrice).replace(".", ",")} kr`
+            : `${system.rows} rader × ${String(rowPrice).replace(".", ",")} kr`}
+          {system.kind === "r" && system.guaranteeRights != null
+            ? ` · garanti ${system.guaranteeRights} rätt`
+            : ""}
         </span>
         <span>{productLabel(product)}-kupong</span>
       </div>
@@ -3439,12 +3444,16 @@ export default function App() {
                   <h2>
                     {product === "maltipset"
                       ? "M-system (8 målrikaste)"
-                      : "System 48–720 kr"}
+                      : product === "stryktipset"
+                        ? "Systemspel (6) · R 4-4-144"
+                        : "System 48–720 kr"}
                   </h2>
                   <p className="panel-lead">
                     {product === "powerplay" || product === "topptipset"
                       ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad chans till 8 rätt (utdelning) – inte garanti. "
-                      : ""}
+                      : product === "stryktipset"
+                        ? "Sex systemspel: matematiska kuponger plus reducerat R 4-4-144 (4 hel · 4 halv · 5 spik, garanti 12 rätt om tecknen sitter). "
+                        : ""}
                     Kupongen speglar {productLabel(product)}-raden på Svenska
                     Spel. Kostnad = antal kombinationer ×{" "}
                     {String(draw.rowPrice).replace(".", ",")} kr
@@ -3458,12 +3467,16 @@ export default function App() {
                         className={`system-btn ${selectedSystem === i ? "active" : ""}`}
                         onClick={() => setSelectedSystem(i)}
                       >
-                        {String(s.costKr).replace(".", ",")} kr
-                        {s.estimatedWinPct != null
-                          ? ` · ~${Math.round(s.estimatedWinPct)}%`
-                          : s.estimatedHitPct != null
-                            ? ` · ~${Math.round(s.estimatedHitPct)}%`
-                            : ` · ${s.risk}`}
+                        {s.kind === "r" && s.rSystem
+                          ? `${s.rSystem.replace(/\s+/g, "")} · ${String(s.costKr).replace(".", ",")} kr`
+                          : `${String(s.costKr).replace(".", ",")} kr`}
+                        {s.kind === "r" && s.guaranteeRights != null
+                          ? ` · G${s.guaranteeRights}`
+                          : s.estimatedWinPct != null
+                            ? ` · ~${Math.round(s.estimatedWinPct)}%`
+                            : s.estimatedHitPct != null
+                              ? ` · ~${Math.round(s.estimatedHitPct)}%`
+                              : ` · ${s.risk}`}
                       </button>
                     ))}
                   </div>

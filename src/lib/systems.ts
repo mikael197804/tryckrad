@@ -503,6 +503,97 @@ export const DAILY_SYSTEM_COST_KR = 192;
 /** @deprecated Använd DAILY_SYSTEM_COST_KR */
 export const POWERPLAY_DAILY_COST_KR = DAILY_SYSTEM_COST_KR;
 
+/** Stryktipset R 4-4-144: 4 hel · 4 halv · 5 spik, 144 rader, garanti 12. */
+export const STRYK_R44_COST_KR = 144;
+export const STRYK_R44_LABEL = "R 4-4-144";
+const STRYK_R44_HEL = 4;
+const STRYK_R44_HALV = 4;
+const STRYK_R44_GUARANTEE = 12;
+/** Full M-ram för samma garderingar (3^4 × 2^4). */
+const STRYK_R44_FULL_ROWS = 1296;
+
+/**
+ * Bygg Svenska Spels R 4-4-144 för Stryktipset (13 matcher).
+ * Kupongen visar ramen (4 hel / 4 halv / 5 spik); raderna är reducerade till 144.
+ */
+export function buildRSystem44144(
+  matches: MatchAnalysis[]
+): GeneratedSystem | null {
+  if (matches.length !== 13) return null;
+
+  const probs = matches.map(matchProbabilities);
+  const order = probs
+    .map((pr, i) => ({
+      i,
+      need: pr.hedgeNeed,
+      halfP: pr.bestHalfP,
+      singleP: pr.bestSingleP,
+    }))
+    .sort(
+      (a, b) =>
+        b.need - a.need || a.halfP - b.halfP || a.singleP - b.singleP
+    );
+
+  const plan: CoverPlan[] = Array(matches.length).fill("enkel");
+  const helOrder = [...order].sort(
+    (a, b) => a.halfP - b.halfP || b.need - a.need
+  );
+  for (let h = 0; h < STRYK_R44_HEL; h++) {
+    plan[helOrder[h].i] = "hel";
+  }
+  let halvLeft = STRYK_R44_HALV;
+  for (const o of order) {
+    if (halvLeft <= 0) break;
+    if (plan[o.i] === "hel") continue;
+    plan[o.i] = "halv";
+    halvLeft--;
+  }
+
+  // Säkerställ exakt 4/4 om sorteringen lämnade luckor
+  for (let i = 0; i < matches.length && halvLeft > 0; i++) {
+    if (plan[i] === "enkel") {
+      plan[i] = "halv";
+      halvLeft--;
+    }
+  }
+
+  const picks = makePicks(matches, plan);
+  const hel = picks.filter((p) => p.cover === "hel").length;
+  const halv = picks.filter((p) => p.cover === "halv").length;
+  const enklar = picks.filter((p) => p.cover === "enkel").length;
+  if (hel !== STRYK_R44_HEL || halv !== STRYK_R44_HALV) return null;
+
+  // Ramen måste sitta; 13 rätt ≈ 144/1296 om tecknen går in
+  const frameHit = estimateSystemHitPct(matches, plan);
+  const p13IfFrame =
+    Math.round((STRYK_R44_COST_KR / STRYK_R44_FULL_ROWS) * 1000) / 10;
+  const winPct =
+    Math.round(frameHit * (STRYK_R44_COST_KR / STRYK_R44_FULL_ROWS) * 10) / 10;
+
+  const undecidedPicks = picks.filter((p) => p.undecided);
+  const undecidedEventNumbers = undecidedPicks.map((p) => p.eventNumber);
+  const undecidedLabel = undecidedPicks.length
+    ? `Kan inte avgöras: match ${undecidedPicks
+        .map((p) => `${p.eventNumber} (${p.description})`)
+        .join(", ")} – helgarderas.`
+    : "";
+
+  return {
+    name: `${STRYK_R44_LABEL} · ${STRYK_R44_COST_KR} kr`,
+    costKr: STRYK_R44_COST_KR,
+    rows: STRYK_R44_COST_KR,
+    picks,
+    summary: `Reducerat R-system ${STRYK_R44_LABEL}: ${hel} hel · ${halv} halv · ${enklar} spik (${STRYK_R44_COST_KR} rader). Garanti ${STRYK_R44_GUARANTEE} rätt om alla tecken sitter (som M: ${STRYK_R44_FULL_ROWS.toLocaleString("sv-SE")} rader). Chans 13 rätt ≈ ${String(p13IfFrame).replace(".", ",")}% om ramen sitter. ${undecidedLabel}`.trim(),
+    risk: riskFromHitPct(frameHit, STRYK_R44_COST_KR),
+    kind: "r",
+    rSystem: STRYK_R44_LABEL,
+    guaranteeRights: STRYK_R44_GUARANTEE,
+    estimatedHitPct: frameHit,
+    estimatedWinPct: winPct,
+    undecidedEventNumbers,
+  };
+}
+
 function buildSystemForCost(
   matches: MatchAnalysis[],
   target: number,
@@ -567,17 +658,34 @@ function buildSystemForCost(
   };
 }
 
+export type GenerateSystemsOptions = {
+  /** Stryktipset: 6 systemspel inkl. R 4-4-144. */
+  product?: "powerplay" | "topptipset" | "stryktipset" | "maltipset" | string;
+};
+
 /**
  * Bygg system 48–720 kr. För 48 kr (Powerplay/Topptipset) maximeras
  * uppskattad träffsannolikhet via djupare p-modell och optimal gardering.
  * 192 kr tvingas alltid med (dagligt PP/Topp-resultat 24 h).
+ * Stryktipset: 6 systemspel inkl. R 4-4-144 (ersätter matematiskt 144 kr).
  */
-export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
+export function generateSystems(
+  matches: MatchAnalysis[],
+  opts: GenerateSystemsOptions = {}
+): GeneratedSystem[] {
   if (matches.length === 0) return [];
 
+  const isStryk =
+    opts.product === "stryktipset" || matches.length === 13;
+  // Stryk: 5 M-system + R 4-4-144 = 6 spel
+  const maxMathSystems = isStryk ? 5 : 5;
+
   // 48 först – säkerhetsfokus för PP/Topp; 192 alltid (dagligt resultat)
-  const preferred = [48, 96, 72, 144, 192, 288, 432, 576];
-  if (matches.length >= 13) {
+  // Stryk: hoppa M-144 (ersätts av R 4-4-144)
+  const preferred = isStryk
+    ? [48, 96, 72, 192, 288, 432]
+    : [48, 96, 72, 144, 192, 288, 432, 576];
+  if (matches.length >= 13 && !isStryk) {
     preferred.push(64, 108, 162, 216, 324, 486, 729);
   }
   const systems: GeneratedSystem[] = [];
@@ -589,11 +697,12 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
     if (!built) continue;
     used.add(built.costKr);
     systems.push(built);
-    // Låt bli att bryta innan 192 är med
-    if (systems.length >= 5 && used.has(DAILY_SYSTEM_COST_KR)) break;
+    if (systems.length >= maxMathSystems && used.has(DAILY_SYSTEM_COST_KR)) {
+      break;
+    }
   }
 
-  // Tvinga in 192 kr om det saknas (även om vi redan har 5 system)
+  // Tvinga in 192 kr om det saknas
   if (!systems.some((s) => s.costKr === DAILY_SYSTEM_COST_KR)) {
     const forced = buildSystemForCost(
       matches,
@@ -602,6 +711,23 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
     );
     if (forced && forced.costKr === DAILY_SYSTEM_COST_KR) {
       systems.push(forced);
+    }
+  }
+
+  // Stryktipset: R 4-4-144 som sjätte systemspel
+  if (isStryk) {
+    const r44 = buildRSystem44144(matches);
+    if (r44) {
+      // Inga matematiska 144 kr – R-systemet äger den kostnaden
+      for (let i = systems.length - 1; i >= 0; i--) {
+        if (systems[i].costKr === STRYK_R44_COST_KR && systems[i].kind !== "r") {
+          systems.splice(i, 1);
+        }
+      }
+      while (systems.length > 5) systems.pop();
+      if (!systems.some((s) => s.rSystem === STRYK_R44_LABEL)) {
+        systems.push(r44);
+      }
     }
   }
 
@@ -615,13 +741,15 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   }
 
   return systems.sort((a, b) => {
-    // 48 kr säkerhet först, sedan 192 (dagligt), sedan kostnad
+    // 48 kr säkerhet först, sedan 192 (dagligt), R 4-4, sedan kostnad
     if (a.costKr === 48 && b.costKr !== 48) return -1;
     if (b.costKr === 48 && a.costKr !== 48) return 1;
     if (a.costKr === DAILY_SYSTEM_COST_KR && b.costKr !== DAILY_SYSTEM_COST_KR)
       return -1;
     if (b.costKr === DAILY_SYSTEM_COST_KR && a.costKr !== DAILY_SYSTEM_COST_KR)
       return 1;
+    if (a.kind === "r" && b.kind !== "r") return -1;
+    if (b.kind === "r" && a.kind !== "r") return 1;
     return a.costKr - b.costKr;
   });
 }
