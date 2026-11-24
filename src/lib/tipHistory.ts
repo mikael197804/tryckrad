@@ -510,16 +510,9 @@ function summarize(picks: HistoryPick[]): {
 export async function buildTipHistory(
   clientPicks: HistoryPick[]
 ): Promise<TipHistoryResponse> {
-  // Värm aktuella + nyss stängda Powerplay (t.ex. #4826 Örebro–Frölunda)
-  // så 192 kr alltid finns i resultat – även på ny serverless-instans.
-  try {
-    const { buildAllDrawBundles } = await import("./pipeline");
-    await buildAllDrawBundles("powerplay");
-  } catch {
-    /* ignore – listDaily192 räcker om warm redan körts */
-  }
-
-  // Dagligt Powerplay/Topptipset 192 kr från servern (sparat vid draws-build)
+  // Dagligt Powerplay/Topptipset 192 kr från servern (sparat vid draws-build).
+  // Klienten skickar tippvyns omgångar (t.ex. #4826) i POST-bodyn – ingen
+  // tung warm här (timeout på Vercel tömde annars resultatbiblioteket).
   let serverDaily192: HistoryPick[] = [];
   try {
     const { listDaily192Picks } = await import("./pp192History");

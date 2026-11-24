@@ -142,12 +142,18 @@ function loadLocalHistoryPicks(): HistoryPick[] {
   }
 }
 
-function saveLocalHistoryPicks(picks: HistoryPick[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    const now = Date.now();
-    const byId = new Map<string, HistoryPick>();
-    for (const p of picks) {
+function historyStatusRank(s: HistoryPick["status"]): number {
+  if (s === "won" || s === "lost") return 3;
+  if (s === "live") return 2;
+  return 1;
+}
+
+/** Slå ihop tipprader utan att tappa t.ex. #4826. */
+function mergeHistoryPickLists(...groups: HistoryPick[][]): HistoryPick[] {
+  const byId = new Map<string, HistoryPick>();
+  const now = Date.now();
+  for (const group of groups) {
+    for (const p of group) {
       if (!p?.id) continue;
       const at = historyKeepUntilMs(p);
       if (!Number.isFinite(at) || now - at > HISTORY_RETENTION_MS) continue;
@@ -156,28 +162,93 @@ function saveLocalHistoryPicks(picks: HistoryPick[]): void {
         byId.set(p.id, p);
         continue;
       }
-      const rank = (s: HistoryPick["status"]) =>
-        s === "won" || s === "lost" ? 3 : s === "live" ? 2 : 1;
-      const next =
-        rank(p.status) >= rank(prev.status)
-          ? {
-              ...p,
-              tippedAt: prev.tippedAt,
-              settledAt: p.settledAt ?? prev.settledAt ?? null,
-            }
-          : {
-              ...prev,
-              settledAt: prev.settledAt ?? p.settledAt ?? null,
-            };
-      byId.set(p.id, next);
+      const preferNew = historyStatusRank(p.status) >= historyStatusRank(prev.status);
+      const base = preferNew ? p : prev;
+      const other = preferNew ? prev : p;
+      byId.set(p.id, {
+        ...base,
+        tippedAt:
+          Date.parse(prev.tippedAt) <= Date.parse(p.tippedAt)
+            ? prev.tippedAt
+            : p.tippedAt,
+        actual: base.actual ?? other.actual,
+        resultNote: base.resultNote ?? other.resultNote,
+        settledAt: base.settledAt ?? other.settledAt ?? null,
+        costKr: base.costKr ?? other.costKr ?? null,
+        gameLabel:
+          (base.gameLabel || "").length >= (other.gameLabel || "").length
+            ? base.gameLabel
+            : other.gameLabel,
+      });
     }
-    window.localStorage.setItem(
-      HISTORY_LS_KEY,
-      JSON.stringify([...byId.values()])
-    );
+  }
+  return [...byId.values()];
+}
+
+function saveLocalHistoryPicks(picks: HistoryPick[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const merged = mergeHistoryPickLists(picks);
+    window.localStorage.setItem(HISTORY_LS_KEY, JSON.stringify(merged));
   } catch {
     // private mode / quota
   }
+}
+
+function buildHistoryViewModel(picks: HistoryPick[]): TipHistoryResponse {
+  const won = picks.filter((p) => p.status === "won").length;
+  const lost = picks.filter((p) => p.status === "lost").length;
+  const live = picks.filter((p) => p.status === "live").length;
+  const pending = picks.filter((p) => p.status === "pending").length;
+  const byGame = new Map<string, HistoryPick[]>();
+  for (const p of picks) {
+    const list = byGame.get(p.gameKey) || [];
+    list.push(p);
+    byGame.set(p.gameKey, list);
+  }
+  const games = [...byGame.entries()].map(([gameKey, list]) => {
+    const w = list.filter((x) => x.status === "won").length;
+    const l = list.filter((x) => x.status === "lost").length;
+    const settled = w + l;
+    const winThreshold =
+      list.length >= 7 && list.length <= 9
+        ? Math.max(1, list.length - 1)
+        : list.length;
+    const systemResult: "won" | "lost" | "pending" =
+      settled === list.length && list.length > 0
+        ? w >= winThreshold
+          ? "won"
+          : "lost"
+        : "pending";
+    return {
+      gameKey,
+      product: list[0].product,
+      label: list[0].gameLabel,
+      tippedAt: list[0].tippedAt,
+      total: list.length,
+      settled,
+      won: w,
+      lost: l,
+      pending: list.filter((x) => x.status === "pending").length,
+      live: list.filter((x) => x.status === "live").length,
+      costKr: list.find((x) => x.costKr != null)?.costKr ?? null,
+      systemResult,
+    };
+  });
+  return {
+    generatedAt: new Date().toISOString(),
+    retentionHours: 24,
+    picks,
+    games,
+    totals: {
+      total: picks.length,
+      settled: won + lost,
+      won,
+      lost,
+      pending,
+      live,
+    },
+  };
 }
 
 function oddsetToHistoryPicks(
@@ -226,6 +297,14 @@ function drawToHistoryPicks(
   tippedAt: string
 ): HistoryPick[] {
   const product = draw.productKind as HistoryProduct;
+  if (
+    product !== "powerplay" &&
+    product !== "topptipset" &&
+    product !== "stryktipset" &&
+    product !== "maltipset"
+  ) {
+    return [];
+  }
   let systems = (draw.systems || []).filter(
     (s) => s.costKr >= 48 && s.costKr <= 720
   );
@@ -1391,23 +1470,38 @@ function HistoryGameCard({
 
 function HistoryView({
   history,
+  seedPicks,
+  initialLibrary,
   loading,
   onClose,
   onRefresh,
   onOpenProduct,
 }: {
   history: TipHistoryResponse | null;
+  /** Tips från aktuell tippvy (t.ex. Powerplay #4826) – alltid med i biblioteket. */
+  seedPicks?: HistoryPick[];
+  initialLibrary?: HistoryProduct | null;
   loading: boolean;
   onClose: () => void;
   onRefresh: () => void;
   onOpenProduct?: (product: ProductKind) => void;
 }) {
-  const [library, setLibrary] = useState<HistoryProduct | null>(null);
+  const [library, setLibrary] = useState<HistoryProduct | null>(
+    initialLibrary ?? null
+  );
+
+  const displayHistory = useMemo(() => {
+    const seeded = seedPicks || [];
+    if (!history && !seeded.length) return null;
+    if (!seeded.length) return history;
+    const merged = mergeHistoryPickLists(history?.picks || [], seeded);
+    return buildHistoryViewModel(merged);
+  }, [history, seedPicks]);
 
   const libraryMeta = HISTORY_PRODUCT_COLUMNS.find((c) => c.id === library);
   const libraryGames = useMemo(() => {
-    if (!history || !library) return [];
-    return history.games
+    if (!displayHistory || !library) return [];
+    return displayHistory.games
       .filter((g) => g.product === library)
       .sort((a, b) => {
         if (library === "powerplay" || library === "topptipset") {
@@ -1424,18 +1518,18 @@ function HistoryView({
         }
         return Date.parse(b.tippedAt) - Date.parse(a.tippedAt);
       });
-  }, [history, library]);
+  }, [displayHistory, library]);
 
   const libraryStats = useMemo(() => {
-    if (!history || !library) return null;
-    const picks = history.picks.filter((p) => p.product === library);
+    if (!displayHistory || !library) return null;
+    const picks = displayHistory.picks.filter((p) => p.product === library);
     const won = picks.filter((p) => p.status === "won").length;
     const lost = picks.filter((p) => p.status === "lost").length;
     const pending = picks.filter(
       (p) => p.status === "pending" || p.status === "live"
     ).length;
     return { won, lost, pending, games: libraryGames.length };
-  }, [history, library, libraryGames.length]);
+  }, [displayHistory, library, libraryGames.length]);
 
   return (
     <div className="history-overlay" role="dialog" aria-modal="true">
@@ -1478,26 +1572,29 @@ function HistoryView({
 
         {loading && <div className="loading">Hämtar resultat…</div>}
 
-        {history && !loading && !library && (
+        {displayHistory && !loading && !library && (
           <>
             <div className="history-totals">
               <div>
-                <strong>{history.totals.won}</strong>
+                <strong>{displayHistory.totals.won}</strong>
                 <span>rätt</span>
               </div>
               <div>
-                <strong>{history.totals.lost}</strong>
+                <strong>{displayHistory.totals.lost}</strong>
                 <span>fel</span>
               </div>
               <div>
-                <strong>{history.totals.pending + history.totals.live}</strong>
+                <strong>
+                  {displayHistory.totals.pending + displayHistory.totals.live}
+                </strong>
                 <span>väntar</span>
               </div>
               <div>
                 <strong>
-                  {history.totals.settled > 0
+                  {displayHistory.totals.settled > 0
                     ? `${Math.round(
-                        (100 * history.totals.won) / history.totals.settled
+                        (100 * displayHistory.totals.won) /
+                          displayHistory.totals.settled
                       )}%`
                     : "–"}
                 </strong>
@@ -1507,8 +1604,12 @@ function HistoryView({
 
             <div className="history-libraries" role="list">
               {HISTORY_PRODUCT_COLUMNS.map((col) => {
-                const games = history.games.filter((g) => g.product === col.id);
-                const picks = history.picks.filter((p) => p.product === col.id);
+                const games = displayHistory.games.filter(
+                  (g) => g.product === col.id
+                );
+                const picks = displayHistory.picks.filter(
+                  (p) => p.product === col.id
+                );
                 const won = picks.filter((p) => p.status === "won").length;
                 const lost = picks.filter((p) => p.status === "lost").length;
                 const pending = picks.filter(
@@ -1539,7 +1640,7 @@ function HistoryView({
           </>
         )}
 
-        {history && !loading && library && libraryMeta && (
+        {displayHistory && !loading && library && libraryMeta && (
           <div className="history-library-view">
             <div className="history-library-toolbar">
               <p className="panel-lead">
@@ -1580,7 +1681,9 @@ function HistoryView({
                   <HistoryGameCard
                     key={g.gameKey}
                     game={g}
-                    picks={history.picks.filter((p) => p.gameKey === g.gameKey)}
+                    picks={displayHistory.picks.filter(
+                      (p) => p.gameKey === g.gameKey
+                    )}
                   />
                 ))}
               </div>
@@ -2456,10 +2559,35 @@ export default function App() {
     return () => clearInterval(id);
   }, [product, oddset, loadProduct]);
 
+  /** Tipprader från tippvyn – t.ex. Powerplay #4826 som redan syns under Tips. */
+  const historySeedPicks = useMemo(() => {
+    const out: HistoryPick[] = [];
+    if (data?.draws?.length) {
+      const at = data.generatedAt || new Date().toISOString();
+      for (const d of data.draws) {
+        out.push(...drawToHistoryPicks(d, at));
+      }
+    }
+    return out;
+  }, [data]);
+
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
-      const local = loadLocalHistoryPicks();
+      // Tippen som syns i tippvyn måste följa med till resultatbiblioteket
+      const fromTips =
+        data?.draws?.length && data.product !== "oddset"
+          ? data.draws.flatMap((d) =>
+              drawToHistoryPicks(d, data.generatedAt || new Date().toISOString())
+            )
+          : [];
+      const local = mergeHistoryPickLists(
+        loadLocalHistoryPicks(),
+        fromTips,
+        historySeedPicks
+      );
+      if (local.length) saveLocalHistoryPicks(local);
+
       const res = await fetch("/api/history", {
         method: "POST",
         cache: "no-store",
@@ -2470,66 +2598,25 @@ export default function App() {
         error?: string;
       };
       if (!res.ok) throw new Error(json.error || "Kunde inte hämta historik");
-      saveLocalHistoryPicks(json.picks || []);
-      setHistory(json);
+      // Merga – skriv aldrig över lokala/tipp-rader (t.ex. #4826)
+      const merged = mergeHistoryPickLists(
+        local,
+        json.picks || [],
+        fromTips,
+        historySeedPicks
+      );
+      saveLocalHistoryPicks(merged);
+      setHistory(buildHistoryViewModel(merged));
     } catch {
-      const picks = loadLocalHistoryPicks();
-      const won = picks.filter((p) => p.status === "won").length;
-      const lost = picks.filter((p) => p.status === "lost").length;
-      const live = picks.filter((p) => p.status === "live").length;
-      const pending = picks.filter((p) => p.status === "pending").length;
-      const byGame = new Map<string, HistoryPick[]>();
-      for (const p of picks) {
-        const list = byGame.get(p.gameKey) || [];
-        list.push(p);
-        byGame.set(p.gameKey, list);
-      }
-      setHistory({
-        generatedAt: new Date().toISOString(),
-        retentionHours: 24,
-        picks,
-        games: [...byGame.entries()].map(([gameKey, list]) => {
-          const w = list.filter((x) => x.status === "won").length;
-          const l = list.filter((x) => x.status === "lost").length;
-          const settled = w + l;
-          const winThreshold =
-            list.length >= 7 && list.length <= 9
-              ? Math.max(1, list.length - 1)
-              : list.length;
-          const systemResult: "won" | "lost" | "pending" =
-            settled === list.length && list.length > 0
-              ? w >= winThreshold
-                ? "won"
-                : "lost"
-              : "pending";
-          return {
-            gameKey,
-            product: list[0].product,
-            label: list[0].gameLabel,
-            tippedAt: list[0].tippedAt,
-            total: list.length,
-            settled,
-            won: w,
-            lost: l,
-            pending: list.filter((x) => x.status === "pending").length,
-            live: list.filter((x) => x.status === "live").length,
-            costKr: list.find((x) => x.costKr != null)?.costKr ?? null,
-            systemResult,
-          };
-        }),
-        totals: {
-          total: picks.length,
-          settled: won + lost,
-          won,
-          lost,
-          pending,
-          live,
-        },
-      });
+      const picks = mergeHistoryPickLists(
+        loadLocalHistoryPicks(),
+        historySeedPicks
+      );
+      setHistory(buildHistoryViewModel(picks));
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [data, historySeedPicks]);
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
@@ -2539,6 +2626,13 @@ export default function App() {
     void (async () => {
       try {
         const tippedAt = new Date().toISOString();
+        // Redan laddad tippvy (Powerplay #4826) → resultat direkt
+        if (historySeedPicks.length) {
+          saveLocalHistoryPicks([
+            ...loadLocalHistoryPicks(),
+            ...historySeedPicks,
+          ]);
+        }
         const [ppRes, toppRes] = await Promise.all([
           fetch("/api/draws?product=powerplay", { cache: "no-store" }),
           fetch("/api/draws?product=topptipset", { cache: "no-store" }),
@@ -2563,7 +2657,7 @@ export default function App() {
       }
       await loadHistory();
     })();
-  }, [loadHistory]);
+  }, [loadHistory, historySeedPicks]);
 
   const draw = useMemo(() => {
     if (!data || data.product !== product) return null;
@@ -2805,6 +2899,16 @@ export default function App() {
       {showHistory && (
         <HistoryView
           history={history}
+          seedPicks={historySeedPicks}
+          initialLibrary={
+            product === "powerplay" ||
+            product === "topptipset" ||
+            product === "stryktipset" ||
+            product === "maltipset" ||
+            product === "oddset"
+              ? product
+              : null
+          }
           loading={historyLoading}
           onClose={() => setShowHistory(false)}
           onRefresh={() => void loadHistory()}
