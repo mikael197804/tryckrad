@@ -157,6 +157,8 @@ type MatchMarkets = {
   odds15: number | null;
   odds25: number | null;
   odds35: number | null;
+  /** Över 4,5 – signal för riktigt målrik match. */
+  odds45: number | null;
   under15: number | null;
   under25: number | null;
   /** Båda lagen gör mål – Ja. */
@@ -495,7 +497,8 @@ function estimateExpectedGoals(
   odds25: number | null,
   odds35: number | null,
   under15: number | null,
-  under25: number | null
+  under25: number | null,
+  odds45: number | null = null
 ): number | null {
   const points: Array<{ line: number; pOver: number }> = [];
 
@@ -514,13 +517,14 @@ function estimateExpectedGoals(
   add(1.5, odds15, under15);
   add(2.5, odds25, under25);
   add(3.5, odds35, null);
+  add(4.5, odds45, null);
 
   if (!points.length) return null;
 
   // Sök λ som bäst matchar P(X > line) ≈ poisson
   let bestL = 2.5;
   let bestErr = Infinity;
-  for (let l = 1.2; l <= 4.2; l += 0.05) {
+  for (let l = 1.2; l <= 5.5; l += 0.05) {
     let err = 0;
     for (const p of points) {
       const model = poissonCdfAtLeast(l, Math.floor(p.line) + 1);
@@ -532,6 +536,40 @@ function estimateExpectedGoals(
     }
   }
   return Math.round(bestL * 100) / 100;
+}
+
+/**
+ * Notis när matchen ser ut att kunna gå över 4,5 mål –
+ * samma stil som övriga reason-rader i Oddset-tipsen.
+ */
+function over45GoalsNotice(
+  lambda: number | null,
+  odds45: number | null
+): string | null {
+  const pOver45 =
+    lambda != null ? poissonCdfAtLeast(lambda, 5) : null; // ≥5 mål = över 4,5
+  const marketSaysHigh = odds45 != null && odds45 > 1 && odds45 <= 2.25;
+  const modelSaysHigh =
+    (lambda != null && lambda >= 4.5) ||
+    (pOver45 != null && pOver45 >= 0.42);
+
+  if (!marketSaysHigh && !modelSaysHigh) return null;
+
+  const parts: string[] = [
+    "Notis: hög målförväntan – matchen kan gå över 4,5 mål",
+  ];
+  if (lambda != null) {
+    parts.push(`xG≈${lambda.toFixed(2).replace(".", ",")}`);
+  }
+  if (pOver45 != null) {
+    parts.push(
+      `P(≥5 mål)≈${Math.round(pOver45 * 100)}%`
+    );
+  }
+  if (odds45 != null && odds45 > 1) {
+    parts.push(`Ö4,5 @ ${odds45.toFixed(2).replace(".", ",")}`);
+  }
+  return parts.join(" · ");
 }
 
 /** P(totalt mål ≥ 2) = Över 1,5. */
@@ -569,6 +607,7 @@ function extractMarkets(
   let odds15: number | null = null;
   let odds25: number | null = null;
   let odds35: number | null = null;
+  let odds45: number | null = null;
   let under15: number | null = null;
   let under25: number | null = null;
   let bttsYes: number | null = null;
@@ -598,6 +637,7 @@ function extractMarkets(
           if (line === 1.5) odds15 = odds;
           if (line === 2.5) odds25 = odds;
           if (line === 3.5) odds35 = odds;
+          if (line === 4.5) odds45 = odds;
         }
         if (side === "under") {
           if (line === 1.5) under15 = odds;
@@ -697,6 +737,7 @@ function extractMarkets(
     odds15,
     odds25,
     odds35,
+    odds45,
     under15,
     under25,
     bttsYes,
@@ -917,7 +958,8 @@ function buildCandidate(
     markets.odds25,
     markets.odds35,
     markets.under15,
-    markets.under25
+    markets.under25,
+    markets.odds45
   );
   const p15 = estimateOver15Probability(
     lambda,
@@ -965,6 +1007,8 @@ function buildCandidate(
   if (lambda != null) {
     reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
   }
+  const over45Note = over45GoalsNotice(lambda, markets.odds45);
+  if (over45Note) reasons.push(over45Note);
   reasons.push(
     `Över 1,5 @ ${markets.odds15.toFixed(2).replace(".", ",")}`
   );
@@ -1215,11 +1259,14 @@ function build1x2Candidate(
     markets.odds25,
     markets.odds35,
     markets.under15,
-    markets.under25
+    markets.under25,
+    markets.odds45
   );
   if (lambda != null) {
     reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
   }
+  const over45Note = over45GoalsNotice(lambda, markets.odds45);
+  if (over45Note) reasons.push(over45Note);
 
   return {
     eventId: event.id,
@@ -1278,6 +1325,7 @@ async function fetchMarketsForEvents(
             odds15: null,
             odds25: null,
             odds35: null,
+            odds45: null,
             under15: null,
             under25: null,
             bttsYes: null,
