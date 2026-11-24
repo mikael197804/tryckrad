@@ -263,15 +263,24 @@ function oddsetToHistoryPicks(
         : "pending";
     const is1x2 = t.market === "1x2";
     const pick1 = t.pick1x2 || "1";
+    const kickIso = t.kickoff || tippedAt;
+    let dayKey = tippedAt.slice(0, 10);
+    try {
+      dayKey = stockholmYmd(new Date(kickIso));
+    } catch {
+      /* keep tippedAt */
+    }
+    const dayLabel = fmtHistoryDate(kickIso);
     return {
       id: is1x2
         ? `oddset:${t.eventId}:1x2:${pick1}`
         : `oddset:${t.eventId}:over`,
       product: "oddset" as const,
-      gameKey: `oddset:${tippedAt.slice(0, 10)}`,
+      // Gruppera per speldatum (Stockholm) + marknad
+      gameKey: is1x2 ? `oddset:1x2:${dayKey}` : `oddset:over:${dayKey}`,
       gameLabel: is1x2
-        ? `Oddset · 1X2 · ${tippedAt.slice(0, 10)}`
-        : `Oddset · Över 1,5 · ${tippedAt.slice(0, 10)}`,
+        ? `Oddset · 1X2 · ${dayLabel}`
+        : `Oddset · Över 1,5 · ${dayLabel}`,
       tippedAt,
       description: `${t.home} – ${t.away}`,
       home: t.home,
@@ -518,6 +527,33 @@ function fmtTime(iso: string): string {
     }).format(new Date(iso));
   } catch {
     return iso;
+  }
+}
+
+/** Datum utan klockslag, t.ex. "tis 24 nov" (Stockholm). */
+function fmtHistoryDate(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Stockholm",
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    }).format(new Date(iso));
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
+
+/** Bara klockslag, t.ex. "19:00". */
+function fmtClock(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Stockholm",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return "";
   }
 }
 
@@ -1374,13 +1410,26 @@ function HistoryGameCard({
         )}
       </h3>
       <ul className="history-pick-list">
-        {picks.map((p) => (
+        {[...picks]
+          .sort((a, b) => {
+            const ak = a.kickoff ? Date.parse(a.kickoff) : 0;
+            const bk = b.kickoff ? Date.parse(b.kickoff) : 0;
+            return ak - bk || (a.eventNumber ?? 0) - (b.eventNumber ?? 0);
+          })
+          .map((p) => (
           <li key={p.id} className={`history-pick ${p.status}`}>
             <div>
               <strong>
                 {p.eventNumber != null ? `${p.eventNumber}. ` : ""}
                 {p.description}
               </strong>
+              {p.kickoff && (
+                <div className="history-pick-date">
+                  {p.product === "oddset"
+                    ? `${fmtHistoryDate(p.kickoff)} · ${fmtClock(p.kickoff)}`
+                    : fmtTime(p.kickoff)}
+                </div>
+              )}
               <div className="history-1x2-marks" aria-label="Tips">
                 {p.market === "1x2"
                   ? (["1", "X", "2"] as const).map((o) => (

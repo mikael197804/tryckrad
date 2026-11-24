@@ -881,6 +881,13 @@ a.product-btn:hover {
   background: rgba(240, 180, 60, 0.08);
 }
 
+.history-pick-date {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
 .history-1x2-marks {
   display: flex;
   gap: 0.3rem;
