@@ -648,7 +648,15 @@ function V75HorseRow({ h }: { h: V75HorseTip }) {
   );
 }
 
-function V75LegCard({ leg }: { leg: V75LegAnalysis }) {
+function V75LegCard({
+  leg,
+  open,
+  onToggle,
+}: {
+  leg: V75LegAnalysis;
+  open: boolean;
+  onToggle: () => void;
+}) {
   const shown = leg.horses.filter(
     (h) =>
       leg.pickNumbers.includes(h.startNumber) ||
@@ -662,43 +670,80 @@ function V75LegCard({ leg }: { leg: V75LegAnalysis }) {
   const list = (shown.length ? shown : leg.horses.slice(0, 4)).sort(
     (a, b) => a.startNumber - b.startNumber
   );
+  const shortName =
+    leg.raceName.length > 48
+      ? `${leg.raceName.slice(0, 46)}…`
+      : leg.raceName;
+
   return (
-    <article className="match-card v75-leg-card">
-      <div className="match-card-top">
-        <span className="match-num">V75-{leg.leg}</span>
-        <div>
-          <strong>{leg.raceName}</strong>
-          <div className="reason">
+    <article
+      className={`match-card v75-leg-card history-game-collapsible${
+        open ? " is-open" : " is-collapsed"
+      }`}
+    >
+      <button
+        type="button"
+        className="history-game-toggle v75-leg-toggle"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="history-game-toggle-main">
+          <span className="history-game-toggle-title">
+            <span className="match-num v75-toggle-num">V75-{leg.leg}</span>{" "}
+            {shortName}
+          </span>
+          <span className="reason">
             {leg.trackName}
             {leg.distance != null ? ` · ${leg.distance} m` : ""}
-            {leg.startMethod ? ` · ${leg.startMethod}` : ""}
             {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
-          </div>
-        </div>
-        <div className="pick-cells">
+            {` · ${leg.summary}`}
+          </span>
+        </span>
+        <span className="history-game-toggle-meta">
           <span className="pick-cell on">{leg.pickLabel || "–"}</span>
+          <span className="history-game-chevron" aria-hidden="true">
+            {open ? "▾" : "▸"}
+          </span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="v75-leg-body">
+          <div className="v75-horse-list">
+            {list.map((h) => (
+              <V75HorseRow key={h.startNumber} h={h} />
+            ))}
+          </div>
+          {leg.alerts.length > 0 && (
+            <ul
+              className="alert-list table-alerts"
+              style={{ marginTop: "0.6rem" }}
+            >
+              {leg.alerts.slice(0, 4).map((a) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+          )}
         </div>
-      </div>
-      <div className="reason" style={{ marginBottom: "0.55rem" }}>
-        {leg.summary}
-      </div>
-      <div className="v75-horse-list">
-        {list.map((h) => (
-          <V75HorseRow key={h.startNumber} h={h} />
-        ))}
-      </div>
-      {leg.alerts.length > 0 && (
-        <ul className="alert-list table-alerts" style={{ marginTop: "0.6rem" }}>
-          {leg.alerts.slice(0, 4).map((a) => (
-            <li key={a}>{a}</li>
-          ))}
-        </ul>
       )}
     </article>
   );
 }
 
 function V75View({ tip }: { tip: V75DayTip }) {
+  const [openLegs, setOpenLegs] = useState<Record<number, boolean>>({});
+  const isOpen = (leg: number) => openLegs[leg] === true;
+  const toggleLeg = (leg: number) =>
+    setOpenLegs((prev) => ({ ...prev, [leg]: !prev[leg] }));
+  const expandAll = () =>
+    setOpenLegs(
+      Object.fromEntries(tip.legs.map((l) => [l.leg, true])) as Record<
+        number,
+        boolean
+      >
+    );
+  const collapseAll = () => setOpenLegs({});
+
   return (
     <div className="rise">
       <section className="panel">
@@ -848,12 +893,25 @@ function V75View({ tip }: { tip: V75DayTip }) {
       <section className="panel panel-systems">
         <h2>Avdelningar</h2>
         <p className="panel-lead">
-          Jämför ATG-odds med V75-streck och tips från flera sajter. Spik /
-          gardering / skräll per lopp.
+          Jämför ATG-odds med V75-streck och tips från flera sajter. Klicka på
+          ett lopp för att öppna/stänga – samma som i resultat.
         </p>
-        <div className="match-cards">
+        <div className="v75-leg-toolbar">
+          <button type="button" className="system-btn" onClick={expandAll}>
+            Öppna alla
+          </button>
+          <button type="button" className="system-btn" onClick={collapseAll}>
+            Stäng alla
+          </button>
+        </div>
+        <div className="match-cards v75-leg-list">
           {tip.legs.map((leg) => (
-            <V75LegCard key={leg.leg} leg={leg} />
+            <V75LegCard
+              key={leg.leg}
+              leg={leg}
+              open={isOpen(leg.leg)}
+              onToggle={() => toggleLeg(leg.leg)}
+            />
           ))}
         </div>
       </section>

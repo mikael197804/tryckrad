@@ -2330,3 +2330,32 @@ a.product-btn:hover {
   color: #ffb4b4 !important;
   border-color: rgba(239, 107, 107, 0.45) !important;
 }
+
+.v75-leg-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem;
+}
+
+.v75-leg-list {
+  align-items: start;
+}
+
+.v75-leg-card.history-game-collapsible {
+  padding: 0;
+}
+
+.v75-leg-toggle {
+  gap: 0.45rem;
+}
+
+.v75-toggle-num {
+  display: inline-flex;
+  margin-right: 0.15rem;
+}
+
+.v75-leg-body {
+  padding: 0 0.75rem 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
