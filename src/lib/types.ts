@@ -270,7 +270,7 @@ export type GeneratedSystem = {
   /** Uppskattad chans att hela kupongen täcks (0–100). */
   estimatedHitPct?: number | null;
   /**
-   * Uppskattad vinstnivå: för 8 matcher ≈ P(≥7 rätt täckta),
+   * Uppskattad vinstnivå: för 8 matcher (PP/Topp) ≈ P(8 rätt),
    * annars samma som estimatedHitPct.
    */
   estimatedWinPct?: number | null;

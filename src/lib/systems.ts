@@ -210,9 +210,9 @@ function estimateWinPct(
 ): number {
   const ps = coverPsForPlan(matches, plan);
   const n = ps.length;
-  // 8-matcherspel (PP/Topp): vinstnivå ≈ minst 7 rätt täckta
+  // 8-matcherspel (PP/Topp): utdelning bara vid 8 rätt
   if (n >= 7 && n <= 9) {
-    return estimateAtLeastK(ps, n - 1);
+    return estimateAtLeastK(ps, n);
   }
   if (n >= 13) {
     // Stryk: visa P(≥10) som mjuk vinstproxy

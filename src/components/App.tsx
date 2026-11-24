@@ -251,10 +251,14 @@ function buildHistoryViewModel(
     const w = list.filter((x) => x.status === "won").length;
     const l = list.filter((x) => x.status === "lost").length;
     const settled = w + l;
+    const product = list[0].product;
+    // Powerplay/Topptipset: endast 8 rätt = grönt (ingen utdelning annars)
     const winThreshold =
-      list.length >= 7 && list.length <= 9
-        ? Math.max(1, list.length - 1)
-        : list.length;
+      product === "powerplay" || product === "topptipset"
+        ? list.length
+        : list.length >= 7 && list.length <= 9
+          ? Math.max(1, list.length - 1)
+          : list.length;
     const systemResult: "won" | "lost" | "pending" =
       settled === list.length && list.length > 0
         ? w >= winThreshold
@@ -3377,7 +3381,7 @@ export default function App() {
                   </h2>
                   <p className="panel-lead">
                     {product === "powerplay" || product === "topptipset"
-                      ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad vinstnivå (≥7 rätt) – inte garanti. "
+                      ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad chans till 8 rätt (utdelning) – inte garanti. "
                       : ""}
                     Kupongen speglar {productLabel(product)}-raden på Svenska
                     Spel. Kostnad = antal kombinationer ×{" "}

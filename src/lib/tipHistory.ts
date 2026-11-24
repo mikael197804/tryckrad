@@ -51,13 +51,28 @@ export type HistoryGameSummary = {
   costKr: number | null;
   /**
    * Systemresultat när allt är settlat:
-   * vinst ≈ ≥7 rätt på 8 matcher (eller alla rätt på färre).
+   * Powerplay/Topptipset = endast 8 rätt (annars ingen utdelning).
+   * Övriga: ≈ ≥7 rätt på 8 matcher (eller alla rätt på färre).
    */
   systemResult: "won" | "lost" | "pending";
   /** Officiell utdelning från Svenska Spel, t.ex. "8 rätt · 601,18". */
   payoutLabel?: string | null;
   drawNumber?: number | null;
 };
+
+/** PP/Topp kräver fullträff (8 rätt). Övriga: en miss ok på 8-matcher. */
+export function systemWinThreshold(
+  product: HistoryProduct,
+  total: number
+): number {
+  if (product === "powerplay" || product === "topptipset") {
+    return total;
+  }
+  if (total >= 7 && total <= 9) {
+    return Math.max(1, total - 1);
+  }
+  return total;
+}
 
 export type TipHistoryResponse = {
   generatedAt: string;
@@ -572,26 +587,12 @@ function formatPayoutLabel(
       const m = t.name.match(/(\d+)\s*rätt/i);
       return m && Number(m[1]) === correctCount;
     }) || null;
-  const tier =
-    exact ||
-    tiers.find((t) => /rätt/i.test(t.name)) ||
-    tiers[0];
-  if (!tier) return null;
-  const value = tier.amount || tier.odds;
-  if (!value || value === "0" || value === "0,00") {
-    if (!exact && correctCount > 0) {
-      // t.ex. 7 rätt på Powerplay där bara 8 rätt betalas
-      const top = tiers[0];
-      const topVal = top?.amount || top?.odds;
-      if (topVal && topVal !== "0" && topVal !== "0,00") {
-        return `${top.name} · ${topVal}${top.amount ? " kr" : ""} (vid fullträff)`;
-      }
-    }
-    return null;
-  }
-  const suffix = tier.amount ? " kr" : "";
-  const prefix = exact ? tier.name : tier.name;
-  return `${prefix} · ${value}${suffix}`;
+  // Bara visa utdelning för exakt rätt nivå (PP/Topp = 8 rätt)
+  if (!exact) return null;
+  const value = exact.amount || exact.odds;
+  if (!value || value === "0" || value === "0,00") return null;
+  const suffix = exact.amount ? " kr" : "";
+  return `${exact.name} · ${value}${suffix}`;
 }
 
 function summarize(picks: HistoryPick[]): {
@@ -619,11 +620,7 @@ function summarize(picks: HistoryPick[]): {
       const drawNumber =
         list.find((x) => x.drawNumber != null)?.drawNumber ?? null;
       const settled = won + lost;
-      // 8 matcher: vinst vid ≥7 rätt. Annars: alla rätt.
-      const winThreshold =
-        list.length >= 7 && list.length <= 9
-          ? Math.max(1, list.length - 1)
-          : list.length;
+      const winThreshold = systemWinThreshold(list[0].product, list.length);
       let systemResult: "won" | "lost" | "pending" = "pending";
       if (settled === list.length && list.length > 0) {
         systemResult = won >= winThreshold ? "won" : "lost";
