@@ -242,11 +242,13 @@ async function fetchDrawResults(
   return map;
 }
 
-async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
-  if (pick.status === "won" || pick.status === "lost") return pick;
-  if (!pick.home || !pick.away || !pick.kickoff) return pick;
+/** Settla ett tips via Flashscore (mål + 1X2 / över / måltips). */
+async function settlePickViaFlashscore(
+  pick: HistoryPick
+): Promise<HistoryPick | null> {
+  if (!pick.home || !pick.away || !pick.kickoff) return null;
   const kick = Date.parse(pick.kickoff);
-  if (Number.isFinite(kick) && Date.now() < kick + 5 * 60 * 1000) return pick;
+  if (Number.isFinite(kick) && Date.now() < kick + 5 * 60 * 1000) return null;
 
   try {
     const score = await lookupMatchScore({
@@ -254,20 +256,20 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
       away: pick.away,
       kickoff: pick.kickoff,
     });
-    if (!score) {
-      return {
-        ...pick,
-        resultNote: pick.resultNote || "Väntar på slutresultat…",
-      };
-    }
+    if (!score) return null;
+
+    const via =
+      score.sourceName?.startsWith("Flashscore") ? "Flashscore" : "resultat";
+
     if (score.status === "live") {
       return {
         ...pick,
         status: "live",
         actual: `${score.homeGoals}-${score.awayGoals}`,
-        resultNote: `Live ${score.homeGoals}–${score.awayGoals}`,
+        resultNote: `Live ${score.homeGoals}–${score.awayGoals} · ${via}`,
       };
     }
+
     if (pick.market === "1x2") {
       const actual =
         score.homeGoals > score.awayGoals
@@ -275,18 +277,31 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
           : score.homeGoals < score.awayGoals
             ? "2"
             : "X";
-      const tipped = pick.pick[0] || "";
-      const won = tipped === actual;
+      const hit = pick.pick.includes(actual);
       return {
         ...pick,
-        status: won ? "won" : "lost",
+        status: hit ? "won" : "lost",
         actual: `${score.homeGoals}-${score.awayGoals}`,
         settledAt: pick.settledAt || new Date().toISOString(),
-        resultNote: won
-          ? `Rätt · ${score.homeGoals}–${score.awayGoals} (1X2 ${tipped})`
-          : `Fel · ${score.homeGoals}–${score.awayGoals} (tippat ${tipped}, blev ${actual})`,
+        resultNote: hit
+          ? `Rätt · ${score.homeGoals}–${score.awayGoals} (1X2 ${pick.pick.join("")}) · ${via}`
+          : `Fel · ${score.homeGoals}–${score.awayGoals} (tippat ${pick.pick.join("")}, blev ${actual}) · ${via}`,
       };
     }
+
+    if (pick.market === "mal") {
+      const hit = score.totalGoals >= 3;
+      return {
+        ...pick,
+        status: hit ? "won" : "lost",
+        actual: `${score.homeGoals}-${score.awayGoals}`,
+        settledAt: pick.settledAt || new Date().toISOString(),
+        resultNote: hit
+          ? `Rätt · ${score.homeGoals}–${score.awayGoals} (≥3 mål) · ${via}`
+          : `Fel · ${score.homeGoals}–${score.awayGoals} (<3 mål) · ${via}`,
+      };
+    }
+
     const line = pick.market === "over_2_5" ? 2.5 : 1.5;
     const minGoals = line === 2.5 ? 3 : 2;
     const won = score.totalGoals >= minGoals;
@@ -297,25 +312,26 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
       actual: `${score.homeGoals}-${score.awayGoals}`,
       settledAt: pick.settledAt || new Date().toISOString(),
       resultNote: won
-        ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över ${label})`
-        : `Fel · ${score.homeGoals}–${score.awayGoals} (Under ${label})`,
+        ? `Rätt · ${score.homeGoals}–${score.awayGoals} (Över ${label}) · ${via}`
+        : `Fel · ${score.homeGoals}–${score.awayGoals} (Under ${label}) · ${via}`,
     };
   } catch {
-    return pick;
+    return null;
   }
 }
 
-async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
-  const groups = new Map<string, HistoryPick[]>();
-  for (const p of picks) {
-    if (p.product === "oddset") continue;
-    if (p.drawNumber == null) continue;
-    const key = `${p.product}:${p.drawNumber}`;
-    const list = groups.get(key) || [];
-    list.push(p);
-    groups.set(key, list);
-  }
+async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
+  if (pick.status === "won" || pick.status === "lost") return pick;
+  const settled = await settlePickViaFlashscore(pick);
+  if (settled) return settled;
+  if (!pick.home || !pick.away || !pick.kickoff) return pick;
+  return {
+    ...pick,
+    resultNote: pick.resultNote || "Väntar på Flashscore…",
+  };
+}
 
+async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
   const resultsCache = new Map<
     string,
     Map<number, { outcome: Outcome; homeGoals: number | null; awayGoals: number | null }>
@@ -338,8 +354,20 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       });
       continue;
     }
+
+    // Primärt: Flashscore via lagnamn + kickoff (alla spelformer)
+    const viaFs = await settlePickViaFlashscore(p);
+    if (viaFs) {
+      out.push(viaFs);
+      continue;
+    }
+
+    // Backup: Svenska Spels omgångsresultat
     if (p.drawNumber == null || p.eventNumber == null) {
-      out.push(p);
+      out.push({
+        ...p,
+        resultNote: p.resultNote || "Väntar på Flashscore…",
+      });
       continue;
     }
 
@@ -355,7 +383,7 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
     if (!res) {
       out.push({
         ...p,
-        resultNote: p.resultNote || "Väntar på slutsignal…",
+        resultNote: p.resultNote || "Väntar på Flashscore…",
       });
       continue;
     }
@@ -366,7 +394,10 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       out.push({
         ...p,
         status: hit ? "won" : "lost",
-        actual: res.outcome,
+        actual:
+          res.homeGoals != null && res.awayGoals != null
+            ? `${res.homeGoals}-${res.awayGoals}`
+            : res.outcome,
         settledAt,
         resultNote: hit
           ? `Rätt · tipset ${p.pick.join("")} träffade ${res.outcome}`
@@ -381,7 +412,7 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
           ...p,
           status: "pending",
           actual: res.outcome,
-          resultNote: `Resultat ${res.outcome} · väntar på målantal`,
+          resultNote: `Resultat ${res.outcome} · väntar på målantal (Flashscore)`,
         });
         continue;
       }
@@ -490,7 +521,7 @@ export async function buildTipHistory(
 
   let picks = mergePicks([clientPicks, serverDaily192]);
 
-  // Oddset först (ESPN), sedan SVS-omgångar
+  // Oddset + omgångsspel: Flashscore först (ESPN/SVS som backup)
   const settledOddset: HistoryPick[] = [];
   for (const p of picks) {
     if (p.product === "oddset") {

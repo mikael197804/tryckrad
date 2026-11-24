@@ -1590,7 +1590,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         <p className="panel-lead">
           {picksPerDay} Över 1,5 + {picksPerDay} <strong>1X2</strong> – samma
           analys (utjämnarpress, favorit/underdog). Tipsen ligger kvar{" "}
-          <strong>{retention} timmar</strong> – grönt/rött efter slutsignal.
+          <strong>{retention} timmar</strong> – grönt/rött via Flashscore.
           Analyserat {tip.analyzedCount} · Ö1,5 {tip.eligibleCount}
           {tip.eligible1x2Count != null
             ? ` · 1X2 ${tip.eligible1x2Count}`

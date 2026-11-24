@@ -216,10 +216,7 @@ async function scoreboardForDates(dates: string[]): Promise<EspnEvent[]> {
   return out;
 }
 
-/**
- * Hitta slutresultat (eller live) för en tippad match via ESPN soccer scoreboard.
- */
-export async function lookupMatchScore(input: {
+async function lookupEspnScore(input: {
   home: string;
   away: string;
   kickoff: string;
@@ -246,7 +243,9 @@ export async function lookupMatchScore(input: {
     const awayScore = teamNameScore(input.away, teams.away);
     const flippedHome = teamNameScore(input.home, teams.away);
     const flippedAway = teamNameScore(input.away, teams.home);
-    const direct = Math.min(homeScore, awayScore) * 0.55 + ((homeScore + awayScore) / 2) * 0.45;
+    const direct =
+      Math.min(homeScore, awayScore) * 0.55 +
+      ((homeScore + awayScore) / 2) * 0.45;
     const flipped =
       Math.min(flippedHome, flippedAway) * 0.55 +
       ((flippedHome + flippedAway) / 2) * 0.45;
@@ -266,7 +265,6 @@ export async function lookupMatchScore(input: {
       awayG = tmp;
     }
 
-    // Prefer final over live over pre
     const st = classifyStatus(ev);
     const statusBoost = st === "final" ? 0.15 : st === "live" ? 0.05 : -0.2;
     const total = matchScore + statusBoost;
@@ -288,4 +286,23 @@ export async function lookupMatchScore(input: {
     status: st === "final" ? "final" : "live",
     sourceName: best.ev.name || `${input.home} – ${input.away}`,
   };
+}
+
+/**
+ * Hitta slutresultat (eller live) för en tippad match.
+ * Primärt Flashscore – ESPN bara som backup om Flashscore saknar matchen.
+ */
+export async function lookupMatchScore(input: {
+  home: string;
+  away: string;
+  kickoff: string;
+}): Promise<MatchScoreResult | null> {
+  try {
+    const { lookupFlashscoreScore } = await import("./flashscore");
+    const fs = await lookupFlashscoreScore(input);
+    if (fs) return fs;
+  } catch {
+    /* fallback ESPN */
+  }
+  return lookupEspnScore(input);
 }

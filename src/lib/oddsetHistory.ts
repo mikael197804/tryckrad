@@ -233,7 +233,7 @@ export async function settleOddsetTips(): Promise<OddsetTrackedTip[]> {
       if (!score) {
         updated.push({
           ...tip,
-          resultNote: tip.resultNote || "Väntar på slutresultat…",
+          resultNote: tip.resultNote || "Väntar på Flashscore…",
         });
         continue;
       }
