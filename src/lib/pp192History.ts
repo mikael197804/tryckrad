@@ -1,15 +1,18 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { POWERPLAY_DAILY_COST_KR } from "./systems";
+import { DAILY_SYSTEM_COST_KR } from "./systems";
 import type { DrawBundle } from "./types";
-import type { HistoryPick } from "./tipHistory";
+import type { HistoryPick, HistoryProduct } from "./tipHistory";
 
 /**
- * Dagligt Powerplay 192 kr – sparas server-side och visas i resultat 24 h.
+ * Dagligt 192 kr-system för Powerplay och Topptipset –
+ * sparas server-side och visas i resultat 24 h.
  */
 
-const STORE_PATH = path.join("/tmp", "mikaels-pp192-history.json");
+const STORE_PATH = path.join("/tmp", "mikaels-daily192-history.json");
 const RETENTION_MS = 24 * 60 * 60 * 1000;
+
+const DAILY_PRODUCTS = new Set<HistoryProduct>(["powerplay", "topptipset"]);
 
 type GlobalStore = {
   picks: HistoryPick[];
@@ -18,12 +21,18 @@ type GlobalStore = {
 
 function store(): GlobalStore {
   const g = globalThis as typeof globalThis & {
-    __mikaelsPp192History?: GlobalStore;
+    __mikaelsDaily192History?: GlobalStore;
   };
-  if (!g.__mikaelsPp192History) {
-    g.__mikaelsPp192History = { picks: [], loaded: false };
+  if (!g.__mikaelsDaily192History) {
+    g.__mikaelsDaily192History = { picks: [], loaded: false };
   }
-  return g.__mikaelsPp192History;
+  return g.__mikaelsDaily192History;
+}
+
+function productLabel(product: HistoryProduct): string {
+  if (product === "topptipset") return "Topptipset";
+  if (product === "powerplay") return "Powerplay";
+  return product;
 }
 
 function anchorMs(p: HistoryPick): number {
@@ -57,7 +66,17 @@ async function ensureLoaded(): Promise<void> {
     const parsed = JSON.parse(raw) as { picks?: HistoryPick[] };
     if (Array.isArray(parsed.picks)) s.picks = prune(parsed.picks);
   } catch {
-    /* ingen fil ännu */
+    /* ingen fil ännu – prova gamla PP-filen en gång */
+    try {
+      const legacy = await readFile(
+        path.join("/tmp", "mikaels-pp192-history.json"),
+        "utf8"
+      );
+      const parsed = JSON.parse(legacy) as { picks?: HistoryPick[] };
+      if (Array.isArray(parsed.picks)) s.picks = prune(parsed.picks);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -76,26 +95,33 @@ async function persist(): Promise<void> {
   }
 }
 
-/** Bygg HistoryPick-rader för Powerplay 192 kr från en omgång. */
-export function powerplay192PicksFromDraw(
+function isDailyProduct(
+  product: string
+): product is "powerplay" | "topptipset" {
+  return DAILY_PRODUCTS.has(product as HistoryProduct);
+}
+
+/** Bygg HistoryPick-rader för 192 kr från en Powerplay/Topptipset-omgång. */
+export function daily192PicksFromDraw(
   draw: DrawBundle,
   tippedAt: string
 ): HistoryPick[] {
-  if (draw.productKind !== "powerplay") return [];
+  if (!isDailyProduct(draw.productKind)) return [];
   const system = (draw.systems || []).find(
-    (s) => s.costKr === POWERPLAY_DAILY_COST_KR && s.kind !== "mal"
+    (s) => s.costKr === DAILY_SYSTEM_COST_KR && s.kind !== "mal"
   );
   if (!system?.picks?.length) return [];
 
-  const costKr = POWERPLAY_DAILY_COST_KR;
-  const gameKey = `powerplay:${draw.drawNumber}:${costKr}`;
-  const gameLabel = `Powerplay #${draw.drawNumber} · ${costKr} kr`;
+  const product = draw.productKind;
+  const costKr = DAILY_SYSTEM_COST_KR;
+  const gameKey = `${product}:${draw.drawNumber}:${costKr}`;
+  const gameLabel = `${productLabel(product)} #${draw.drawNumber} · ${costKr} kr`;
 
   return system.picks.map((p) => {
     const match = draw.matches.find((m) => m.eventNumber === p.eventNumber);
     return {
-      id: `powerplay:${draw.drawNumber}:${costKr}:${p.eventNumber}`,
-      product: "powerplay" as const,
+      id: `${product}:${draw.drawNumber}:${costKr}:${p.eventNumber}`,
+      product,
       gameKey,
       gameLabel,
       tippedAt,
@@ -117,19 +143,20 @@ export function powerplay192PicksFromDraw(
   });
 }
 
-/** Spara dagens Powerplay 192 kr från öppna omgångar (anropas vid draws-build). */
-export async function rememberPowerplay192(
+/** @deprecated Använd daily192PicksFromDraw */
+export const powerplay192PicksFromDraw = daily192PicksFromDraw;
+
+/** Spara dagens 192 kr från öppna omgångar (Powerplay eller Topptipset). */
+export async function rememberDaily192(
   draws: DrawBundle[],
   tippedAt = new Date().toISOString()
 ): Promise<HistoryPick[]> {
   await ensureLoaded();
   const s = store();
-  const incoming = draws.flatMap((d) =>
-    powerplay192PicksFromDraw(d, tippedAt)
-  );
+  const incoming = draws.flatMap((d) => daily192PicksFromDraw(d, tippedAt));
   if (!incoming.length) {
     s.picks = prune(s.picks);
-    return s.picks.filter((p) => p.costKr === POWERPLAY_DAILY_COST_KR);
+    return s.picks.filter((p) => p.costKr === DAILY_SYSTEM_COST_KR);
   }
 
   const byId = new Map(s.picks.map((p) => [p.id, p]));
@@ -139,7 +166,6 @@ export async function rememberPowerplay192(
       byId.set(p.id, p);
       continue;
     }
-    // Behåll tidigaste tippedAt och ev. settlat resultat
     byId.set(p.id, {
       ...prev,
       ...p,
@@ -156,18 +182,25 @@ export async function rememberPowerplay192(
   }
   s.picks = prune([...byId.values()]);
   await persist();
-  return s.picks.filter((p) => p.costKr === POWERPLAY_DAILY_COST_KR);
+  return s.picks.filter((p) => p.costKr === DAILY_SYSTEM_COST_KR);
 }
 
-export async function listPowerplay192Picks(): Promise<HistoryPick[]> {
+/** @deprecated Använd rememberDaily192 */
+export const rememberPowerplay192 = rememberDaily192;
+
+export async function listDaily192Picks(): Promise<HistoryPick[]> {
   await ensureLoaded();
   return prune(store().picks).filter(
-    (p) => p.product === "powerplay" && p.costKr === POWERPLAY_DAILY_COST_KR
+    (p) =>
+      isDailyProduct(p.product) && p.costKr === DAILY_SYSTEM_COST_KR
   );
 }
 
+/** @deprecated Använd listDaily192Picks */
+export const listPowerplay192Picks = listDaily192Picks;
+
 /** Uppdatera sparade 192 kr-rader med settlat rätt/fel (24 h). */
-export async function rememberPowerplay192Settled(
+export async function rememberDaily192Settled(
   settled: HistoryPick[]
 ): Promise<void> {
   if (!settled.length) return;
@@ -175,7 +208,7 @@ export async function rememberPowerplay192Settled(
   const s = store();
   const byId = new Map(s.picks.map((p) => [p.id, p]));
   for (const p of settled) {
-    if (p.product !== "powerplay" || p.costKr !== POWERPLAY_DAILY_COST_KR) {
+    if (!isDailyProduct(p.product) || p.costKr !== DAILY_SYSTEM_COST_KR) {
       continue;
     }
     const prev = byId.get(p.id);
@@ -184,3 +217,6 @@ export async function rememberPowerplay192Settled(
   s.picks = prune([...byId.values()]);
   await persist();
 }
+
+/** @deprecated Använd rememberDaily192Settled */
+export const rememberPowerplay192Settled = rememberDaily192Settled;

@@ -229,8 +229,8 @@ function drawToHistoryPicks(
   let systems = (draw.systems || []).filter(
     (s) => s.costKr >= 48 && s.costKr <= 720
   );
-  // Powerplay: se till att 192 kr alltid sparas i resultat 24 h
-  if (product === "powerplay") {
+  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 24 h
+  if (product === "powerplay" || product === "topptipset") {
     const has192 = systems.some((s) => s.costKr === 192);
     if (!has192) {
       const forced = (draw.systems || []).find((s) => s.costKr === 192);

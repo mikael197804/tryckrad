@@ -498,8 +498,10 @@ export function generateMaltipsetSystems(
   return systems;
 }
 
-/** Powerplay-dagstips som alltid sparas i resultat 24 h. */
-export const POWERPLAY_DAILY_COST_KR = 192;
+/** Dagligt system (Powerplay + Topptipset) som alltid sparas i resultat 24 h. */
+export const DAILY_SYSTEM_COST_KR = 192;
+/** @deprecated Använd DAILY_SYSTEM_COST_KR */
+export const POWERPLAY_DAILY_COST_KR = DAILY_SYSTEM_COST_KR;
 
 function buildSystemForCost(
   matches: MatchAnalysis[],
@@ -542,8 +544,8 @@ function buildSystemForCost(
   const safetyNote =
     cost === 48
       ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
-      : cost === POWERPLAY_DAILY_COST_KR
-        ? `Dagligt Powerplay-system ${POWERPLAY_DAILY_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – sparas i resultat 24 h.`
+      : cost === DAILY_SYSTEM_COST_KR
+        ? `Dagligt system ${DAILY_SYSTEM_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – sparas i resultat 24 h.`
         : `${hel} hel · ${halv} halv · ${enklar.length} enkel.`;
 
   const winLabel =
@@ -568,7 +570,7 @@ function buildSystemForCost(
 /**
  * Bygg system 48–720 kr. För 48 kr (Powerplay/Topptipset) maximeras
  * uppskattad träffsannolikhet via djupare p-modell och optimal gardering.
- * 192 kr tvingas alltid med (dagligt Powerplay-resultat 24 h).
+ * 192 kr tvingas alltid med (dagligt PP/Topp-resultat 24 h).
  */
 export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   if (matches.length === 0) return [];
@@ -588,17 +590,17 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
     used.add(built.costKr);
     systems.push(built);
     // Låt bli att bryta innan 192 är med
-    if (systems.length >= 5 && used.has(POWERPLAY_DAILY_COST_KR)) break;
+    if (systems.length >= 5 && used.has(DAILY_SYSTEM_COST_KR)) break;
   }
 
   // Tvinga in 192 kr om det saknas (även om vi redan har 5 system)
-  if (!systems.some((s) => s.costKr === POWERPLAY_DAILY_COST_KR)) {
+  if (!systems.some((s) => s.costKr === DAILY_SYSTEM_COST_KR)) {
     const forced = buildSystemForCost(
       matches,
-      POWERPLAY_DAILY_COST_KR,
+      DAILY_SYSTEM_COST_KR,
       systems.length
     );
-    if (forced && forced.costKr === POWERPLAY_DAILY_COST_KR) {
+    if (forced && forced.costKr === DAILY_SYSTEM_COST_KR) {
       systems.push(forced);
     }
   }
@@ -616,9 +618,9 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
     // 48 kr säkerhet först, sedan 192 (dagligt), sedan kostnad
     if (a.costKr === 48 && b.costKr !== 48) return -1;
     if (b.costKr === 48 && a.costKr !== 48) return 1;
-    if (a.costKr === POWERPLAY_DAILY_COST_KR && b.costKr !== POWERPLAY_DAILY_COST_KR)
+    if (a.costKr === DAILY_SYSTEM_COST_KR && b.costKr !== DAILY_SYSTEM_COST_KR)
       return -1;
-    if (b.costKr === POWERPLAY_DAILY_COST_KR && a.costKr !== POWERPLAY_DAILY_COST_KR)
+    if (b.costKr === DAILY_SYSTEM_COST_KR && a.costKr !== DAILY_SYSTEM_COST_KR)
       return 1;
     return a.costKr - b.costKr;
   });

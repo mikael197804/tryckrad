@@ -479,16 +479,16 @@ function summarize(picks: HistoryPick[]): {
 export async function buildTipHistory(
   clientPicks: HistoryPick[]
 ): Promise<TipHistoryResponse> {
-  // Dagligt Powerplay 192 kr från servern (sparat vid draws-build)
-  let serverPp192: HistoryPick[] = [];
+  // Dagligt Powerplay/Topptipset 192 kr från servern (sparat vid draws-build)
+  let serverDaily192: HistoryPick[] = [];
   try {
-    const { listPowerplay192Picks } = await import("./pp192History");
-    serverPp192 = await listPowerplay192Picks();
+    const { listDaily192Picks } = await import("./pp192History");
+    serverDaily192 = await listDaily192Picks();
   } catch {
-    serverPp192 = [];
+    serverDaily192 = [];
   }
 
-  let picks = mergePicks([clientPicks, serverPp192]);
+  let picks = mergePicks([clientPicks, serverDaily192]);
 
   // Oddset först (ESPN), sedan SVS-omgångar
   const settledOddset: HistoryPick[] = [];
@@ -502,12 +502,14 @@ export async function buildTipHistory(
   picks = await settleDrawPicks(settledOddset);
   picks = prune(picks);
 
-  // Skriv tillbaka settlade PP 192 till servern så resultat syns 24 h
+  // Skriv tillbaka settlade 192 kr till servern så resultat syns 24 h
   try {
-    const { rememberPowerplay192Settled } = await import("./pp192History");
-    await rememberPowerplay192Settled(
+    const { rememberDaily192Settled } = await import("./pp192History");
+    await rememberDaily192Settled(
       picks.filter(
-        (p) => p.product === "powerplay" && p.costKr === 192
+        (p) =>
+          (p.product === "powerplay" || p.product === "topptipset") &&
+          p.costKr === 192
       )
     );
   } catch {
