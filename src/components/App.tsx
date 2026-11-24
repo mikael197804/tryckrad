@@ -19,7 +19,11 @@ import type {
   TipHistoryResponse,
 } from "../lib/tipHistory";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
-import type { V75DayTip, V75HorseTip, V75LegAnalysis } from "../lib/v75";
+import type {
+  V75DayTip,
+  V75HorseTip,
+  V75LegAnalysis,
+} from "../lib/v75";
 
 function productHistoryLabel(p: HistoryProduct): string {
   switch (p) {
@@ -606,6 +610,9 @@ function V75HorseRow({ h }: { h: V75HorseTip }) {
                   : ""}
             </span>
           )}
+          {h.dualDriverLongshot && (
+            <span className="v75-home-tag">dubbelkusk</span>
+          )}
         </div>
         <div className="reason">
           {h.driver ? `kusk ${h.driver}` : ""}
@@ -664,6 +671,7 @@ function V75LegCard({
       h.classDrop?.dropped ||
       h.highWinRate ||
       h.lowOddsReview?.isLowOdds ||
+      h.dualDriverLongshot ||
       (h.valueEdgePct != null && h.valueEdgePct >= 6) ||
       (h.tipMentions.length > 0 && h.tipConsensus !== "none")
   );
@@ -804,9 +812,43 @@ function V75View({ tip }: { tip: V75DayTip }) {
         tip.homeTrackHorses.length > 0 ||
         tip.classDropHorses.length > 0 ||
         tip.highWinRateHorses.length > 0 ||
-        tip.lowOddsReviews.length > 0) && (
+        tip.lowOddsReviews.length > 0 ||
+        tip.dualDriverSignals.length > 0) && (
         <section className="panel">
           <h2>Signaler · klass, seger%, lågodds &amp; värde</h2>
+          {tip.dualDriverSignals.length > 0 && (
+            <>
+              <h3>Dubbelkuskar (2 lopp) · högst odds</h3>
+              <p className="panel-lead">
+                Kuskar i exakt två V75-avdelningar brukar ofta vinna ett lopp –
+                ofta med den dyraste hästen.
+              </p>
+              <ul className="alert-list table-alerts">
+                {tip.dualDriverSignals.map((s) => (
+                  <li key={`${s.driver}-${s.focusLeg}-${s.focusStartNumber}`}>
+                    <strong>{s.driver}</strong>: fokusera V75-{s.focusLeg} #
+                    {s.focusStartNumber} {s.focusHorse}
+                    {s.focusOdds != null
+                      ? ` @ ${String(s.focusOdds).replace(".", ",")}`
+                      : ""}{" "}
+                    (högst odds av två)
+                    <div className="reason" style={{ marginTop: "0.2rem" }}>
+                      {s.mounts
+                        .map(
+                          (m) =>
+                            `V75-${m.leg} #${m.startNumber} ${m.horseName}${
+                              m.winOdds != null
+                                ? ` @ ${String(m.winOdds).replace(".", ",")}`
+                                : ""
+                            }${m.isHighestOdds ? " ★" : ""}`
+                        )
+                        .join(" · ")}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <div className="grid-2 mobile-stack">
             {tip.classDropHorses.length > 0 && (
               <div>

@@ -54,6 +54,7 @@ export type AtgStart = {
     };
   };
   driver?: {
+    id?: number;
     firstName?: string;
     lastName?: string;
     shortName?: string;

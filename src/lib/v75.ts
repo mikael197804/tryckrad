@@ -34,11 +34,32 @@ export type V75LowOddsReview = {
   supported: boolean | null;
 };
 
+export type V75DualDriverMount = {
+  leg: number;
+  startNumber: number;
+  horseName: string;
+  winOdds: number | null;
+  isHighestOdds: boolean;
+};
+
+export type V75DualDriverSignal = {
+  driver: string;
+  driverId: number | null;
+  mounts: V75DualDriverMount[];
+  /** Hästen med högst vinnarodds bland kusken två starter. */
+  focusLeg: number;
+  focusStartNumber: number;
+  focusHorse: string;
+  focusOdds: number | null;
+  note: string;
+};
+
 export type V75HorseTip = {
   startNumber: number;
   postPosition: number | null;
   name: string;
   driver: string;
+  driverId: number | null;
   trainer: string;
   winOdds: number | null;
   v75Pct: number | null;
@@ -58,6 +79,12 @@ export type V75HorseTip = {
   driverHomeTrack: boolean;
   homeNote: string | null;
   formNote: string | null;
+  /**
+   * Kusk kör i exakt två V75-lopp – den här hästen har högst odds av de två
+   * (kuskar brukar ofta ta en seger, ofta med den dyraste).
+   */
+  dualDriverLongshot: boolean;
+  dualDriverNote: string | null;
   misleading: string | null;
   tipMentions: ExternalTipMention[];
   tipConsensus: "hot" | "value" | "fade" | "split" | "none";
@@ -145,6 +172,8 @@ export type V75DayTip = {
     supported: boolean | null;
     note: string;
   }>;
+  /** Kuskar som kör i exakt två V75-avdelningar – fokus på högsta odds-hästen. */
+  dualDriverSignals: V75DualDriverSignal[];
   externalSources: TipSourceReport[];
   headlineSignals: ExternalTipMention[];
   rules: string[];
@@ -619,6 +648,7 @@ function analyzeHorse(
     postPosition: start.postPosition ?? null,
     name: start.horse.name,
     driver: personName(start.driver),
+    driverId: start.driver?.id ?? null,
     trainer: personName(start.horse.trainer),
     winOdds,
     v75Pct,
@@ -636,6 +666,8 @@ function analyzeHorse(
     driverHomeTrack: home.driver,
     homeNote: home.note,
     formNote: form,
+    dualDriverLongshot: false,
+    dualDriverNote: null,
     misleading,
     tipMentions: horseMentions.slice(0, 4),
     tipConsensus: consensus,
@@ -643,6 +675,128 @@ function analyzeHorse(
     role,
     reason: reasons.join(" · "),
   };
+}
+
+/**
+ * Kuskar i exakt två V75-lopp: flagga hästen med högst vinnarodds.
+ * Mönster: de brukar vinna ett av loppen, ofta med den dyraste hästen.
+ */
+function applyDualDriverSignals(legs: V75LegAnalysis[]): V75DualDriverSignal[] {
+  type Mount = {
+    leg: number;
+    horse: V75HorseTip;
+  };
+  const byKey = new Map<string, { driver: string; driverId: number | null; mounts: Mount[] }>();
+
+  for (const leg of legs) {
+    for (const h of leg.horses) {
+      if (!h.driver) continue;
+      const key =
+        h.driverId != null ? `id:${h.driverId}` : `name:${h.driver.toLowerCase()}`;
+      let row = byKey.get(key);
+      if (!row) {
+        row = { driver: h.driver, driverId: h.driverId, mounts: [] };
+        byKey.set(key, row);
+      }
+      row.mounts.push({ leg: leg.leg, horse: h });
+    }
+  }
+
+  const signals: V75DualDriverSignal[] = [];
+
+  for (const row of byKey.values()) {
+    // Exakt två starter i omgången (en per lopp)
+    const uniqueLegs = [...new Set(row.mounts.map((m) => m.leg))];
+    if (uniqueLegs.length !== 2 || row.mounts.length !== 2) continue;
+
+    const [a, b] = row.mounts;
+    // ATG sätter ofta ~99,99 när odds saknas – ignorera som “riktiga” odds
+    const realOdds = (h: V75HorseTip) =>
+      h.winOdds != null && h.winOdds > 1 && h.winOdds < 80 ? h.winOdds : null;
+    const oddsA = realOdds(a.horse);
+    const oddsB = realOdds(b.horse);
+    let focus: Mount;
+    if (oddsA != null && oddsB != null) {
+      focus = oddsA >= oddsB ? a : b;
+    } else if (oddsA != null) {
+      focus = a;
+    } else if (oddsB != null) {
+      focus = b;
+    } else {
+      // Fallback: lägst V75-streck = “högre odds” i poolen
+      const pctA = a.horse.v75Pct ?? 50;
+      const pctB = b.horse.v75Pct ?? 50;
+      focus = pctA <= pctB ? a : b;
+    }
+    const other = focus === a ? b : a;
+    const focusOdds = realOdds(focus.horse) ?? focus.horse.winOdds;
+    const otherOdds = realOdds(other.horse) ?? other.horse.winOdds;
+
+    const note =
+      `${row.driver} kör V75-${a.leg} (#${a.horse.startNumber} ${a.horse.name}` +
+      `${a.horse.winOdds != null ? ` @ ${String(a.horse.winOdds).replace(".", ",")}` : ""})` +
+      ` och V75-${b.leg} (#${b.horse.startNumber} ${b.horse.name}` +
+      `${b.horse.winOdds != null ? ` @ ${String(b.horse.winOdds).replace(".", ",")}` : ""})` +
+      ` – fokus på högsta odds: #${focus.horse.startNumber} ${focus.horse.name}` +
+      (focusOdds != null ? ` @ ${String(focusOdds).replace(".", ",")}` : "");
+
+    focus.horse.dualDriverLongshot = true;
+    focus.horse.dualDriverNote = note;
+    focus.horse.score += 5.5;
+    if (focus.horse.modelWinPct != null) {
+      focus.horse.modelWinPct = Math.min(
+        65,
+        Math.round((focus.horse.modelWinPct + 3.5) * 10) / 10
+      );
+    }
+    if (focus.horse.role === "skip") focus.horse.role = "skräll";
+    else if (focus.horse.role === "gardering") focus.horse.role = "skräll";
+    const tag = `dubbelkusk-skräll (högst odds av ${row.driver}s två lopp)`;
+    if (!focus.horse.reason.includes("dubbelkusk")) {
+      focus.horse.reason = `${tag} · ${focus.horse.reason}`;
+    }
+
+    // Mild boost även på den andra starten (kusk kan ta segern där)
+    other.horse.score += 1.5;
+    if (other.horse.role === "skip" && (otherOdds ?? 99) <= 8) {
+      other.horse.role = "gardering";
+    }
+
+    // Alert på båda loppen
+    for (const leg of legs) {
+      if (leg.leg !== focus.leg && leg.leg !== other.leg) continue;
+      const alert =
+        leg.leg === focus.leg
+          ? `Dubbelkusk ${row.driver}: högst odds #${focus.horse.startNumber} ${focus.horse.name}`
+          : `Dubbelkusk ${row.driver}: även V75-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name} (högst odds)`;
+      if (!leg.alerts.some((x) => x.includes(`Dubbelkusk ${row.driver}`))) {
+        leg.alerts.unshift(alert);
+      }
+    }
+
+    signals.push({
+      driver: row.driver,
+      driverId: row.driverId,
+      mounts: row.mounts.map((m) => ({
+        leg: m.leg,
+        startNumber: m.horse.startNumber,
+        horseName: m.horse.name,
+        winOdds: m.horse.winOdds,
+        isHighestOdds: m === focus,
+      })),
+      focusLeg: focus.leg,
+      focusStartNumber: focus.horse.startNumber,
+      focusHorse: focus.horse.name,
+      focusOdds,
+      note,
+    });
+  }
+
+  // Sortera: längst odds först
+  signals.sort(
+    (a, b) => (b.focusOdds ?? 0) - (a.focusOdds ?? 0)
+  );
+  return signals;
 }
 
 function opennessFromPicks(
@@ -877,6 +1031,7 @@ function fitLegsToBudget(
         h.role === "spik" ||
         h.classDrop?.dropped ||
         h.highWinRate ||
+        h.dualDriverLongshot ||
         (h.lowOddsReview?.supported === true && (h.winOdds ?? 99) <= 3.5)
     );
     // Se till att must ingår tidigt i ordningen
@@ -1111,6 +1266,8 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     )
   );
 
+  const dualDriverSignals = applyDualDriverSignals(rawLegs);
+
   const rowPriceKr = game.newBettingSystem ? 0.6 : 1;
   const fitted = fitLegsToBudget(
     rawLegs,
@@ -1260,6 +1417,7 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     classDropHorses,
     highWinRateHorses,
     lowOddsReviews,
+    dualDriverSignals,
     externalSources: sources,
     headlineSignals,
     rules: [
@@ -1267,6 +1425,7 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
       "ATG-data: vinnarodds, V75-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).",
       "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
       "Högre seger% = klart över fältets median (karriärstatistik).",
+      "Dubbelkusk = kusk i exakt två V75-lopp; fokus på hästen med högst vinnarodds (brukar ofta ta en seger).",
       "Lågoddsare (@ ≤5,5) granskas mot seger%, form och klassdroppe – stödd eller svag.",
       "Överodds = modellchans högre än V75-procenten. Missvisande favorit = högt streck utan stöd.",
       "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News.",
