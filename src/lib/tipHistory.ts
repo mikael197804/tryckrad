@@ -194,7 +194,12 @@ async function fetchDrawResults(
         `https://api.www.svenskaspel.se/draw/1/${slug}/draws/${drawNumber}/result`
       ).catch(() => null) as Promise<{
         result?: {
-          events?: Array<{ eventNumber: number; outcome?: string }>;
+          events?: Array<{
+            eventNumber: number;
+            outcome?: string;
+            participantType?: string;
+            outcomeScore?: { home?: number; away?: number };
+          }>;
         };
       } | null>,
     ]);
@@ -202,18 +207,31 @@ async function fetchDrawResults(
     const draw = drawWrap.draw;
     if (!draw) return map;
 
+    // Result-API: officiellt utfall + mål (gäller även spelarspecialer)
+    const playerEvents = new Set<number>();
     for (const e of resWrap?.result?.events || []) {
       const o = String(e.outcome || "").toUpperCase();
-      if (o === "1" || o === "X" || o === "2") {
-        map.set(e.eventNumber, {
-          outcome: o as Outcome,
-          homeGoals: null,
-          awayGoals: null,
-        });
+      if (o !== "1" && o !== "X" && o !== "2") continue;
+      const hs = e.outcomeScore?.home;
+      const as = e.outcomeScore?.away;
+      const homeGoals =
+        hs != null && Number.isFinite(Number(hs)) ? Number(hs) : null;
+      const awayGoals =
+        as != null && Number.isFinite(Number(as)) ? Number(as) : null;
+      if (String(e.participantType || "").toLowerCase() === "player") {
+        playerEvents.add(e.eventNumber);
       }
+      map.set(e.eventNumber, {
+        outcome: o as Outcome,
+        homeGoals,
+        awayGoals,
+      });
     }
 
+    // Draw-events FT/Current som komplement – skriv inte över result-API:s mål
+    // (spelarspecialer kan felaktigt ärva lagmatchens FT, t.ex. 2–5).
     for (const ev of draw.drawEvents || []) {
+      if (playerEvents.has(ev.eventNumber)) continue;
       const ft = ev.match?.result?.find(
         (r) =>
           r.sportEventResultType === "Fulltime" ||
@@ -227,8 +245,8 @@ async function fetchDrawResults(
       const prev = map.get(ev.eventNumber);
       map.set(ev.eventNumber, {
         outcome: prev?.outcome || outcome,
-        homeGoals: h,
-        awayGoals: a,
+        homeGoals: prev?.homeGoals ?? h,
+        awayGoals: prev?.awayGoals ?? a,
       });
     }
 
@@ -242,11 +260,29 @@ async function fetchDrawResults(
   return map;
 }
 
+/** Spelarspecial (t.ex. Stenberg–Kaprizov) finns inte på Flashscore. */
+function looksLikePlayerSpecial(pick: HistoryPick): boolean {
+  const blob = `${pick.home} ${pick.away} ${pick.description}`.toLowerCase();
+  // Lagmarkörer som NHL/SHL-lag brukar ha – saknas ofta på personnamn
+  if (
+    /\b(fc|if|bk|sk|hc|hk|ik|aik|ifk|jets|ducks|devils|kings|flames|leafs|kraken|sharks|wild|oilers|bruins|sabres|rangers|senators|canadiens|mammoth)\b/i.test(
+      blob
+    )
+  ) {
+    return false;
+  }
+  // Två personnamn utan lag-suffix
+  const homeParts = pick.home.trim().split(/\s+/);
+  const awayParts = pick.away.trim().split(/\s+/);
+  return homeParts.length >= 2 && awayParts.length >= 2;
+}
+
 /** Settla ett tips via Flashscore (mål + 1X2 / över / måltips). */
 async function settlePickViaFlashscore(
   pick: HistoryPick
 ): Promise<HistoryPick | null> {
   if (!pick.home || !pick.away || !pick.kickoff) return null;
+  if (looksLikePlayerSpecial(pick)) return null;
   const kick = Date.parse(pick.kickoff);
   if (Number.isFinite(kick) && Date.now() < kick + 5 * 60 * 1000) return null;
 
@@ -343,7 +379,12 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       out.push(p);
       continue;
     }
-    if (p.status === "won" || p.status === "lost") {
+    const alreadySettled = p.status === "won" || p.status === "lost";
+    // Spelarspecialer: tillåt rättning av fel måltal även om redan settlat
+    const needsPlayerScoreFix =
+      alreadySettled && looksLikePlayerSpecial(p);
+
+    if (alreadySettled && !needsPlayerScoreFix) {
       out.push({
         ...p,
         settledAt:
@@ -356,10 +397,12 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
     }
 
     // Primärt: Flashscore via lagnamn + kickoff (alla spelformer)
-    const viaFs = await settlePickViaFlashscore(p);
-    if (viaFs) {
-      out.push(viaFs);
-      continue;
+    if (!alreadySettled) {
+      const viaFs = await settlePickViaFlashscore(p);
+      if (viaFs) {
+        out.push(viaFs);
+        continue;
+      }
     }
 
     // Backup: Svenska Spels omgångsresultat
@@ -383,25 +426,27 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
     if (!res) {
       out.push({
         ...p,
+        settledAt: p.settledAt || new Date().toISOString(),
         resultNote: p.resultNote || "Väntar på Flashscore…",
       });
       continue;
     }
 
-    const settledAt = new Date().toISOString();
+    const settledAt = p.settledAt || new Date().toISOString();
     if (p.market === "1x2") {
       const hit = p.pick.includes(res.outcome);
+      const actual =
+        res.homeGoals != null && res.awayGoals != null
+          ? `${res.homeGoals}-${res.awayGoals}`
+          : res.outcome;
       out.push({
         ...p,
         status: hit ? "won" : "lost",
-        actual:
-          res.homeGoals != null && res.awayGoals != null
-            ? `${res.homeGoals}-${res.awayGoals}`
-            : res.outcome,
+        actual,
         settledAt,
         resultNote: hit
-          ? `Rätt · tipset ${p.pick.join("")} träffade ${res.outcome}`
-          : `Fel · tipset ${p.pick.join("")} · rätt blev ${res.outcome}`,
+          ? `Rätt · ${actual} (tipset ${p.pick.join("")} → ${res.outcome}) · Svenska Spel`
+          : `Fel · ${actual} (tipset ${p.pick.join("")}, blev ${res.outcome}) · Svenska Spel`,
       });
       continue;
     }
