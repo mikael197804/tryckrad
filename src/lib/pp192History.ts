@@ -115,7 +115,24 @@ export function daily192PicksFromDraw(
   const product = draw.productKind;
   const costKr = DAILY_SYSTEM_COST_KR;
   const gameKey = `${product}:${draw.drawNumber}:${costKr}`;
-  const gameLabel = `${productLabel(product)} #${draw.drawNumber} · ${costKr} kr`;
+  const first = draw.matches[0];
+  const firstLabel = first
+    ? `${first.home.name}–${first.away.name}`
+    : null;
+  const state = String(draw.drawState || "");
+  const playing =
+    state === "Closed" ||
+    (state !== "Finalized" &&
+      Number.isFinite(Date.parse(draw.closeTime)) &&
+      Date.parse(draw.closeTime) <= Date.now());
+  const gameLabel = [
+    `${productLabel(product)} #${draw.drawNumber}`,
+    playing ? "Spelas nu" : null,
+    firstLabel,
+    `${costKr} kr`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return system.picks.map((p) => {
     const match = draw.matches.find((m) => m.eventNumber === p.eventNumber);

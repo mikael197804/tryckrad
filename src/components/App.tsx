@@ -236,10 +236,30 @@ function drawToHistoryPicks(
       const forced = (draw.systems || []).find((s) => s.costKr === 192);
       if (forced) systems = [...systems, forced];
     }
+    // I resultat: visa främst 192 kr (dagligt) + ev. 48 kr – inte alla system
+    systems = systems.filter(
+      (s) => s.costKr === 192 || s.costKr === 48
+    );
   }
   if (!systems.length) return [];
 
-  const baseLabel = `${productHistoryLabel(product)} #${draw.drawNumber}`;
+  const first = draw.matches[0];
+  const firstLabel = first
+    ? `${first.home.name}–${first.away.name}`
+    : null;
+  const state = String(draw.drawState || "");
+  const playing =
+    state === "Closed" ||
+    (state !== "Finalized" &&
+      Number.isFinite(Date.parse(draw.closeTime)) &&
+      Date.parse(draw.closeTime) <= Date.now());
+  const baseLabel = [
+    `${productHistoryLabel(product)} #${draw.drawNumber}`,
+    playing ? "Spelas nu" : null,
+    firstLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const out: HistoryPick[] = [];
 
   for (const system of systems) {
@@ -1391,8 +1411,16 @@ function HistoryView({
       .filter((g) => g.product === library)
       .sort((a, b) => {
         if (library === "powerplay" || library === "topptipset") {
+          // Spelas-nu / ofärdiga 192 kr-omgångar först (t.ex. #4826)
+          const aLive = a.pending + a.live > 0 ? 1 : 0;
+          const bLive = b.pending + b.live > 0 ? 1 : 0;
+          if (aLive !== bLive) return bLive - aLive;
           if (a.costKr === 192 && b.costKr !== 192) return -1;
           if (b.costKr === 192 && a.costKr !== 192) return 1;
+          // Högre omgångsnummer (= nyare) först bland 192
+          const aNum = Number(String(a.gameKey).split(":")[1] || 0);
+          const bNum = Number(String(b.gameKey).split(":")[1] || 0);
+          if (aNum !== bNum) return bNum - aNum;
         }
         return Date.parse(b.tippedAt) - Date.parse(a.tippedAt);
       });
@@ -2506,13 +2534,30 @@ export default function App() {
   const openHistory = useCallback(() => {
     setShowHistory(true);
     setHistoryLoading(true);
-    // Värm Powerplay + Topptipset så 192 kr sparas innan resultat hämtas
+    // Värm PP/Topp och spara tippen lokalt (t.ex. #4826 Örebro–Frölunda)
+    // innan resultatbiblioteket byggs – annars syns stängda omgångar inte.
     void (async () => {
       try {
-        await Promise.all([
+        const tippedAt = new Date().toISOString();
+        const [ppRes, toppRes] = await Promise.all([
           fetch("/api/draws?product=powerplay", { cache: "no-store" }),
           fetch("/api/draws?product=topptipset", { cache: "no-store" }),
         ]);
+        const extra: HistoryPick[] = [];
+        for (const res of [ppRes, toppRes]) {
+          if (!res.ok) continue;
+          const json = (await res.json()) as {
+            generatedAt?: string;
+            draws?: DrawBundle[];
+          };
+          const at = json.generatedAt || tippedAt;
+          for (const d of json.draws || []) {
+            extra.push(...drawToHistoryPicks(d, at));
+          }
+        }
+        if (extra.length) {
+          saveLocalHistoryPicks([...loadLocalHistoryPicks(), ...extra]);
+        }
       } catch {
         /* ignore */
       }

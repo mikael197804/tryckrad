@@ -192,6 +192,13 @@ async function fetchOptionalDraw(
   }
 }
 
+/** Hämta en specifik Powerplay-omgång (t.ex. #4826 Spelas nu). */
+export async function fetchOptionalPowerplayDraw(
+  drawNumber: number
+): Promise<RawDraw | null> {
+  return fetchOptionalDraw("powerplay", drawNumber);
+}
+
 /** Hitta högsta befintliga Topptipset-drawNumber (list-API kräver nyckel). */
 async function findLatestTopptipsetDrawNumber(): Promise<number> {
   // Expansiv sökning uppåt, sedan binärsök i sista fönstret

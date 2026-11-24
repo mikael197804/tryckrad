@@ -510,8 +510,8 @@ function summarize(picks: HistoryPick[]): {
 export async function buildTipHistory(
   clientPicks: HistoryPick[]
 ): Promise<TipHistoryResponse> {
-  // Värm aktuella + nyss stängda Powerplay (t.ex. Örebro–Frölunda) så 192 kr
-  // alltid finns i resultat – även på ny serverless-instans utan /tmp-minne.
+  // Värm aktuella + nyss stängda Powerplay (t.ex. #4826 Örebro–Frölunda)
+  // så 192 kr alltid finns i resultat – även på ny serverless-instans.
   try {
     const { buildAllDrawBundles } = await import("./pipeline");
     await buildAllDrawBundles("powerplay");
