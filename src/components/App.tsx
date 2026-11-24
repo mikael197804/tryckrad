@@ -1382,33 +1382,75 @@ function HistoryView({
   onRefresh: () => void;
   onOpenProduct?: (product: ProductKind) => void;
 }) {
+  const [library, setLibrary] = useState<HistoryProduct | null>(null);
+
+  const libraryMeta = HISTORY_PRODUCT_COLUMNS.find((c) => c.id === library);
+  const libraryGames = useMemo(() => {
+    if (!history || !library) return [];
+    return history.games
+      .filter((g) => g.product === library)
+      .sort((a, b) => {
+        if (library === "powerplay" || library === "topptipset") {
+          if (a.costKr === 192 && b.costKr !== 192) return -1;
+          if (b.costKr === 192 && a.costKr !== 192) return 1;
+        }
+        return Date.parse(b.tippedAt) - Date.parse(a.tippedAt);
+      });
+  }, [history, library]);
+
+  const libraryStats = useMemo(() => {
+    if (!history || !library) return null;
+    const picks = history.picks.filter((p) => p.product === library);
+    const won = picks.filter((p) => p.status === "won").length;
+    const lost = picks.filter((p) => p.status === "lost").length;
+    const pending = picks.filter(
+      (p) => p.status === "pending" || p.status === "live"
+    ).length;
+    return { won, lost, pending, games: libraryGames.length };
+  }, [history, library, libraryGames.length]);
+
   return (
     <div className="history-overlay" role="dialog" aria-modal="true">
       <div className="history-panel history-panel-wide rise">
         <div className="history-panel-top">
-          <h2>Gamla resultat · 24 h</h2>
+          <h2>
+            {libraryMeta
+              ? `${libraryMeta.label} · resultat`
+              : "Resultat · bibliotek"}
+          </h2>
           <div className="history-actions">
+            {library && (
+              <button
+                type="button"
+                className="history-btn ghost"
+                onClick={() => setLibrary(null)}
+              >
+                Alla bibliotek
+              </button>
+            )}
             <button
               type="button"
               className="history-btn ghost"
               onClick={onRefresh}
             >
-              Uppdatera resultat
+              Uppdatera
             </button>
             <button type="button" className="history-btn" onClick={onClose}>
               Stäng
             </button>
           </div>
         </div>
-        <p className="panel-lead">
-          Resultaten är uppdelade per spel. Powerplay/Topptipset sparar 192 kr
-          varje dag. Grönt = rätt, rött = fel – syns{" "}
-          {history?.retentionHours ?? 24} timmar efter färdigt spel.
-        </p>
+
+        {!library && (
+          <p className="panel-lead">
+            Välj ett bibliotek per spelform. Powerplay och Topptipset sparar 192
+            kr varje dag – resultat syns 24 timmar efter färdigt spel.
+          </p>
+        )}
 
         {loading && <div className="loading">Hämtar resultat…</div>}
 
-        {history && !loading && (
+        {history && !loading && !library && (
           <>
             <div className="history-totals">
               <div>
@@ -1435,67 +1477,87 @@ function HistoryView({
               </div>
             </div>
 
-            <div className="history-columns">
+            <div className="history-libraries" role="list">
               {HISTORY_PRODUCT_COLUMNS.map((col) => {
-                const games = history.games
-                  .filter((g) => g.product === col.id)
-                  .sort((a, b) => {
-                    // 192 kr först för PP/Topp
-                    if (col.id === "powerplay" || col.id === "topptipset") {
-                      if (a.costKr === 192 && b.costKr !== 192) return -1;
-                      if (b.costKr === 192 && a.costKr !== 192) return 1;
-                    }
-                    return Date.parse(b.tippedAt) - Date.parse(a.tippedAt);
-                  });
+                const games = history.games.filter((g) => g.product === col.id);
+                const picks = history.picks.filter((p) => p.product === col.id);
+                const won = picks.filter((p) => p.status === "won").length;
+                const lost = picks.filter((p) => p.status === "lost").length;
+                const pending = picks.filter(
+                  (p) => p.status === "pending" || p.status === "live"
+                ).length;
                 return (
-                  <div key={col.id} className="history-col">
-                    <div className="history-col-head">
-                      <h3>{col.label}</h3>
-                      <span className="history-col-count">
-                        {games.length} tipp
-                        {games.length === 1 ? "" : "ar"}
-                      </span>
-                      {onOpenProduct &&
-                        (col.id === "powerplay" ||
-                          col.id === "topptipset" ||
-                          col.id === "stryktipset" ||
-                          col.id === "maltipset" ||
-                          col.id === "oddset") && (
-                          <button
-                            type="button"
-                            className="history-btn ghost history-col-open"
-                            onClick={() => {
-                              onOpenProduct(col.id);
-                              onClose();
-                            }}
-                          >
-                            Öppna spel
-                          </button>
-                        )}
-                    </div>
-                    {games.length === 0 ? (
-                      <p className="history-col-empty">
-                        Inga resultat ännu.
-                        {col.id === "powerplay"
-                          ? " Tryck Powerplay i menyn – öppna omgångar tippas nu."
-                          : ""}
-                      </p>
-                    ) : (
-                      games.map((g) => (
-                        <HistoryGameCard
-                          key={g.gameKey}
-                          game={g}
-                          picks={history.picks.filter(
-                            (p) => p.gameKey === g.gameKey
-                          )}
-                        />
-                      ))
-                    )}
-                  </div>
+                  <button
+                    key={col.id}
+                    type="button"
+                    role="listitem"
+                    className="history-library-card"
+                    onClick={() => setLibrary(col.id)}
+                  >
+                    <span className="history-library-name">{col.label}</span>
+                    <span className="history-library-meta">
+                      {games.length} tipp{games.length === 1 ? "" : "ar"}
+                      {picks.length > 0
+                        ? ` · ${won} rätt · ${lost} fel${
+                            pending > 0 ? ` · ${pending} väntar` : ""
+                          }`
+                        : " · tomt"}
+                    </span>
+                    <span className="history-library-open">Öppna bibliotek →</span>
+                  </button>
                 );
               })}
             </div>
           </>
+        )}
+
+        {history && !loading && library && libraryMeta && (
+          <div className="history-library-view">
+            <div className="history-library-toolbar">
+              <p className="panel-lead">
+                Bibliotek: <strong>{libraryMeta.label}</strong>
+                {libraryStats
+                  ? ` · ${libraryStats.games} tipp${
+                      libraryStats.games === 1 ? "" : "ar"
+                    } · ${libraryStats.won} rätt · ${libraryStats.lost} fel`
+                  : ""}
+                . Grönt = rätt, rött = fel.
+              </p>
+              {onOpenProduct && (
+                <button
+                  type="button"
+                  className="history-btn"
+                  onClick={() => {
+                    onOpenProduct(library);
+                    onClose();
+                  }}
+                >
+                  Till {libraryMeta.label}
+                </button>
+              )}
+            </div>
+
+            {libraryGames.length === 0 ? (
+              <p className="history-col-empty">
+                Inga resultat i {libraryMeta.label} ännu.
+                {library === "powerplay"
+                  ? " Öppna Powerplay i menyn – tipset sparas automatiskt (192 kr)."
+                  : library === "topptipset"
+                    ? " Öppna Topptipset – 192 kr sparas i det här biblioteket."
+                    : ""}
+              </p>
+            ) : (
+              <div className="history-library-list">
+                {libraryGames.map((g) => (
+                  <HistoryGameCard
+                    key={g.gameKey}
+                    game={g}
+                    picks={history.picks.filter((p) => p.gameKey === g.gameKey)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
