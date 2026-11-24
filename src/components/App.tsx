@@ -1432,36 +1432,84 @@ function OddsetPickCard({
 function HistoryGameCard({
   game,
   picks,
+  collapsible = false,
 }: {
   game: TipHistoryResponse["games"][number];
   picks: TipHistoryResponse["picks"];
+  /** Powerplay/Topptipset: hopfälld ruta som öppnas vid klick. */
+  collapsible?: boolean;
 }) {
+  const [open, setOpen] = useState(!collapsible);
   const systemResult = game.systemResult || "pending";
+  const waiting = game.pending + game.live;
+  const scoreLabel = `${game.won} rätt / ${game.lost} fel${
+    waiting > 0 ? ` · ${waiting} väntar` : ""
+  }`;
+
   return (
-    <section className={`panel history-game system-${systemResult}`}>
-      <h3>
-        {game.label}{" "}
-        <span className="history-score">
-          {game.won} rätt / {game.lost} fel
-          {game.pending + game.live > 0
-            ? ` · ${game.pending + game.live} väntar`
-            : ""}
-        </span>
-        {game.costKr != null && (
-          <span className="history-cost-pill">{game.costKr} kr</span>
-        )}
-        {systemResult === "won" && (
-          <span className="oddset-result-badge won">System grönt</span>
-        )}
-        {systemResult === "won" && game.payoutLabel && (
-          <span className="history-payout-pill" title="Officiell utdelning">
-            Utdelning {game.payoutLabel}
+    <section
+      className={`panel history-game system-${systemResult}${
+        collapsible ? " history-game-collapsible" : ""
+      }${collapsible && open ? " is-open" : ""}${
+        collapsible && !open ? " is-collapsed" : ""
+      }`}
+    >
+      {collapsible ? (
+        <button
+          type="button"
+          className="history-game-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className="history-game-toggle-main">
+            <span className="history-game-toggle-title">{game.label}</span>
+            <span className="history-score">{scoreLabel}</span>
           </span>
-        )}
-        {systemResult === "lost" && (
-          <span className="oddset-result-badge lost">System rött</span>
-        )}
-      </h3>
+          <span className="history-game-toggle-meta">
+            {game.costKr != null && (
+              <span className="history-cost-pill">{game.costKr} kr</span>
+            )}
+            {systemResult === "won" && (
+              <span className="oddset-result-badge won">System grönt</span>
+            )}
+            {systemResult === "won" && game.payoutLabel && (
+              <span className="history-payout-pill" title="Officiell utdelning">
+                Utdelning {game.payoutLabel}
+              </span>
+            )}
+            {systemResult === "lost" && (
+              <span className="oddset-result-badge lost">System rött</span>
+            )}
+            {systemResult === "pending" && waiting > 0 && (
+              <span className="oddset-result-badge live">Pågår</span>
+            )}
+            <span className="history-game-chevron" aria-hidden="true">
+              {open ? "▾" : "▸"}
+            </span>
+          </span>
+        </button>
+      ) : (
+        <h3>
+          {game.label}{" "}
+          <span className="history-score">{scoreLabel}</span>
+          {game.costKr != null && (
+            <span className="history-cost-pill">{game.costKr} kr</span>
+          )}
+          {systemResult === "won" && (
+            <span className="oddset-result-badge won">System grönt</span>
+          )}
+          {systemResult === "won" && game.payoutLabel && (
+            <span className="history-payout-pill" title="Officiell utdelning">
+              Utdelning {game.payoutLabel}
+            </span>
+          )}
+          {systemResult === "lost" && (
+            <span className="oddset-result-badge lost">System rött</span>
+          )}
+        </h3>
+      )}
+
+      {open && (
       <ul className="history-pick-list">
         {[...picks]
           .sort((a, b) => {
@@ -1584,6 +1632,7 @@ function HistoryGameCard({
             );
           })}
       </ul>
+      )}
     </section>
   );
 }
@@ -1770,7 +1819,11 @@ function HistoryView({
                       libraryStats.games === 1 ? "" : "ar"
                     } · ${libraryStats.won} rätt · ${libraryStats.lost} fel`
                   : ""}
-                . Grönt = rätt, rött = fel.
+                . Grönt = rätt, rött = fel
+                {library === "powerplay" || library === "topptipset"
+                  ? " · tryck på en ruta för att öppna/stänga"
+                  : ""}
+                .
               </p>
               {onOpenProduct && (
                 <button
@@ -1796,11 +1849,20 @@ function HistoryView({
                     : ""}
               </p>
             ) : (
-              <div className="history-library-list">
+              <div
+                className={`history-library-list${
+                  library === "powerplay" || library === "topptipset"
+                    ? " history-library-list-compact"
+                    : ""
+                }`}
+              >
                 {libraryGames.map((g) => (
                   <HistoryGameCard
                     key={g.gameKey}
                     game={g}
+                    collapsible={
+                      library === "powerplay" || library === "topptipset"
+                    }
                     picks={displayHistory.picks.filter(
                       (p) => p.gameKey === g.gameKey
                     )}
