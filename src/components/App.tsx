@@ -227,12 +227,20 @@ function correctHistoryPickStatus(p: HistoryPick): HistoryPick {
   };
 }
 
-function buildHistoryViewModel(picks: HistoryPick[]): TipHistoryResponse {
+function buildHistoryViewModel(
+  picks: HistoryPick[],
+  prevGames?: TipHistoryResponse["games"]
+): TipHistoryResponse {
   const corrected = picks.map(correctHistoryPickStatus);
   const won = corrected.filter((p) => p.status === "won").length;
   const lost = corrected.filter((p) => p.status === "lost").length;
   const live = corrected.filter((p) => p.status === "live").length;
   const pending = corrected.filter((p) => p.status === "pending").length;
+  const payoutByKey = new Map(
+    (prevGames || [])
+      .filter((g) => g.payoutLabel)
+      .map((g) => [g.gameKey, g.payoutLabel as string])
+  );
   const byGame = new Map<string, HistoryPick[]>();
   for (const p of corrected) {
     const list = byGame.get(p.gameKey) || [];
@@ -266,6 +274,9 @@ function buildHistoryViewModel(picks: HistoryPick[]): TipHistoryResponse {
       live: list.filter((x) => x.status === "live").length,
       costKr: list.find((x) => x.costKr != null)?.costKr ?? null,
       systemResult,
+      drawNumber: list.find((x) => x.drawNumber != null)?.drawNumber ?? null,
+      payoutLabel:
+        systemResult === "won" ? payoutByKey.get(gameKey) || null : null,
     };
   });
   return {
@@ -1438,6 +1449,11 @@ function HistoryGameCard({
         {systemResult === "won" && (
           <span className="oddset-result-badge won">System grönt</span>
         )}
+        {systemResult === "won" && game.payoutLabel && (
+          <span className="history-payout-pill" title="Officiell utdelning">
+            Utdelning {game.payoutLabel}
+          </span>
+        )}
         {systemResult === "lost" && (
           <span className="oddset-result-badge lost">System rött</span>
         )}
@@ -1595,7 +1611,7 @@ function HistoryView({
     if (!history && !seeded.length) return null;
     if (!seeded.length) return history;
     const merged = mergeHistoryPickLists(history?.picks || [], seeded);
-    return buildHistoryViewModel(merged);
+    return buildHistoryViewModel(merged, history?.games);
   }, [history, seedPicks]);
 
   const libraryMeta = HISTORY_PRODUCT_COLUMNS.find((c) => c.id === library);
@@ -2775,7 +2791,7 @@ export default function App() {
         }
       }
 
-      setHistory(buildHistoryViewModel(merged));
+      setHistory(buildHistoryViewModel(merged, json.games));
     } catch {
       const picks = mergeHistoryPickLists(
         loadLocalHistoryPicks(),

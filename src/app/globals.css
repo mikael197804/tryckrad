@@ -888,6 +888,19 @@ a.product-btn:hover {
   letter-spacing: 0.01em;
 }
 
+.history-payout-pill {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #04221f;
+  background: rgba(46, 184, 92, 0.9);
+  border: 1px solid rgba(90, 220, 130, 0.95);
+  vertical-align: middle;
+}
+
 .history-1x2-marks {
   display: flex;
   gap: 0.3rem;

@@ -54,6 +54,9 @@ export type HistoryGameSummary = {
    * vinst ≈ ≥7 rätt på 8 matcher (eller alla rätt på färre).
    */
   systemResult: "won" | "lost" | "pending";
+  /** Officiell utdelning från Svenska Spel, t.ex. "8 rätt · 601,18". */
+  payoutLabel?: string | null;
+  drawNumber?: number | null;
 };
 
 export type TipHistoryResponse = {
@@ -513,6 +516,84 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
   return out;
 }
 
+type PayoutTier = Array<{
+  name: string;
+  amount?: string | null;
+  odds?: string | null;
+  winners?: number;
+}>;
+
+const payoutCache = new Map<string, { at: number; tiers: PayoutTier }>();
+
+async function fetchDrawPayoutTiers(
+  product: Exclude<HistoryProduct, "oddset">,
+  drawNumber: number
+): Promise<PayoutTier> {
+  const key = `${product}:${drawNumber}`;
+  const cached = payoutCache.get(key);
+  if (cached && Date.now() - cached.at < 120_000) return cached.tiers;
+  const slug = PRODUCT_SLUG[product];
+  try {
+    const wrap = (await fetchJson(
+      `https://api.www.svenskaspel.se/draw/1/${slug}/draws/${drawNumber}/result`
+    )) as {
+      result?: {
+        distribution?: Array<{
+          name?: string;
+          amount?: string;
+          odds?: string;
+          winners?: number;
+        }>;
+      };
+    };
+    const tiers = (wrap.result?.distribution || [])
+      .filter((d) => d?.name)
+      .map((d) => ({
+        name: String(d.name),
+        amount: d.amount ?? null,
+        odds: d.odds ?? null,
+        winners: d.winners,
+      }));
+    payoutCache.set(key, { at: Date.now(), tiers });
+    return tiers;
+  } catch {
+    payoutCache.set(key, { at: Date.now(), tiers: [] });
+    return [];
+  }
+}
+
+function formatPayoutLabel(
+  tiers: PayoutTier,
+  correctCount: number
+): string | null {
+  if (!tiers.length) return null;
+  const exact =
+    tiers.find((t) => {
+      const m = t.name.match(/(\d+)\s*rätt/i);
+      return m && Number(m[1]) === correctCount;
+    }) || null;
+  const tier =
+    exact ||
+    tiers.find((t) => /rätt/i.test(t.name)) ||
+    tiers[0];
+  if (!tier) return null;
+  const value = tier.amount || tier.odds;
+  if (!value || value === "0" || value === "0,00") {
+    if (!exact && correctCount > 0) {
+      // t.ex. 7 rätt på Powerplay där bara 8 rätt betalas
+      const top = tiers[0];
+      const topVal = top?.amount || top?.odds;
+      if (topVal && topVal !== "0" && topVal !== "0,00") {
+        return `${top.name} · ${topVal}${top.amount ? " kr" : ""} (vid fullträff)`;
+      }
+    }
+    return null;
+  }
+  const suffix = tier.amount ? " kr" : "";
+  const prefix = exact ? tier.name : tier.name;
+  return `${prefix} · ${value}${suffix}`;
+}
+
 function summarize(picks: HistoryPick[]): {
   games: HistoryGameSummary[];
   totals: TipHistoryResponse["totals"];
@@ -535,6 +616,8 @@ function summarize(picks: HistoryPick[]): {
         .sort()[0] || new Date().toISOString();
       const costKr =
         list.find((x) => x.costKr != null)?.costKr ?? null;
+      const drawNumber =
+        list.find((x) => x.drawNumber != null)?.drawNumber ?? null;
       const settled = won + lost;
       // 8 matcher: vinst vid ≥7 rätt. Annars: alla rätt.
       const winThreshold =
@@ -558,6 +641,8 @@ function summarize(picks: HistoryPick[]): {
         live,
         costKr,
         systemResult,
+        payoutLabel: null,
+        drawNumber,
       };
     })
     .sort((a, b) => {
@@ -582,6 +667,25 @@ function summarize(picks: HistoryPick[]): {
       live,
     },
   };
+}
+
+async function attachPayouts(
+  games: HistoryGameSummary[]
+): Promise<HistoryGameSummary[]> {
+  return Promise.all(
+    games.map(async (g) => {
+      if (g.systemResult !== "won") return g;
+      if (g.product === "oddset") return g;
+      if (g.drawNumber == null) return g;
+      try {
+        const tiers = await fetchDrawPayoutTiers(g.product, g.drawNumber);
+        const payoutLabel = formatPayoutLabel(tiers, g.won);
+        return { ...g, payoutLabel };
+      } catch {
+        return g;
+      }
+    })
+  );
 }
 
 /** Settla och summera klientens sparade tips (24 h). */
@@ -628,11 +732,12 @@ export async function buildTipHistory(
   }
 
   const { games, totals } = summarize(picks);
+  const gamesWithPayout = await attachPayouts(games);
   return {
     generatedAt: new Date().toISOString(),
     retentionHours: TIP_HISTORY_RETENTION_HOURS,
     picks,
-    games,
+    games: gamesWithPayout,
     totals,
   };
 }
