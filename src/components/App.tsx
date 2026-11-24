@@ -586,6 +586,26 @@ function V75HorseRow({ h }: { h: V75HorseTip }) {
             <span className={`v75-role-tag ${roleClass}`}>{h.role}</span>
           )}
           {h.isHomeTrack && <span className="v75-home-tag">hemma</span>}
+          {h.classDrop?.dropped && (
+            <span className="v75-home-tag">nergraderad</span>
+          )}
+          {h.highWinRate && (
+            <span className="v75-home-tag">hög seger%</span>
+          )}
+          {h.lowOddsReview?.isLowOdds && (
+            <span
+              className={`v75-home-tag${
+                h.lowOddsReview.supported === false ? " v75-tag-warn" : ""
+              }`}
+            >
+              lågodds
+              {h.lowOddsReview.supported === true
+                ? " ✓"
+                : h.lowOddsReview.supported === false
+                  ? " !"
+                  : ""}
+            </span>
+          )}
         </div>
         <div className="reason">
           {h.driver ? `kusk ${h.driver}` : ""}
@@ -595,6 +615,9 @@ function V75HorseRow({ h }: { h: V75HorseTip }) {
             : ""}
           {h.v75Pct != null
             ? ` · V75 ${String(h.v75Pct).replace(".", ",")}%`
+            : ""}
+          {h.winRatePct != null
+            ? ` · seger% ${String(h.winRatePct).replace(".", ",")}`
             : ""}
           {h.valueEdgePct != null && h.valueEdgePct >= 2
             ? ` · värde +${String(h.valueEdgePct).replace(".", ",")}%`
@@ -630,6 +653,9 @@ function V75LegCard({ leg }: { leg: V75LegAnalysis }) {
     (h) =>
       leg.pickNumbers.includes(h.startNumber) ||
       h.misleading ||
+      h.classDrop?.dropped ||
+      h.highWinRate ||
+      h.lowOddsReview?.isLowOdds ||
       (h.valueEdgePct != null && h.valueEdgePct >= 6) ||
       (h.tipMentions.length > 0 && h.tipConsensus !== "none")
   );
@@ -722,9 +748,59 @@ function V75View({ tip }: { tip: V75DayTip }) {
 
       {(tip.misleadingFavorites.length > 0 ||
         tip.valueHorses.length > 0 ||
-        tip.homeTrackHorses.length > 0) && (
+        tip.homeTrackHorses.length > 0 ||
+        tip.classDropHorses.length > 0 ||
+        tip.highWinRateHorses.length > 0 ||
+        tip.lowOddsReviews.length > 0) && (
         <section className="panel">
-          <h2>Signaler · överodds, hemma &amp; varningar</h2>
+          <h2>Signaler · klass, seger%, lågodds &amp; värde</h2>
+          <div className="grid-2 mobile-stack">
+            {tip.classDropHorses.length > 0 && (
+              <div>
+                <h3>Nergraderade (bättre liga → hit)</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.classDropHorses.map((m) => (
+                    <li key={`cd-${m.leg}-${m.startNumber}`}>
+                      V75-{m.leg} #{m.startNumber} {m.name}: {m.note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {tip.highWinRateHorses.length > 0 && (
+              <div>
+                <h3>Högre seger% än fältet</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.highWinRateHorses.map((m) => (
+                    <li key={`wr-${m.leg}-${m.startNumber}`}>
+                      V75-{m.leg} #{m.startNumber} {m.name}:{" "}
+                      {String(m.winRatePct).replace(".", ",")}% (+
+                      {String(m.edgePct).replace(".", ",")}%-enh.)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {tip.lowOddsReviews.length > 0 && (
+            <>
+              <h3>Lågoddsare – grundlig koll</h3>
+              <ul className="alert-list learning-alerts">
+                {tip.lowOddsReviews.map((m) => (
+                  <li key={`lo-${m.leg}-${m.startNumber}`}>
+                    V75-{m.leg} #{m.startNumber} {m.name} @{" "}
+                    {String(m.winOdds).replace(".", ",")}
+                    {m.supported === true
+                      ? " · stödd"
+                      : m.supported === false
+                        ? " · svag / ifrågasatt"
+                        : ""}
+                    : {m.note}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <div className="grid-2 mobile-stack">
             {tip.misleadingFavorites.length > 0 && (
               <div>

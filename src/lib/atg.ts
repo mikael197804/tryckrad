@@ -76,6 +76,8 @@ export type AtgRace = {
   distance?: number;
   startMethod?: string;
   status?: string;
+  prize?: string;
+  terms?: string[];
   track?: AtgHomeTrack & { countryCode?: string };
   starts?: AtgStart[];
 };
@@ -183,6 +185,69 @@ export async function findUpcomingV75(
 
 export async function fetchV75Game(gameId: string): Promise<AtgGame> {
   return atgFetch<AtgGame>(`/games/${gameId}`);
+}
+
+/** Tidigare start från /races/{id}/start/{n} – firstPrize i öre. */
+export type AtgPriorRecord = {
+  date?: string;
+  odds?: number;
+  place?: string;
+  race?: {
+    id?: string;
+    number?: number;
+    firstPrize?: number;
+    startMethod?: string;
+  };
+  track?: { id?: number; name?: string };
+};
+
+export type AtgStartDetail = {
+  raceId: string;
+  startNumber: number;
+  horse?: {
+    id?: number;
+    name?: string;
+    money?: number;
+    results?: {
+      records?: AtgPriorRecord[];
+      hasMoreRecords?: boolean;
+    };
+  };
+};
+
+export async function fetchStartDetail(
+  raceId: string,
+  startNumber: number
+): Promise<AtgStartDetail | null> {
+  try {
+    return await atgFetch<AtgStartDetail>(
+      `/races/${raceId}/start/${startNumber}`
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Hämta startdetaljer (historik) med begränsad parallellitet. */
+export async function fetchStartDetailsForRace(
+  raceId: string,
+  startNumbers: number[],
+  concurrency = 5
+): Promise<Map<number, AtgStartDetail>> {
+  const map = new Map<number, AtgStartDetail>();
+  for (let i = 0; i < startNumbers.length; i += concurrency) {
+    const slice = startNumbers.slice(i, i + concurrency);
+    const rows = await Promise.all(
+      slice.map(async (n) => {
+        const d = await fetchStartDetail(raceId, n);
+        return d ? ([n, d] as const) : null;
+      })
+    );
+    for (const row of rows) {
+      if (row) map.set(row[0], row[1]);
+    }
+  }
+  return map;
 }
 
 export function personName(

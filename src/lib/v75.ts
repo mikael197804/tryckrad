@@ -1,18 +1,38 @@
 import {
   atgDistToPct,
   atgOddsToDecimal,
+  fetchStartDetailsForRace,
   fetchV75Game,
   findUpcomingV75,
   personName,
   type AtgGame,
+  type AtgPriorRecord,
   type AtgRace,
   type AtgStart,
+  type AtgStartDetail,
 } from "./atg";
 import {
   collectExternalV75Tips,
   type ExternalTipMention,
   type TipSourceReport,
 } from "./v75Tips";
+
+export type V75ClassDrop = {
+  dropped: boolean;
+  note: string | null;
+  /** Medel förstapris i senaste starter (kr). */
+  recentAvgFirstPrizeKr: number | null;
+  currentFirstPrizeKr: number | null;
+  /** Antal av senaste starter med högre förstapris. */
+  higherPrizeStarts: number;
+};
+
+export type V75LowOddsReview = {
+  isLowOdds: boolean;
+  note: string | null;
+  /** true om lågoddsaren stöds av seger%/klass/form. */
+  supported: boolean | null;
+};
 
 export type V75HorseTip = {
   startNumber: number;
@@ -26,6 +46,13 @@ export type V75HorseTip = {
   /** Modell-p justerad för form/hemma/tips – jämförs med v75Pct. */
   modelWinPct: number | null;
   valueEdgePct: number | null;
+  winRatePct: number | null;
+  /** Seger% relativt fältets median (procentenheter). */
+  winRateEdgePct: number | null;
+  highWinRate: boolean;
+  classDrop: V75ClassDrop | null;
+  lowOddsReview: V75LowOddsReview | null;
+  recentForm: string | null;
   isHomeTrack: boolean;
   trainerHomeTrack: boolean;
   driverHomeTrack: boolean;
@@ -90,11 +117,213 @@ export type V75DayTip = {
     name: string;
     note: string;
   }>;
+  classDropHorses: Array<{
+    leg: number;
+    startNumber: number;
+    name: string;
+    note: string;
+  }>;
+  highWinRateHorses: Array<{
+    leg: number;
+    startNumber: number;
+    name: string;
+    winRatePct: number;
+    edgePct: number;
+    note: string;
+  }>;
+  lowOddsReviews: Array<{
+    leg: number;
+    startNumber: number;
+    name: string;
+    winOdds: number;
+    supported: boolean | null;
+    note: string;
+  }>;
   externalSources: TipSourceReport[];
   headlineSignals: ExternalTipMention[];
   rules: string[];
   disclaimer: string;
 };
+
+function divisionFromName(name: string | null | undefined): {
+  rank: number | null;
+  label: string | null;
+} {
+  if (!name) return { rank: null, label: null };
+  const n = name.toLowerCase();
+  if (n.includes("gulddivisionen")) return { rank: 100, label: "Gulddivisionen" };
+  if (n.includes("silverdivisionen"))
+    return { rank: 80, label: "Silverdivisionen" };
+  if (n.includes("diamantstoet")) return { rank: 62, label: "Diamantstoet" };
+  if (n.includes("bronsdivisionen"))
+    return { rank: 60, label: "Bronsdivisionen" };
+  if (n.includes("stodivisionen")) return { rank: 58, label: "Stodivisionen" };
+  if (/klass\s*iii\b/.test(n)) return { rank: 30, label: "Klass III" };
+  if (/klass\s*ii\b/.test(n)) return { rank: 40, label: "Klass II" };
+  if (/klass\s*i\b/.test(n)) return { rank: 50, label: "Klass I" };
+  return { rank: null, label: null };
+}
+
+/** Förstapris i kr från ATG-prissträng "Pris: 150.000-…". */
+export function parseFirstPrizeKr(prize: string | null | undefined): number | null {
+  if (!prize) return null;
+  const m = prize.match(/Pris:\s*([\d.]+)/i);
+  if (!m) return null;
+  const n = Number(m[1].replace(/\./g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** ATG firstPrize i historik är i öre. */
+function priorFirstPrizeKr(raw: number | null | undefined): number | null {
+  if (raw == null || !Number.isFinite(raw) || raw <= 0) return null;
+  return Math.round(raw / 100);
+}
+
+function median(nums: number[]): number | null {
+  if (!nums.length) return null;
+  const a = [...nums].sort((x, y) => x - y);
+  const mid = Math.floor(a.length / 2);
+  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+}
+
+function recentFormLine(records: AtgPriorRecord[]): string | null {
+  const places = records.slice(0, 5).map((r) => {
+    const p = String(r.place ?? "");
+    if (!p || p === "0") return "d";
+    return p;
+  });
+  if (!places.length) return null;
+  return `form ${places.join("-")}`;
+}
+
+function analyzeClassDrop(
+  records: AtgPriorRecord[],
+  currentFirstPrizeKr: number | null,
+  currentDivisionRank: number | null
+): V75ClassDrop {
+  const recent = records.slice(0, 6);
+  const prizes = recent
+    .map((r) => priorFirstPrizeKr(r.race?.firstPrize))
+    .filter((n): n is number => n != null);
+  const avg = prizes.length
+    ? Math.round(prizes.reduce((a, b) => a + b, 0) / prizes.length)
+    : null;
+  let higher = 0;
+  if (currentFirstPrizeKr != null) {
+    higher = prizes.filter((p) => p >= currentFirstPrizeKr * 1.25).length;
+  }
+
+  // Prize-based drop: recent average clearly above tonight
+  let dropped = false;
+  const notes: string[] = [];
+  if (
+    currentFirstPrizeKr != null &&
+    avg != null &&
+    avg >= currentFirstPrizeKr * 1.35 &&
+    higher >= 2
+  ) {
+    dropped = true;
+    notes.push(
+      `nergraderad klass: snitt förstapris senaste starter ${avg.toLocaleString("sv-SE")} kr mot ${currentFirstPrizeKr.toLocaleString("sv-SE")} kr i dag`
+    );
+  } else if (
+    currentFirstPrizeKr != null &&
+    higher >= 3 &&
+    prizes.some((p) => p >= currentFirstPrizeKr * 1.6)
+  ) {
+    dropped = true;
+    notes.push(
+      `kommer från starkare lopp (${higher} av ${prizes.length} senaste med högre förstapris)`
+    );
+  }
+
+  // Soft signal even without hard drop
+  if (
+    !dropped &&
+    currentFirstPrizeKr != null &&
+    avg != null &&
+    avg > currentFirstPrizeKr * 1.15 &&
+    higher >= 2
+  ) {
+    notes.push(
+      `lättare uppgift än vanligt (snittförstapris ${avg.toLocaleString("sv-SE")} kr)`
+    );
+  }
+
+  void currentDivisionRank; // reserved if race names appear on priors later
+
+  return {
+    dropped,
+    note: notes[0] || null,
+    recentAvgFirstPrizeKr: avg,
+    currentFirstPrizeKr,
+    higherPrizeStarts: higher,
+  };
+}
+
+function analyzeLowOdds(
+  winOdds: number | null,
+  winRatePct: number | null,
+  impliedWinPct: number | null,
+  classDrop: V75ClassDrop | null,
+  recentPlaces: string[],
+  fieldMedianWin: number | null
+): V75LowOddsReview | null {
+  if (winOdds == null || winOdds > 5.5) return null;
+  const bits: string[] = [];
+  let supported: boolean | null = null;
+  const winsInRecent = recentPlaces.filter((p) => p === "1").length;
+  const placed = recentPlaces.filter((p) => ["1", "2", "3"].includes(p)).length;
+
+  bits.push(`lågoddsare @ ${winOdds.toFixed(2).replace(".", ",")}`);
+
+  if (winRatePct != null && impliedWinPct != null) {
+    const gap = winRatePct - impliedWinPct;
+    if (gap >= 4) {
+      bits.push(
+        `seger% ${winRatePct.toFixed(1).replace(".", ",")} över odds-implied ${impliedWinPct.toFixed(1).replace(".", ",")}`
+      );
+      supported = true;
+    } else if (gap <= -8) {
+      bits.push(
+        `seger% ${winRatePct.toFixed(1).replace(".", ",")} under odds-implied ${impliedWinPct.toFixed(1).replace(".", ",")} – odds kan vara för snäva`
+      );
+      supported = false;
+    } else {
+      bits.push(
+        `seger% ${winRatePct.toFixed(1).replace(".", ",")} ≈ odds (${impliedWinPct.toFixed(1).replace(".", ",")}%)`
+      );
+    }
+  }
+
+  if (fieldMedianWin != null && winRatePct != null && winRatePct >= fieldMedianWin + 8) {
+    bits.push(
+      `högst/hög seger% i fältet (median ${fieldMedianWin.toFixed(1).replace(".", ",")}%)`
+    );
+    supported = supported !== false ? true : supported;
+  }
+
+  if (classDrop?.dropped) {
+    bits.push(classDrop.note || "nergraderad från starkare lopp");
+    supported = supported !== false ? true : supported;
+  }
+
+  if (recentPlaces.length) {
+    bits.push(`senaste: ${recentPlaces.join("-")}`);
+    if (winsInRecent >= 1 || placed >= 3) {
+      supported = supported !== false ? true : supported;
+    } else if (placed === 0 && recentPlaces.length >= 4) {
+      bits.push("svag recent form mot låga oddsen");
+      supported = false;
+    }
+  }
+
+  return {
+    isLowOdds: true,
+    note: bits.join(" · "),
+    supported,
+  };
+}
 
 function yearKey(): string {
   return String(new Date().getUTCFullYear());
@@ -171,12 +400,20 @@ function tipConsensus(
   return "split";
 }
 
+type HorseEnrichment = {
+  detail: AtgStartDetail | null;
+  currentFirstPrizeKr: number | null;
+  currentDivisionRank: number | null;
+  fieldMedianWinPct: number | null;
+};
+
 function analyzeHorse(
   start: AtgStart,
   leg: number,
   trackId: number | null,
   trackName: string,
-  mentions: ExternalTipMention[]
+  mentions: ExternalTipMention[],
+  enrich: HorseEnrichment
 ): V75HorseTip {
   const winOdds = atgOddsToDecimal(start.pools?.vinnare?.odds);
   const v75Pct = atgDistToPct(start.pools?.V75?.betDistribution);
@@ -189,6 +426,33 @@ function analyzeHorse(
   const formWin = winPctFromStats(start);
   const place = placePctFromStats(start);
   const form = formNoteFor(start);
+  const winRatePct =
+    formWin != null ? Math.round(formWin * 10) / 10 : null;
+  const winRateEdgePct =
+    winRatePct != null && enrich.fieldMedianWinPct != null
+      ? Math.round((winRatePct - enrich.fieldMedianWinPct) * 10) / 10
+      : null;
+  const highWinRate =
+    winRateEdgePct != null &&
+    winRateEdgePct >= 8 &&
+    (start.horse.statistics?.life?.starts ?? 0) >= 5;
+
+  const records = enrich.detail?.horse?.results?.records || [];
+  const classDrop = analyzeClassDrop(
+    records,
+    enrich.currentFirstPrizeKr,
+    enrich.currentDivisionRank
+  );
+  const recentPlaces = records.slice(0, 5).map((r) => String(r.place ?? "0"));
+  const recentForm = recentFormLine(records);
+  const lowOddsReview = analyzeLowOdds(
+    winOdds,
+    winRatePct,
+    impliedWinPct,
+    classDrop,
+    recentPlaces,
+    enrich.fieldMedianWinPct
+  );
 
   // Modell: blanda odds-implied, form och hemmafördel – sedan jämför mot V75%
   let model =
@@ -202,6 +466,9 @@ function analyzeHorse(
   if (home.horse) model += 2.2;
   if (home.trainer) model += 1.1;
   if (home.driver) model += 0.8;
+  if (highWinRate) model += Math.min(6, (winRateEdgePct || 0) * 0.35);
+  if (classDrop.dropped) model += 4.5;
+  else if (classDrop.note) model += 1.5;
 
   const horseMentions = mentions.filter(
     (m) =>
@@ -219,6 +486,12 @@ function analyzeHorse(
   const post = start.postPosition ?? start.number;
   if (post <= 3) model += 0.8;
   if (post >= 10) model -= 0.6;
+
+  // Lågoddsare: granska noga – lyft om stödd, sänk om ej
+  if (lowOddsReview?.isLowOdds) {
+    if (lowOddsReview.supported === true) model += 3;
+    if (lowOddsReview.supported === false) model -= 4;
+  }
 
   model = Math.max(1, Math.min(65, Math.round(model * 10) / 10));
 
@@ -242,6 +515,15 @@ function analyzeHorse(
         .toFixed(1)
         .replace(".", ",")}%).`;
   }
+  if (
+    lowOddsReview?.isLowOdds &&
+    lowOddsReview.supported === false &&
+    (v75Pct ?? 0) >= 22
+  ) {
+    misleading =
+      (misleading ? misleading + " " : "") +
+      `Lågoddsare utan stöd i seger%/form: ${lowOddsReview.note}`;
+  }
   if (consensus === "fade" && v75Pct != null && v75Pct >= 20) {
     misleading =
       (misleading ? misleading + " " : "") +
@@ -249,10 +531,14 @@ function analyzeHorse(
   }
 
   // Ranking: poolfavoriter först, värde/tips lyfter garderingar utan att sparka bort bankar
-  let score = (v75Pct ?? 0) * 0.6 + model * 0.35;
+  let score = (v75Pct ?? 0) * 0.55 + model * 0.35;
   if (valueEdgePct != null && valueEdgePct > 0) {
     score += Math.min(valueEdgePct, 10) * 0.25;
   }
+  if (highWinRate) score += 3.5;
+  if (classDrop.dropped) score += 4;
+  if (lowOddsReview?.supported === true) score += 2.5;
+  if (lowOddsReview?.supported === false) score -= 3;
   if (home.horse) score += 1.2;
   if (misleading) score -= 6;
   if (horseMentions.some((m) => m.sentiment === "hot")) score += 2.5;
@@ -261,26 +547,44 @@ function analyzeHorse(
   let role: V75HorseTip["role"] = "skip";
   const reasons: string[] = [];
 
-  if (v75Pct != null && v75Pct >= 32 && !misleading) {
+  if (
+    (v75Pct != null && v75Pct >= 32 && !misleading) ||
+    (lowOddsReview?.supported === true && (winOdds ?? 99) <= 3.2)
+  ) {
     role = "spik";
     reasons.push(
-      `tung favorit i poolen (${v75Pct.toFixed(1).replace(".", ",")}%)`
+      v75Pct != null && v75Pct >= 32
+        ? `tung favorit i poolen (${v75Pct.toFixed(1).replace(".", ",")}%)`
+        : "lågoddsare med stöd i seger%/klass"
     );
   } else if (
-    valueEdgePct != null &&
-    valueEdgePct >= 5 &&
-    (impliedWinPct == null || impliedWinPct >= 6)
+    classDrop.dropped ||
+    highWinRate ||
+    (valueEdgePct != null &&
+      valueEdgePct >= 5 &&
+      (impliedWinPct == null || impliedWinPct >= 6))
   ) {
-    role = "skräll";
-    reasons.push(
-      `överodds/värde: modell ${model
-        .toFixed(1)
-        .replace(".", ",")}% vs V75 ${String(v75Pct ?? "–").replace(".", ",")}%)`
-    );
+    role = classDrop.dropped || highWinRate ? "gardering" : "skräll";
+    if (classDrop.dropped && classDrop.note) reasons.push(classDrop.note);
+    if (highWinRate && winRatePct != null) {
+      reasons.push(
+        `högre seger% än fältet (${winRatePct
+          .toFixed(1)
+          .replace(".", ",")}% · +${String(winRateEdgePct).replace(".", ",")}%-enheter)`
+      );
+    }
+    if (valueEdgePct != null && valueEdgePct >= 5) {
+      reasons.push(
+        `överodds/värde: modell ${model
+          .toFixed(1)
+          .replace(".", ",")}% vs V75 ${String(v75Pct ?? "–").replace(".", ",")}%)`
+      );
+    }
   } else if (
     (v75Pct != null && v75Pct >= 14) ||
     (consensus === "hot" && (v75Pct ?? 0) >= 8) ||
-    (consensus === "value" && (v75Pct ?? 0) >= 6)
+    (consensus === "value" && (v75Pct ?? 0) >= 6) ||
+    (lowOddsReview?.isLowOdds && lowOddsReview.supported !== false)
   ) {
     role = "gardering";
     reasons.push("hålls med som gardering");
@@ -289,6 +593,10 @@ function analyzeHorse(
   if (home.note) reasons.push(home.note);
   if (winOdds != null)
     reasons.push(`vinnarodds ${winOdds.toFixed(2).replace(".", ",")}`);
+  if (lowOddsReview?.note && (winOdds ?? 99) <= 5.5) {
+    reasons.push(lowOddsReview.note);
+  }
+  if (recentForm) reasons.push(recentForm);
   if (horseMentions.length) {
     const srcs = [...new Set(horseMentions.map((m) => m.source))].slice(0, 3);
     reasons.push(`tips: ${srcs.join(", ")}`);
@@ -311,6 +619,12 @@ function analyzeHorse(
     impliedWinPct,
     modelWinPct: model,
     valueEdgePct,
+    winRatePct,
+    winRateEdgePct,
+    highWinRate,
+    classDrop,
+    lowOddsReview,
+    recentForm,
     isHomeTrack: home.horse,
     trainerHomeTrack: home.trainer,
     driverHomeTrack: home.driver,
@@ -337,13 +651,28 @@ function opennessFromPicks(
 function analyzeLeg(
   race: AtgRace,
   leg: number,
-  allMentions: ExternalTipMention[]
+  allMentions: ExternalTipMention[],
+  details: Map<number, AtgStartDetail>
 ): V75LegAnalysis {
   const trackName = race.track?.name || "Okänd bana";
   const trackId = race.track?.id ?? null;
   const starts = (race.starts || []).filter((s) => !s.scratched);
+  const firstPrize = parseFirstPrizeKr(race.prize);
+  const div = divisionFromName(race.name);
+  const fieldWins = starts
+    .map((s) => winPctFromStats(s))
+    .filter((n): n is number => n != null);
+  const fieldMedianWinPct = median(fieldWins);
+
   const horses = starts
-    .map((s) => analyzeHorse(s, leg, trackId, trackName, allMentions))
+    .map((s) =>
+      analyzeHorse(s, leg, trackId, trackName, allMentions, {
+        detail: details.get(s.number) || null,
+        currentFirstPrizeKr: firstPrize,
+        currentDivisionRank: div.rank,
+        fieldMedianWinPct,
+      })
+    )
     .sort((a, b) => b.score - a.score);
 
   // Bygg pick: topp + tydliga garderingar/skrällar – aldrig hela fältet
@@ -362,6 +691,14 @@ function analyzeLeg(
   for (const h of ranked.slice(1)) {
     if (picks.length >= maxPicks) break;
     if (h.role === "spik" || h.role === "gardering" || h.role === "skräll") {
+      picks.push(h);
+      continue;
+    }
+    if (
+      (h.classDrop?.dropped || h.highWinRate) &&
+      picks.length < maxPicks
+    ) {
+      h.role = "gardering";
       picks.push(h);
       continue;
     }
@@ -410,6 +747,44 @@ function analyzeLeg(
           (h) =>
             `#${h.startNumber} ${h.name} (+${String(h.valueEdgePct).replace(".", ",")}%)`
         )
+        .join(", ")}`
+    );
+  }
+  const drops = horses.filter((h) => h.classDrop?.dropped);
+  if (drops.length) {
+    alerts.push(
+      `Nergraderade: ${drops
+        .slice(0, 3)
+        .map((h) => `#${h.startNumber} ${h.name}`)
+        .join(", ")}`
+    );
+  }
+  const highWr = horses.filter((h) => h.highWinRate);
+  if (highWr.length) {
+    alerts.push(
+      `Högre seger%: ${highWr
+        .slice(0, 3)
+        .map(
+          (h) =>
+            `#${h.startNumber} ${h.name} (${String(h.winRatePct).replace(".", ",")}%)`
+        )
+        .join(", ")}`
+    );
+  }
+  const lowOdds = horses.filter((h) => h.lowOddsReview?.isLowOdds);
+  if (lowOdds.length) {
+    alerts.push(
+      `Lågoddsare: ${lowOdds
+        .slice(0, 3)
+        .map((h) => {
+          const tag =
+            h.lowOddsReview?.supported === true
+              ? "stödd"
+              : h.lowOddsReview?.supported === false
+                ? "svag"
+                : "kollad";
+          return `#${h.startNumber} ${h.name} @ ${String(h.winOdds).replace(".", ",")} (${tag})`;
+        })
         .join(", ")}`
     );
   }
@@ -488,8 +863,25 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     .filter((m) => !m.horseName && m.snippet)
     .slice(0, 12);
 
+  // Historik per häst (förstapris i tidigare lopp) – klassdroppar
+  const detailsByRace = new Map<string, Map<number, AtgStartDetail>>();
+  await Promise.all(
+    races.map(async (race) => {
+      const nums = (race.starts || [])
+        .filter((s) => !s.scratched)
+        .map((s) => s.number);
+      const map = await fetchStartDetailsForRace(race.id, nums, 5);
+      detailsByRace.set(race.id, map);
+    })
+  );
+
   const legs = races.map((race, idx) =>
-    analyzeLeg(race, idx + 1, horseMentions)
+    analyzeLeg(
+      race,
+      idx + 1,
+      horseMentions,
+      detailsByRace.get(race.id) || new Map()
+    )
   );
 
   const valueHorses = legs
@@ -533,6 +925,61 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     )
     .slice(0, 8);
 
+  const classDropHorses = legs
+    .flatMap((leg) =>
+      leg.horses
+        .filter((h) => h.classDrop?.dropped || h.classDrop?.note)
+        .map((h) => ({
+          leg: leg.leg,
+          startNumber: h.startNumber,
+          name: h.name,
+          note: h.classDrop?.note || "Lättare uppgift än tidigare",
+          dropped: !!h.classDrop?.dropped,
+        }))
+    )
+    .sort((a, b) => Number(b.dropped) - Number(a.dropped))
+    .slice(0, 12)
+    .map(({ leg, startNumber, name, note }) => ({
+      leg,
+      startNumber,
+      name,
+      note,
+    }));
+
+  const highWinRateHorses = legs
+    .flatMap((leg) =>
+      leg.horses
+        .filter((h) => h.highWinRate && h.winRatePct != null)
+        .map((h) => ({
+          leg: leg.leg,
+          startNumber: h.startNumber,
+          name: h.name,
+          winRatePct: h.winRatePct!,
+          edgePct: h.winRateEdgePct ?? 0,
+          note:
+            h.formNote ||
+            `Seger% ${String(h.winRatePct).replace(".", ",")}% i fältet`,
+        }))
+    )
+    .sort((a, b) => b.edgePct - a.edgePct)
+    .slice(0, 12);
+
+  const lowOddsReviews = legs
+    .flatMap((leg) =>
+      leg.horses
+        .filter((h) => h.lowOddsReview?.isLowOdds && h.winOdds != null)
+        .map((h) => ({
+          leg: leg.leg,
+          startNumber: h.startNumber,
+          name: h.name,
+          winOdds: h.winOdds!,
+          supported: h.lowOddsReview?.supported ?? null,
+          note: h.lowOddsReview?.note || "",
+        }))
+    )
+    .sort((a, b) => a.winOdds - b.winOdds)
+    .slice(0, 14);
+
   const trackNames = [
     ...new Set(legs.map((l) => l.trackName).filter(Boolean)),
   ];
@@ -569,13 +1016,18 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     valueHorses,
     homeTrackHorses,
     misleadingFavorites,
+    classDropHorses,
+    highWinRateHorses,
+    lowOddsReviews,
     externalSources: sources,
     headlineSignals,
     rules: [
-      "ATG-data: vinnarodds, V75-streckprocent, form och hemma-bana (häst/tränare/kusk).",
-      "Överodds = modellchans högre än V75-procenten (folkets streck).",
-      "Missvisande favorit = högt streck men svagare odds/form eller tippsajter som varnar.",
-      "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News (fri text där det går).",
+      "ATG-data: vinnarodds, V75-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).",
+      "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
+      "Högre seger% = klart över fältets median (karriärstatistik).",
+      "Lågoddsare (@ ≤5,5) granskas mot seger%, form och klassdroppe – stödd eller svag.",
+      "Överodds = modellchans högre än V75-procenten. Missvisande favorit = högt streck utan stöd.",
+      "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News.",
       "Radpris på nya V75: 0,60 kr. Analys – ingen garanti. 18+ spelansvarsfullt.",
     ],
     disclaimer:

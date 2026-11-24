@@ -2325,3 +2325,8 @@ a.product-btn:hover {
 .v75-tip-link:hover {
   color: var(--accent);
 }
+
+.v75-tag-warn {
+  color: #ffb4b4 !important;
+  border-color: rgba(239, 107, 107, 0.45) !important;
+}
