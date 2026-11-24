@@ -498,14 +498,82 @@ export function generateMaltipsetSystems(
   return systems;
 }
 
+/** Powerplay-dagstips som alltid sparas i resultat 24 h. */
+export const POWERPLAY_DAILY_COST_KR = 192;
+
+function buildSystemForCost(
+  matches: MatchAnalysis[],
+  target: number,
+  index: number
+): GeneratedSystem | null {
+  if (target < MIN_COST || target > MAX_COST) return null;
+  const plan = planForCost(matches, target);
+  if (!plan) return null;
+  const picks = makePicks(matches, plan);
+  const cost = rowCost(picks);
+  if (cost < MIN_COST || cost > MAX_COST) return null;
+
+  const hitPct = estimateSystemHitPct(matches, plan);
+  const winPct = estimateWinPct(matches, plan);
+  const halv = picks.filter((p) => p.cover === "halv").length;
+  const hel = picks.filter((p) => p.cover === "hel").length;
+  const enklar = picks.filter((p) => p.cover === "enkel");
+  const minEnkel = enklar.length
+    ? Math.min(
+        ...enklar.map((p) => {
+          const m = matches.find((x) => x.eventNumber === p.eventNumber);
+          return m ? matchProbabilities(m).bestSingleP : 0.5;
+        })
+      )
+    : 1;
+
+  const fatigueMatches = matches.filter(
+    (m) => m.homeFatigue.level !== "low" || m.awayFatigue.level !== "low"
+  ).length;
+
+  const undecidedPicks = picks.filter((p) => p.undecided);
+  const undecidedEventNumbers = undecidedPicks.map((p) => p.eventNumber);
+  const undecidedLabel = undecidedPicks.length
+    ? `Kan inte avgöras: match ${undecidedPicks
+        .map((p) => `${p.eventNumber} (${p.description})`)
+        .join(", ")} – helgarderas.`
+    : "";
+
+  const safetyNote =
+    cost === 48
+      ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
+      : cost === POWERPLAY_DAILY_COST_KR
+        ? `Dagligt Powerplay-system ${POWERPLAY_DAILY_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – sparas i resultat 24 h.`
+        : `${hel} hel · ${halv} halv · ${enklar.length} enkel.`;
+
+  const winLabel =
+    matches.length >= 7 && matches.length <= 9
+      ? `Vinstnivå (≥${matches.length - 1} rätt) ~${String(winPct).replace(".", ",")}%`
+      : `Uppskattad täckning ~${String(hitPct).replace(".", ",")}%`;
+
+  return {
+    name: systemName(cost, winPct, index),
+    costKr: cost,
+    rows: cost,
+    picks,
+    summary: `${safetyNote} ${undecidedLabel} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${fatigueMatches} matcher med belastning vägdes in.`,
+    risk: riskFromHitPct(winPct, cost),
+    kind: "1x2",
+    estimatedHitPct: hitPct,
+    estimatedWinPct: winPct,
+    undecidedEventNumbers,
+  };
+}
+
 /**
  * Bygg system 48–720 kr. För 48 kr (Powerplay/Topptipset) maximeras
  * uppskattad träffsannolikhet via djupare p-modell och optimal gardering.
+ * 192 kr tvingas alltid med (dagligt Powerplay-resultat 24 h).
  */
 export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   if (matches.length === 0) return [];
 
-  // 48 först – säkerhetsfokus för PP/Topp
+  // 48 först – säkerhetsfokus för PP/Topp; 192 alltid (dagligt resultat)
   const preferred = [48, 96, 72, 144, 192, 288, 432, 576];
   if (matches.length >= 13) {
     preferred.push(64, 108, 162, 216, 324, 486, 729);
@@ -514,95 +582,44 @@ export function generateSystems(matches: MatchAnalysis[]): GeneratedSystem[] {
   const used = new Set<number>();
 
   for (const target of preferred) {
-    if (target < MIN_COST || target > MAX_COST) continue;
     if (used.has(target)) continue;
-    const plan = planForCost(matches, target);
-    if (!plan) continue;
-    const picks = makePicks(matches, plan);
-    const cost = rowCost(picks);
-    if (cost < MIN_COST || cost > MAX_COST) continue;
-    used.add(cost);
+    const built = buildSystemForCost(matches, target, systems.length);
+    if (!built) continue;
+    used.add(built.costKr);
+    systems.push(built);
+    // Låt bli att bryta innan 192 är med
+    if (systems.length >= 5 && used.has(POWERPLAY_DAILY_COST_KR)) break;
+  }
 
-    const hitPct = estimateSystemHitPct(matches, plan);
-    const winPct = estimateWinPct(matches, plan);
-    const halv = picks.filter((p) => p.cover === "halv").length;
-    const hel = picks.filter((p) => p.cover === "hel").length;
-    const enklar = picks.filter((p) => p.cover === "enkel");
-    const minEnkel = enklar.length
-      ? Math.min(
-          ...enklar.map((p) => {
-            const m = matches.find((x) => x.eventNumber === p.eventNumber);
-            return m ? matchProbabilities(m).bestSingleP : 0.5;
-          })
-        )
-      : 1;
-
-    const fatigueMatches = matches.filter(
-      (m) =>
-        m.homeFatigue.level !== "low" || m.awayFatigue.level !== "low"
-    ).length;
-
-    const undecidedPicks = picks.filter((p) => p.undecided);
-    const undecidedEventNumbers = undecidedPicks.map((p) => p.eventNumber);
-    const undecidedLabel = undecidedPicks.length
-      ? `Kan inte avgöras: match ${undecidedPicks
-          .map((p) => `${p.eventNumber} (${p.description})`)
-          .join(", ")} – helgarderas.`
-      : "";
-
-    const safetyNote =
-      cost === 48
-        ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
-        : `${hel} hel · ${halv} halv · ${enklar.length} enkel.`;
-
-    const winLabel =
-      matches.length >= 7 && matches.length <= 9
-        ? `Vinstnivå (≥${matches.length - 1} rätt) ~${String(winPct).replace(".", ",")}%`
-        : `Uppskattad täckning ~${String(hitPct).replace(".", ",")}%`;
-
-    systems.push({
-      name: systemName(cost, winPct, systems.length),
-      costKr: cost,
-      rows: cost,
-      picks,
-      summary: `${safetyNote} ${undecidedLabel} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${fatigueMatches} matcher med belastning vägdes in.`,
-      risk: riskFromHitPct(winPct, cost),
-      kind: "1x2",
-      estimatedHitPct: hitPct,
-      estimatedWinPct: winPct,
-      undecidedEventNumbers,
-    });
-
-    if (systems.length >= 5) break;
+  // Tvinga in 192 kr om det saknas (även om vi redan har 5 system)
+  if (!systems.some((s) => s.costKr === POWERPLAY_DAILY_COST_KR)) {
+    const forced = buildSystemForCost(
+      matches,
+      POWERPLAY_DAILY_COST_KR,
+      systems.length
+    );
+    if (forced && forced.costKr === POWERPLAY_DAILY_COST_KR) {
+      systems.push(forced);
+    }
   }
 
   if (systems.length === 0) {
     for (const target of TARGET_COSTS) {
-      const plan = planForCost(matches, target);
-      if (!plan) continue;
-      const picks = makePicks(matches, plan);
-      const cost = rowCost(picks);
-      const hitPct = estimateSystemHitPct(matches, plan);
-      const winPct = estimateWinPct(matches, plan);
-      systems.push({
-        name: `System ${cost} kr`,
-        costKr: cost,
-        rows: cost,
-        picks,
-        summary: `Automatiskt system inom 48–720 kr. Vinstnivå ~${winPct}%.`,
-        risk: riskFromHitPct(winPct, cost),
-        kind: "1x2",
-        estimatedHitPct: hitPct,
-        estimatedWinPct: winPct,
-      });
+      const built = buildSystemForCost(matches, target, 0);
+      if (!built) continue;
+      systems.push(built);
       break;
     }
   }
 
   return systems.sort((a, b) => {
-    // 48 kr säkerhet först, sedan kostnad
+    // 48 kr säkerhet först, sedan 192 (dagligt), sedan kostnad
     if (a.costKr === 48 && b.costKr !== 48) return -1;
     if (b.costKr === 48 && a.costKr !== 48) return 1;
+    if (a.costKr === POWERPLAY_DAILY_COST_KR && b.costKr !== POWERPLAY_DAILY_COST_KR)
+      return -1;
+    if (b.costKr === POWERPLAY_DAILY_COST_KR && a.costKr !== POWERPLAY_DAILY_COST_KR)
+      return 1;
     return a.costKr - b.costKr;
   });
 }

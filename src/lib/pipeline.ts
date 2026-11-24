@@ -1,6 +1,7 @@
 import { analyzeDraw } from "./analyze";
 import { fetchArticlesForMatches } from "./articles";
 import { loadLearningMemory } from "./learning";
+import { rememberPowerplay192 } from "./pp192History";
 import { generateMaltipsetSystems, generateSystems } from "./systems";
 import {
   fetchDrawsForProduct,
@@ -94,9 +95,16 @@ export async function buildAllDrawBundles(
     })
   );
 
-  return bundles
+  const open = bundles
     .filter((b): b is DrawBundle => b != null && b.matches.length > 0)
     .sort(
       (a, b) => new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime()
     );
+
+  // Powerplay 192 kr sparas varje dag till resultat (24 h)
+  if (product === "powerplay" && open.length) {
+    await rememberPowerplay192(open).catch(() => null);
+  }
+
+  return open;
 }
