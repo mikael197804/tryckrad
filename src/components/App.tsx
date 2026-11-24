@@ -366,9 +366,20 @@ type ProductKind =
 
 const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset">> = [
   "topptipset",
+  "powerplay",
   "stryktipset",
   "maltipset",
-  "powerplay",
+];
+
+const HISTORY_PRODUCT_COLUMNS: Array<{
+  id: HistoryProduct;
+  label: string;
+}> = [
+  { id: "powerplay", label: "Powerplay" },
+  { id: "topptipset", label: "Topptipset" },
+  { id: "stryktipset", label: "Stryktipset" },
+  { id: "maltipset", label: "Måltipset" },
+  { id: "oddset", label: "Oddset" },
 ];
 
 function productLabel(p: ProductKind): string {
@@ -1235,24 +1246,153 @@ function OddsetPickCard({
   );
 }
 
+function HistoryGameCard({
+  game,
+  picks,
+}: {
+  game: TipHistoryResponse["games"][number];
+  picks: TipHistoryResponse["picks"];
+}) {
+  const systemResult = game.systemResult || "pending";
+  return (
+    <section className={`panel history-game system-${systemResult}`}>
+      <h3>
+        {game.label}{" "}
+        <span className="history-score">
+          {game.won} rätt / {game.lost} fel
+          {game.pending + game.live > 0
+            ? ` · ${game.pending + game.live} väntar`
+            : ""}
+        </span>
+        {game.costKr != null && (
+          <span className="history-cost-pill">{game.costKr} kr</span>
+        )}
+        {systemResult === "won" && (
+          <span className="oddset-result-badge won">System grönt</span>
+        )}
+        {systemResult === "lost" && (
+          <span className="oddset-result-badge lost">System rött</span>
+        )}
+      </h3>
+      <ul className="history-pick-list">
+        {picks.map((p) => (
+          <li key={p.id} className={`history-pick ${p.status}`}>
+            <div>
+              <strong>
+                {p.eventNumber != null ? `${p.eventNumber}. ` : ""}
+                {p.description}
+              </strong>
+              <div className="history-1x2-marks" aria-label="Tips">
+                {p.market === "1x2"
+                  ? (["1", "X", "2"] as const).map((o) => (
+                      <span
+                        key={o}
+                        className={`history-mark ${
+                          p.pick.includes(o) ? "on" : ""
+                        } ${
+                          p.status === "won" && p.actual === o
+                            ? "hit"
+                            : p.status === "lost" && p.pick.includes(o)
+                              ? "miss"
+                              : ""
+                        }`}
+                      >
+                        {o}
+                      </span>
+                    ))
+                  : null}
+                {(p.market === "over_1_5" || p.market === "over_2_5") && (
+                  <span
+                    className={`history-mark on ${
+                      p.status === "won"
+                        ? "hit"
+                        : p.status === "lost"
+                          ? "miss"
+                          : ""
+                    }`}
+                  >
+                    {p.market === "over_2_5" ? "Ö2,5" : "Ö1,5"}
+                  </span>
+                )}
+                {p.market === "mal" && (
+                  <span
+                    className={`history-mark on ${
+                      p.status === "won"
+                        ? "hit"
+                        : p.status === "lost"
+                          ? "miss"
+                          : ""
+                    }`}
+                  >
+                    M
+                  </span>
+                )}
+              </div>
+              <div className="reason">
+                Tipset:{" "}
+                {p.market === "over_1_5" || p.market === "over_2_5"
+                  ? p.market === "over_2_5"
+                    ? "Över 2,5"
+                    : "Över 1,5"
+                  : p.market === "mal"
+                    ? "Målmatch"
+                    : p.pick.join("")}
+                {p.actual ? ` · resultat ${p.actual}` : ""}
+              </div>
+              {p.resultNote && (
+                <div className="oddset-result-note">{p.resultNote}</div>
+              )}
+            </div>
+            <span
+              className={`oddset-result-badge ${
+                p.status === "won"
+                  ? "won"
+                  : p.status === "lost"
+                    ? "lost"
+                    : p.status === "live"
+                      ? "live"
+                      : ""
+              }`}
+            >
+              {p.status === "won"
+                ? "Rätt"
+                : p.status === "lost"
+                  ? "Fel"
+                  : p.status === "live"
+                    ? "Live"
+                    : "Väntar"}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function HistoryView({
   history,
   loading,
   onClose,
   onRefresh,
+  onOpenProduct,
 }: {
   history: TipHistoryResponse | null;
   loading: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  onOpenProduct?: (product: ProductKind) => void;
 }) {
   return (
     <div className="history-overlay" role="dialog" aria-modal="true">
-      <div className="history-panel rise">
+      <div className="history-panel history-panel-wide rise">
         <div className="history-panel-top">
           <h2>Gamla resultat · 24 h</h2>
           <div className="history-actions">
-            <button type="button" className="history-btn ghost" onClick={onRefresh}>
+            <button
+              type="button"
+              className="history-btn ghost"
+              onClick={onRefresh}
+            >
               Uppdatera resultat
             </button>
             <button type="button" className="history-btn" onClick={onClose}>
@@ -1261,9 +1401,9 @@ function HistoryView({
           </div>
         </div>
         <p className="panel-lead">
-          System 48–720 kr: varje match visar grönt (rätt) eller rött (fel).
-          Resultaten ligger kvar {history?.retentionHours ?? 24} timmar efter
-          färdigt spel.
+          Resultaten är uppdelade per spel. Powerplay/Topptipset sparar 192 kr
+          varje dag. Grönt = rätt, rött = fel – syns{" "}
+          {history?.retentionHours ?? 24} timmar efter färdigt spel.
         </p>
 
         {loading && <div className="loading">Hämtar resultat…</div>}
@@ -1295,150 +1435,66 @@ function HistoryView({
               </div>
             </div>
 
-            {history.games.length === 0 ? (
-              <p className="panel-lead">
-                Inga resultat ännu. När du öppnar ett spel sparas tipset
-                (48–720 kr), och när det är färdigt syns grönt/rött här i 24
-                timmar.
-              </p>
-            ) : (
-              history.games.map((g) => {
-                const picks = history.picks.filter(
-                  (p) => p.gameKey === g.gameKey
-                );
-                const systemResult = g.systemResult || "pending";
+            <div className="history-columns">
+              {HISTORY_PRODUCT_COLUMNS.map((col) => {
+                const games = history.games
+                  .filter((g) => g.product === col.id)
+                  .sort((a, b) => {
+                    // 192 kr först för PP/Topp
+                    if (col.id === "powerplay" || col.id === "topptipset") {
+                      if (a.costKr === 192 && b.costKr !== 192) return -1;
+                      if (b.costKr === 192 && a.costKr !== 192) return 1;
+                    }
+                    return Date.parse(b.tippedAt) - Date.parse(a.tippedAt);
+                  });
                 return (
-                  <section
-                    key={g.gameKey}
-                    className={`panel history-game system-${systemResult}`}
-                  >
-                    <h3>
-                      {g.label}{" "}
-                      <span className="history-score">
-                        {g.won} rätt / {g.lost} fel
-                        {g.pending + g.live > 0
-                          ? ` · ${g.pending + g.live} väntar`
-                          : ""}
+                  <div key={col.id} className="history-col">
+                    <div className="history-col-head">
+                      <h3>{col.label}</h3>
+                      <span className="history-col-count">
+                        {games.length} tipp
+                        {games.length === 1 ? "" : "ar"}
                       </span>
-                      {g.costKr != null && (
-                        <span className="history-cost-pill">
-                          {g.costKr} kr
-                        </span>
-                      )}
-                      {systemResult === "won" && (
-                        <span className="oddset-result-badge won">
-                          System grönt
-                        </span>
-                      )}
-                      {systemResult === "lost" && (
-                        <span className="oddset-result-badge lost">
-                          System rött
-                        </span>
-                      )}
-                    </h3>
-                    <ul className="history-pick-list">
-                      {picks.map((p) => (
-                        <li
-                          key={p.id}
-                          className={`history-pick ${p.status}`}
-                        >
-                          <div>
-                            <strong>
-                              {p.eventNumber != null
-                                ? `${p.eventNumber}. `
-                                : ""}
-                              {p.description}
-                            </strong>
-                            <div className="history-1x2-marks" aria-label="Tips">
-                              {p.market === "1x2"
-                                ? (["1", "X", "2"] as const).map((o) => (
-                                    <span
-                                      key={o}
-                                      className={`history-mark ${
-                                        p.pick.includes(o) ? "on" : ""
-                                      } ${
-                                        p.status === "won" &&
-                                        p.actual === o
-                                          ? "hit"
-                                          : p.status === "lost" &&
-                                              p.pick.includes(o)
-                                            ? "miss"
-                                            : ""
-                                      }`}
-                                    >
-                                      {o}
-                                    </span>
-                                  ))
-                                : null}
-                              {(p.market === "over_1_5" ||
-                                p.market === "over_2_5") && (
-                                <span
-                                  className={`history-mark on ${
-                                    p.status === "won"
-                                      ? "hit"
-                                      : p.status === "lost"
-                                        ? "miss"
-                                        : ""
-                                  }`}
-                                >
-                                  {p.market === "over_2_5" ? "Ö2,5" : "Ö1,5"}
-                                </span>
-                              )}
-                              {p.market === "mal" && (
-                                <span
-                                  className={`history-mark on ${
-                                    p.status === "won"
-                                      ? "hit"
-                                      : p.status === "lost"
-                                        ? "miss"
-                                        : ""
-                                  }`}
-                                >
-                                  M
-                                </span>
-                              )}
-                            </div>
-                            <div className="reason">
-                              Tipset:{" "}
-                              {p.market === "over_1_5" || p.market === "over_2_5"
-                                ? (p.market === "over_2_5" ? "Över 2,5" : "Över 1,5")
-                                : p.market === "mal"
-                                  ? "Målmatch"
-                                  : p.pick.join("")}
-                              {p.actual ? ` · resultat ${p.actual}` : ""}
-                            </div>
-                            {p.resultNote && (
-                              <div className="oddset-result-note">
-                                {p.resultNote}
-                              </div>
-                            )}
-                          </div>
-                          <span
-                            className={`oddset-result-badge ${
-                              p.status === "won"
-                                ? "won"
-                                : p.status === "lost"
-                                  ? "lost"
-                                  : p.status === "live"
-                                    ? "live"
-                                    : ""
-                            }`}
+                      {onOpenProduct &&
+                        (col.id === "powerplay" ||
+                          col.id === "topptipset" ||
+                          col.id === "stryktipset" ||
+                          col.id === "maltipset" ||
+                          col.id === "oddset") && (
+                          <button
+                            type="button"
+                            className="history-btn ghost history-col-open"
+                            onClick={() => {
+                              onOpenProduct(col.id);
+                              onClose();
+                            }}
                           >
-                            {p.status === "won"
-                              ? "Rätt"
-                              : p.status === "lost"
-                                ? "Fel"
-                                : p.status === "live"
-                                  ? "Live"
-                                  : "Väntar"}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
+                            Öppna spel
+                          </button>
+                        )}
+                    </div>
+                    {games.length === 0 ? (
+                      <p className="history-col-empty">
+                        Inga resultat ännu.
+                        {col.id === "powerplay"
+                          ? " Tryck Powerplay i menyn – öppna omgångar tippas nu."
+                          : ""}
+                      </p>
+                    ) : (
+                      games.map((g) => (
+                        <HistoryGameCard
+                          key={g.gameKey}
+                          game={g}
+                          picks={history.picks.filter(
+                            (p) => p.gameKey === g.gameKey
+                          )}
+                        />
+                      ))
+                    )}
+                  </div>
                 );
-              })
-            )}
+              })}
+            </div>
           </>
         )}
       </div>
@@ -2387,7 +2443,19 @@ export default function App() {
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
-    void loadHistory();
+    setHistoryLoading(true);
+    // Värm Powerplay + Topptipset så 192 kr sparas innan resultat hämtas
+    void (async () => {
+      try {
+        await Promise.all([
+          fetch("/api/draws?product=powerplay", { cache: "no-store" }),
+          fetch("/api/draws?product=topptipset", { cache: "no-store" }),
+        ]);
+      } catch {
+        /* ignore */
+      }
+      await loadHistory();
+    })();
   }, [loadHistory]);
 
   const draw = useMemo(() => {
@@ -2633,6 +2701,7 @@ export default function App() {
           loading={historyLoading}
           onClose={() => setShowHistory(false)}
           onRefresh={() => void loadHistory()}
+          onOpenProduct={(p) => setProduct(p)}
         />
       )}
 
@@ -2662,25 +2731,45 @@ export default function App() {
       {data && data.product === product && product !== "oddset" && (
         <>
           <nav className="draw-tabs" aria-label="Speltillfällen">
-            {data.draws.map((d) => (
-              <button
-                key={d.drawNumber}
-                type="button"
-                className={`draw-tab ${
-                  (selectedDraw ?? data.draws[0]?.drawNumber) === d.drawNumber
-                    ? "active"
-                    : ""
-                }`}
-                onClick={() => setSelectedDraw(d.drawNumber)}
-              >
-                <span className="label">{fmtCloseLabel(d.closeTime)}</span>
-                <span className="sub">
-                  #{d.drawNumber} · stänger {fmtTime(d.closeTime)}
-                  <br />
-                  {d.leagueSummary || d.sport}
-                </span>
-              </button>
-            ))}
+            {data.draws.map((d, idx) => {
+              const closeMs = Date.parse(d.closeTime);
+              const hoursLeft =
+                Number.isFinite(closeMs)
+                  ? (closeMs - Date.now()) / (60 * 60 * 1000)
+                  : Infinity;
+              const isNextUp = idx === 0 || hoursLeft <= 12;
+              return (
+                <button
+                  key={d.drawNumber}
+                  type="button"
+                  className={`draw-tab ${
+                    (selectedDraw ?? data.draws[0]?.drawNumber) === d.drawNumber
+                      ? "active"
+                      : ""
+                  } ${isNextUp ? "draw-tab-now" : ""}`}
+                  onClick={() => setSelectedDraw(d.drawNumber)}
+                >
+                  <span className="label">
+                    {fmtCloseLabel(d.closeTime)}
+                    {idx === 0 && (
+                      <em className="draw-now-badge">Spelas nu</em>
+                    )}
+                  </span>
+                  <span className="sub">
+                    #{d.drawNumber} · stänger {fmtTime(d.closeTime)}
+                    <br />
+                    {d.leagueSummary || d.sport}
+                    {product === "powerplay" &&
+                      d.systems?.some((s) => s.costKr === 192) && (
+                        <>
+                          <br />
+                          192 kr sparas i resultat
+                        </>
+                      )}
+                  </span>
+                </button>
+              );
+            })}
           </nav>
 
           {draw && (
