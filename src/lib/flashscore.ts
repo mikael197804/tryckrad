@@ -122,30 +122,60 @@ function daysBetweenYmd(a: string, b: string): number {
 }
 
 /**
- * Flashscore statuskoder (fotboll):
- * 1 = ej startad, 2 = 1:a halvlek, 3 = FT, 4 = efter förlängning/straffar,
- * 10–13 = avbruten/uppskjuten/walkover-varianter, 12 ofta live i feed,
- * 45+ = övrigt.
+ * Flashscore statuskoder (fotboll/ishockey):
+ * 1 = ej startad
+ * 2 / 12 / 13 / 31–38 = pågående (1H, HT, 2H, perioder)
+ * 3 = full time
+ * 4 / 5 / 10 / 11 = avgjord (förlängning, straffar, walkover m.m.)
+ * 14–16 / 46 = ishockey-perioder live
  */
 function classifyStatus(code: string): FlashscoreMatch["status"] {
   const c = String(code || "");
-  if (c === "3" || c === "4" || c === "5" || c === "11") return "final";
+  if (
+    c === "3" ||
+    c === "4" ||
+    c === "5" ||
+    c === "10" ||
+    c === "11" ||
+    c === "54"
+  ) {
+    return "final";
+  }
   if (c === "1") return "pre";
-  // 2 = 1H, 31 = HT, 12 ofta pågående, 13 2H m.m.
   if (
     c === "2" ||
+    c === "6" ||
     c === "12" ||
     c === "13" ||
+    c === "14" ||
+    c === "15" ||
+    c === "16" ||
     c === "31" ||
     c === "32" ||
     c === "33" ||
     c === "34" ||
     c === "36" ||
-    c === "37"
+    c === "37" ||
+    c === "38" ||
+    c === "45" ||
+    c === "46"
   ) {
     return "live";
   }
   return "other";
+}
+
+/** Efter tillräckligt lång tid med måltal: behandla som avgjord (feed-status kan släpa). */
+function promoteToFinalIfStale(
+  status: FlashscoreMatch["status"],
+  kickoffUnix: number | null,
+  kickMs: number
+): FlashscoreMatch["status"] {
+  if (status === "final" || status === "pre") return status;
+  const start = kickoffUnix != null ? kickoffUnix * 1000 : kickMs;
+  // Fotboll ~2 h, ishockey ~3 h – ge marginal
+  if (Date.now() - start >= 2.5 * 60 * 60 * 1000) return "final";
+  return status;
 }
 
 function parseFeed(text: string): FlashscoreMatch[] {
@@ -362,7 +392,12 @@ export async function lookupFlashscoreScore(input: {
   }
 
   if (!best) return null;
-  if (best.m.status === "pre" || best.m.status === "other") return null;
+
+  let status = best.m.status;
+  // Har vi måltal men okänd/släpande status: hellre live än att hoppa över
+  if (status === "other") status = "live";
+  if (status === "pre") return null;
+  status = promoteToFinalIfStale(status, best.m.kickoffUnix, kickMs);
 
   const totalGoals = best.homeG + best.awayG;
   return {
@@ -370,7 +405,7 @@ export async function lookupFlashscoreScore(input: {
     awayGoals: best.awayG,
     totalGoals,
     overLineHit: totalGoals >= 2,
-    status: best.m.status === "final" ? "final" : "live",
+    status: status === "final" ? "final" : "live",
     sourceName: `Flashscore · ${best.m.home} – ${best.m.away}`,
   };
 }

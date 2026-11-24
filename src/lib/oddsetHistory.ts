@@ -81,20 +81,43 @@ async function persist(): Promise<void> {
   }
 }
 
+function outcomeRank(o: OddsetOutcome | undefined): number {
+  if (o === "won" || o === "lost") return 3;
+  if (o === "live") return 2;
+  return 1;
+}
+
 function toTracked(
-  c: OddsetCandidate,
+  c: OddsetCandidate & Partial<OddsetTrackedTip>,
   tippedAt: string,
   prev?: OddsetTrackedTip
 ): OddsetTrackedTip {
+  const incomingOutcome = (c.outcome as OddsetOutcome | undefined) || "pending";
+  const preferIncoming =
+    outcomeRank(incomingOutcome) >= outcomeRank(prev?.outcome);
+  const outcome = preferIncoming
+    ? incomingOutcome
+    : prev?.outcome || "pending";
+  const useIncomingScore = preferIncoming && incomingOutcome !== "pending";
   return {
     ...c,
     tippedAt: prev?.tippedAt || tippedAt,
-    outcome: prev?.outcome || "pending",
-    homeGoals: prev?.homeGoals ?? null,
-    awayGoals: prev?.awayGoals ?? null,
-    totalGoals: prev?.totalGoals ?? null,
-    settledAt: prev?.settledAt ?? null,
-    resultNote: prev?.resultNote ?? null,
+    outcome,
+    homeGoals: useIncomingScore
+      ? (c.homeGoals ?? prev?.homeGoals ?? null)
+      : (prev?.homeGoals ?? c.homeGoals ?? null),
+    awayGoals: useIncomingScore
+      ? (c.awayGoals ?? prev?.awayGoals ?? null)
+      : (prev?.awayGoals ?? c.awayGoals ?? null),
+    totalGoals: useIncomingScore
+      ? (c.totalGoals ?? prev?.totalGoals ?? null)
+      : (prev?.totalGoals ?? c.totalGoals ?? null),
+    settledAt: useIncomingScore
+      ? (c.settledAt ?? prev?.settledAt ?? null)
+      : (prev?.settledAt ?? c.settledAt ?? null),
+    resultNote: useIncomingScore
+      ? (c.resultNote ?? prev?.resultNote ?? null)
+      : (prev?.resultNote ?? c.resultNote ?? null),
   };
 }
 

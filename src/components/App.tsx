@@ -2553,13 +2553,14 @@ export default function App() {
     });
     if (!needsSettle) return;
 
+    // Snabbare poll medan matcher pågår så Resultat/Oddset uppdateras
     const id = setInterval(() => {
       void loadProduct({ fresh: true, silent: true, resetSelection: false });
-    }, 6 * 60 * 1000);
+    }, 2 * 60 * 1000);
     return () => clearInterval(id);
   }, [product, oddset, loadProduct]);
 
-  /** Tipprader från tippvyn – t.ex. Powerplay #4826 som redan syns under Tips. */
+  /** Tipprader från tippvyn – Powerplay #4826, Oddset m.m. */
   const historySeedPicks = useMemo(() => {
     const out: HistoryPick[] = [];
     if (data?.draws?.length) {
@@ -2568,22 +2569,43 @@ export default function App() {
         out.push(...drawToHistoryPicks(d, at));
       }
     }
+    const oddsetLocal = loadOddsetLocalTips();
+    if (oddsetLocal.length) {
+      out.push(
+        ...oddsetToHistoryPicks(
+          oddsetLocal,
+          oddset?.generatedAt || new Date().toISOString()
+        )
+      );
+    } else if (oddset?.tracked?.length) {
+      out.push(
+        ...oddsetToHistoryPicks(
+          oddset.tracked,
+          oddset.generatedAt || new Date().toISOString()
+        )
+      );
+    }
     return out;
-  }, [data]);
+  }, [data, oddset]);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
       // Tippen som syns i tippvyn måste följa med till resultatbiblioteket
-      const fromTips =
-        data?.draws?.length && data.product !== "oddset"
+      const fromDraws =
+        data?.draws?.length
           ? data.draws.flatMap((d) =>
               drawToHistoryPicks(d, data.generatedAt || new Date().toISOString())
             )
           : [];
+      const fromOddset = oddsetToHistoryPicks(
+        mergeOddsetTracked(loadOddsetLocalTips(), oddset?.tracked),
+        oddset?.generatedAt || new Date().toISOString()
+      );
       const local = mergeHistoryPickLists(
         loadLocalHistoryPicks(),
-        fromTips,
+        fromDraws,
+        fromOddset,
         historySeedPicks
       );
       if (local.length) saveLocalHistoryPicks(local);
@@ -2602,10 +2624,57 @@ export default function App() {
       const merged = mergeHistoryPickLists(
         local,
         json.picks || [],
-        fromTips,
+        fromDraws,
+        fromOddset,
         historySeedPicks
       );
       saveLocalHistoryPicks(merged);
+
+      // Spegla settlade Oddset-rader tillbaka till Oddset-localStorage
+      const settledOddset = merged.filter((p) => p.product === "oddset");
+      if (settledOddset.length) {
+        const byEvent = new Map(
+          settledOddset.map((p) => [
+            p.id,
+            p,
+          ])
+        );
+        const tips = loadOddsetLocalTips().map((t) => {
+          const id =
+            t.market === "1x2"
+              ? `oddset:${t.eventId}:1x2:${t.pick1x2 || "1"}`
+              : `oddset:${t.eventId}:over`;
+          const h = byEvent.get(id);
+          if (!h) return t;
+          if (h.status !== "won" && h.status !== "lost" && h.status !== "live") {
+            return t;
+          }
+          const [hg, ag] = (h.actual || "").split("-").map(Number);
+          return {
+            ...t,
+            outcome: h.status,
+            homeGoals: Number.isFinite(hg) ? hg : t.homeGoals,
+            awayGoals: Number.isFinite(ag) ? ag : t.awayGoals,
+            totalGoals:
+              Number.isFinite(hg) && Number.isFinite(ag)
+                ? hg + ag
+                : t.totalGoals,
+            settledAt:
+              h.status === "won" || h.status === "lost"
+                ? h.settledAt || t.settledAt || new Date().toISOString()
+                : null,
+            resultNote: h.resultNote || t.resultNote,
+          };
+        });
+        saveOddsetLocalTips(tips);
+        if (oddset) {
+          setOddset({
+            ...oddset,
+            tracked: mergeOddsetTracked(tips, oddset.tracked),
+          });
+        }
+      }
+
       setHistory(buildHistoryViewModel(merged));
     } catch {
       const picks = mergeHistoryPickLists(
@@ -2616,23 +2685,62 @@ export default function App() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [data, historySeedPicks]);
+  }, [data, oddset, historySeedPicks]);
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
     setHistoryLoading(true);
-    // Värm PP/Topp och spara tippen lokalt (t.ex. #4826 Örebro–Frölunda)
-    // innan resultatbiblioteket byggs – annars syns stängda omgångar inte.
+    // Värm PP/Topp + settla Oddset (färdigspelade via Flashscore)
+    // innan resultatbiblioteket byggs.
     void (async () => {
       try {
         const tippedAt = new Date().toISOString();
-        // Redan laddad tippvy (Powerplay #4826) → resultat direkt
         if (historySeedPicks.length) {
           saveLocalHistoryPicks([
             ...loadLocalHistoryPicks(),
             ...historySeedPicks,
           ]);
         }
+
+        // Oddset: tvinga settlement av väntande tips innan Resultat visas
+        const localOddset = loadOddsetLocalTips();
+        if (localOddset.length) {
+          try {
+            const oddRes = await fetch("/api/oddset?fresh=1", {
+              method: "POST",
+              cache: "no-store",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                clientTips: localOddset,
+                clientLessons: loadOddsetLocalLessons(),
+              }),
+            });
+            if (oddRes.ok) {
+              const oddJson = (await oddRes.json()) as OddsetDayTip;
+              const mergedTips = mergeOddsetTracked(
+                localOddset,
+                oddJson.tracked
+              );
+              saveOddsetLocalTips(mergedTips);
+              saveLocalHistoryPicks([
+                ...loadLocalHistoryPicks(),
+                ...oddsetToHistoryPicks(
+                  mergedTips,
+                  oddJson.generatedAt || tippedAt
+                ),
+              ]);
+              if (oddset || product === "oddset") {
+                setOddset({
+                  ...(oddJson as OddsetDayTip),
+                  tracked: mergedTips,
+                });
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
         const [ppRes, toppRes] = await Promise.all([
           fetch("/api/draws?product=powerplay", { cache: "no-store" }),
           fetch("/api/draws?product=topptipset", { cache: "no-store" }),
@@ -2657,7 +2765,7 @@ export default function App() {
       }
       await loadHistory();
     })();
-  }, [loadHistory, historySeedPicks]);
+  }, [loadHistory, historySeedPicks, oddset, product]);
 
   const draw = useMemo(() => {
     if (!data || data.product !== product) return null;
