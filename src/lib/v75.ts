@@ -95,6 +95,12 @@ export type V75DayTip = {
   jackpotKr: number | null;
   estimatedJackpotKr: number | null;
   rowPriceKr: number;
+  /** Antal matematiska rader i tippraden. */
+  tipRows: number;
+  /** Kostnad för tippraden (rader × radpris), styrs till 50–500 kr. */
+  tipCostKr: number;
+  tipBudgetMinKr: number;
+  tipBudgetMaxKr: number;
   atgUrl: string;
   legs: V75LegAnalysis[];
   couponLine: string;
@@ -839,6 +845,227 @@ function fmtDateLabel(isoDate: string): string {
   }
 }
 
+export const V75_TIP_MIN_KR = 50;
+export const V75_TIP_MAX_KR = 500;
+/** Sikte mitt i spannet om möjligt. */
+export const V75_TIP_TARGET_KR = 180;
+
+function tipRowsFromCounts(counts: number[]): number {
+  return counts.reduce((acc, n) => acc * Math.max(1, n), 1);
+}
+
+function tipCostFromCounts(counts: number[], rowPrice: number): number {
+  return Math.round(tipRowsFromCounts(counts) * rowPrice * 100) / 100;
+}
+
+/**
+ * Justera antal streck per avd så tippraden kostar 50–500 kr.
+ * Fyller öppna lopp först, behåller spikar snäva.
+ */
+function fitLegsToBudget(
+  legs: V75LegAnalysis[],
+  rowPrice: number,
+  minKr = V75_TIP_MIN_KR,
+  maxKr = V75_TIP_MAX_KR,
+  targetKr = V75_TIP_TARGET_KR
+): { legs: V75LegAnalysis[]; rows: number; costKr: number } {
+  // Kandidater per lopp: scorade hästar (högst först), minst topp 1
+  const pools = legs.map((leg) => {
+    const ranked = [...leg.horses].sort((a, b) => b.score - a.score);
+    const must = ranked.filter(
+      (h) =>
+        h.role === "spik" ||
+        h.classDrop?.dropped ||
+        h.highWinRate ||
+        (h.lowOddsReview?.supported === true && (h.winOdds ?? 99) <= 3.5)
+    );
+    // Se till att must ingår tidigt i ordningen
+    const ordered: V75HorseTip[] = [];
+    const seen = new Set<number>();
+    for (const h of [...must, ...ranked]) {
+      if (seen.has(h.startNumber)) continue;
+      seen.add(h.startNumber);
+      ordered.push(h);
+    }
+    // Max streck per lopp: öppnare lopp får fler
+    const leaderPct = Math.max(...ordered.map((h) => h.v75Pct ?? 0), 0);
+    const maxMarks =
+      leaderPct >= 45 ? 2 : leaderPct >= 32 ? 3 : leaderPct >= 22 ? 4 : 5;
+    return {
+      leg,
+      ordered: ordered.slice(0, Math.max(1, Math.min(maxMarks, ordered.length))),
+      maxMarks,
+      // Osäkerhet: hur mycket vi vill bredda
+      need:
+        leaderPct < 22
+          ? 4
+          : leaderPct < 32
+            ? 3
+            : leaderPct < 45
+              ? 2
+              : 1.2,
+    };
+  });
+
+  // Start: 1 streck i varje (billigast)
+  const counts = pools.map(() => 1);
+
+  const costOf = () => tipCostFromCounts(counts, rowPrice);
+  const canAdd = (i: number) => counts[i] < pools[i].ordered.length;
+
+  // 1) Expandera tills vi når minst minKr, prioritera mest öppna lopp
+  let guard = 0;
+  while (costOf() < minKr && guard++ < 80) {
+    let best = -1;
+    let bestScore = -1;
+    for (let i = 0; i < pools.length; i++) {
+      if (!canAdd(i)) continue;
+      // Marginalvärde: need / (nuvarande antal)^1.2
+      const next = pools[i].ordered[counts[i]];
+      if (!next) continue;
+      const s =
+        pools[i].need * 10 +
+        next.score * 0.15 -
+        counts[i] * 3;
+      if (s > bestScore) {
+        bestScore = s;
+        best = i;
+      }
+    }
+    if (best < 0) break;
+    // Skulle tillägget spräcka max?
+    const trial = [...counts];
+    trial[best]++;
+    if (tipCostFromCounts(trial, rowPrice) > maxKr) {
+      // Markera att vi inte kan addera här – försök annan
+      // Temporarily pretend at cap by not adding; try next best
+      const blocked = best;
+      let alt = -1;
+      let altScore = -1;
+      for (let i = 0; i < pools.length; i++) {
+        if (i === blocked || !canAdd(i)) continue;
+        const t2 = [...counts];
+        t2[i]++;
+        if (tipCostFromCounts(t2, rowPrice) > maxKr) continue;
+        const next = pools[i].ordered[counts[i]];
+        const s = pools[i].need * 10 + (next?.score ?? 0) * 0.15 - counts[i] * 3;
+        if (s > altScore) {
+          altScore = s;
+          alt = i;
+        }
+      }
+      if (alt < 0) break;
+      counts[alt]++;
+      continue;
+    }
+    counts[best]++;
+  }
+
+  // 2) Sikta mot target om vi fortfarande har marginal under max
+  guard = 0;
+  while (costOf() < targetKr && costOf() <= maxKr && guard++ < 40) {
+    let best = -1;
+    let bestScore = -1;
+    for (let i = 0; i < pools.length; i++) {
+      if (!canAdd(i)) continue;
+      const trial = [...counts];
+      trial[i]++;
+      const nextCost = tipCostFromCounts(trial, rowPrice);
+      if (nextCost > maxKr) continue;
+      // Föredra tillägg som landar närmare target utan att överskrida
+      const next = pools[i].ordered[counts[i]];
+      const overshoot = Math.max(0, nextCost - targetKr);
+      const s =
+        pools[i].need * 8 +
+        (next?.score ?? 0) * 0.12 -
+        counts[i] * 2.5 -
+        overshoot * 0.08;
+      if (s > bestScore) {
+        bestScore = s;
+        best = i;
+      }
+    }
+    if (best < 0) break;
+    counts[best]++;
+    if (costOf() >= targetKr * 0.92) break;
+  }
+
+  // 3) Om fortfarande under min (för få kandidater): fyll max tillåtet ≤ maxKr
+  guard = 0;
+  while (costOf() < minKr && guard++ < 40) {
+    let added = false;
+    const order = pools
+      .map((p, i) => ({ i, need: p.need }))
+      .sort((a, b) => b.need - a.need);
+    for (const { i } of order) {
+      if (!canAdd(i)) continue;
+      const trial = [...counts];
+      trial[i]++;
+      if (tipCostFromCounts(trial, rowPrice) > maxKr) continue;
+      counts[i]++;
+      added = true;
+      break;
+    }
+    if (!added) break;
+  }
+
+  // 4) Om över max (ska sällan hända): trimma bredaste loppen
+  guard = 0;
+  while (costOf() > maxKr && guard++ < 40) {
+    let best = -1;
+    let bestNeed = Infinity;
+    for (let i = 0; i < counts.length; i++) {
+      if (counts[i] <= 1) continue;
+      // Trimma där need är lägst (säkraste lopp)
+      if (pools[i].need < bestNeed) {
+        bestNeed = pools[i].need;
+        best = i;
+      }
+    }
+    if (best < 0) break;
+    counts[best]--;
+  }
+
+  const nextLegs = legs.map((leg, idx) => {
+    const selected = pools[idx].ordered.slice(0, counts[idx]);
+    const pickNumbers = selected
+      .map((h) => h.startNumber)
+      .sort((a, b) => a - b);
+    // Uppdatera roller på valda
+    for (const h of leg.horses) {
+      if (!pickNumbers.includes(h.startNumber)) {
+        if (h.role !== "skip" && !h.classDrop?.dropped && !h.highWinRate) {
+          // behåll analysflaggor men tippraden markerar inte
+        }
+        continue;
+      }
+      if (h.role === "skip") h.role = "gardering";
+    }
+    const open = opennessFromPicks(pickNumbers.length, leg.horses.length);
+    const top = [...leg.horses].sort((a, b) => b.score - a.score)[0];
+    const summaryParts = [
+      `${open === "spikläge" ? "Spikläge" : open === "halvöppet" ? "Halvöppet" : "Vidöppet"}`,
+      `streck ${pickNumbers.join(",") || "–"}`,
+    ];
+    if (top?.winOdds != null) {
+      summaryParts.push(
+        `topp ${top.name} @ ${top.winOdds.toFixed(2).replace(".", ",")}`
+      );
+    }
+    return {
+      ...leg,
+      pickNumbers,
+      pickLabel: pickNumbers.join(","),
+      openness: open,
+      summary: summaryParts.join(" · "),
+    };
+  });
+
+  const rows = tipRowsFromCounts(counts);
+  const costKr = tipCostFromCounts(counts, rowPrice);
+  return { legs: nextLegs, rows, costKr };
+}
+
 export async function buildV75DayTip(): Promise<V75DayTip> {
   const found = await findUpcomingV75(12, 2);
   if (!found) {
@@ -875,7 +1102,7 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     })
   );
 
-  const legs = races.map((race, idx) =>
+  const rawLegs = races.map((race, idx) =>
     analyzeLeg(
       race,
       idx + 1,
@@ -883,6 +1110,16 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
       detailsByRace.get(race.id) || new Map()
     )
   );
+
+  const rowPriceKr = game.newBettingSystem ? 0.6 : 1;
+  const fitted = fitLegsToBudget(
+    rawLegs,
+    rowPriceKr,
+    V75_TIP_MIN_KR,
+    V75_TIP_MAX_KR,
+    V75_TIP_TARGET_KR
+  );
+  const legs = fitted.legs;
 
   const valueHorses = legs
     .flatMap((leg) =>
@@ -1009,7 +1246,11 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     turnoverKr: pool?.turnover ?? null,
     jackpotKr: jackpot,
     estimatedJackpotKr: estimated,
-    rowPriceKr: game.newBettingSystem ? 0.6 : 1,
+    rowPriceKr,
+    tipRows: fitted.rows,
+    tipCostKr: fitted.costKr,
+    tipBudgetMinKr: V75_TIP_MIN_KR,
+    tipBudgetMaxKr: V75_TIP_MAX_KR,
     atgUrl: `https://www.atg.se/spel/V75/${found.date}`,
     legs,
     couponLine,
@@ -1022,13 +1263,14 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     externalSources: sources,
     headlineSignals,
     rules: [
+      `Tippraden kostar ${V75_TIP_MIN_KR}–${V75_TIP_MAX_KR} kr (nu ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader × ${String(rowPriceKr).replace(".", ",")} kr).`,
       "ATG-data: vinnarodds, V75-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).",
       "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
       "Högre seger% = klart över fältets median (karriärstatistik).",
       "Lågoddsare (@ ≤5,5) granskas mot seger%, form och klassdroppe – stödd eller svag.",
       "Överodds = modellchans högre än V75-procenten. Missvisande favorit = högt streck utan stöd.",
       "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News.",
-      "Radpris på nya V75: 0,60 kr. Analys – ingen garanti. 18+ spelansvarsfullt.",
+      "Analys – ingen garanti. 18+ spelansvarsfullt.",
     ],
     disclaimer:
       "Analysverktyg för V75 – inga spelråd med garanti. Odds och streck ändras. 18+ spela ansvarsfullt.",

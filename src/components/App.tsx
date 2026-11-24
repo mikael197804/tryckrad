@@ -766,7 +766,15 @@ function V75View({ tip }: { tip: V75DayTip }) {
           radpris {String(tip.rowPriceKr).replace(".", ",")} kr
         </p>
         <div className="tip-strip" aria-label="V75 tipprad">
-          <strong>Tipprad</strong>
+          <strong>
+            Tipprad · {fmtKr(tip.tipCostKr)} kr
+            <span style={{ fontWeight: 500, opacity: 0.85 }}>
+              {" "}
+              ({tip.tipRows} rader ×{" "}
+              {String(tip.rowPriceKr).replace(".", ",")} kr · budget{" "}
+              {tip.tipBudgetMinKr}–{tip.tipBudgetMaxKr} kr)
+            </span>
+          </strong>
           <div className="tip-strip-picks">
             {tip.legs.map((l) => (
               <span key={l.leg} className="tip-strip-pick">
