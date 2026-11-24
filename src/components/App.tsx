@@ -19,6 +19,7 @@ import type {
   TipHistoryResponse,
 } from "../lib/tipHistory";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
+import type { V75DayTip, V75HorseTip, V75LegAnalysis } from "../lib/v75";
 
 function productHistoryLabel(p: HistoryProduct): string {
   switch (p) {
@@ -518,9 +519,10 @@ type ProductKind =
   | "topptipset"
   | "stryktipset"
   | "maltipset"
-  | "oddset";
+  | "oddset"
+  | "v75";
 
-const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset">> = [
+const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "v75">> = [
   "topptipset",
   "powerplay",
   "stryktipset",
@@ -550,7 +552,277 @@ function productLabel(p: ProductKind): string {
       return "Powerplay";
     case "oddset":
       return "Oddset";
+    case "v75":
+      return "V75";
   }
+}
+
+function fmtKr(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "–";
+  return Math.round(n).toLocaleString("sv-SE");
+}
+
+function V75HorseRow({ h }: { h: V75HorseTip }) {
+  const roleClass =
+    h.role === "spik"
+      ? "v75-role-spik"
+      : h.role === "skräll"
+        ? "v75-role-skrall"
+        : h.role === "gardering"
+          ? "v75-role-gard"
+          : "";
+  return (
+    <div className={`v75-horse ${roleClass}${h.misleading ? " v75-warn" : ""}`}>
+      <div className="v75-horse-num">
+        <strong>{h.startNumber}</strong>
+        {h.postPosition != null && h.postPosition !== h.startNumber ? (
+          <span className="v75-post">spår {h.postPosition}</span>
+        ) : null}
+      </div>
+      <div className="v75-horse-main">
+        <div className="v75-horse-name">
+          {h.name}
+          {h.role !== "skip" && (
+            <span className={`v75-role-tag ${roleClass}`}>{h.role}</span>
+          )}
+          {h.isHomeTrack && <span className="v75-home-tag">hemma</span>}
+        </div>
+        <div className="reason">
+          {h.driver ? `kusk ${h.driver}` : ""}
+          {h.trainer ? `${h.driver ? " · " : ""}tr ${h.trainer}` : ""}
+          {h.winOdds != null
+            ? ` · vinnare ${String(h.winOdds).replace(".", ",")}`
+            : ""}
+          {h.v75Pct != null
+            ? ` · V75 ${String(h.v75Pct).replace(".", ",")}%`
+            : ""}
+          {h.valueEdgePct != null && h.valueEdgePct >= 2
+            ? ` · värde +${String(h.valueEdgePct).replace(".", ",")}%`
+            : ""}
+        </div>
+        <div className="reason">{h.reason}</div>
+        {h.misleading && (
+          <div className="v75-misleading">{h.misleading}</div>
+        )}
+        {h.tipMentions.length > 0 && (
+          <div className="v75-tip-mentions">
+            {h.tipMentions.slice(0, 2).map((m, i) => (
+              <a
+                key={`${m.source}-${i}`}
+                href={m.url}
+                target="_blank"
+                rel="noreferrer"
+                className="v75-tip-link"
+              >
+                {m.source}: {m.snippet.slice(0, 110)}
+                {m.snippet.length > 110 ? "…" : ""}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function V75LegCard({ leg }: { leg: V75LegAnalysis }) {
+  const shown = leg.horses.filter(
+    (h) =>
+      leg.pickNumbers.includes(h.startNumber) ||
+      h.misleading ||
+      (h.valueEdgePct != null && h.valueEdgePct >= 6) ||
+      (h.tipMentions.length > 0 && h.tipConsensus !== "none")
+  );
+  const list = (shown.length ? shown : leg.horses.slice(0, 4)).sort(
+    (a, b) => a.startNumber - b.startNumber
+  );
+  return (
+    <article className="match-card v75-leg-card">
+      <div className="match-card-top">
+        <span className="match-num">V75-{leg.leg}</span>
+        <div>
+          <strong>{leg.raceName}</strong>
+          <div className="reason">
+            {leg.trackName}
+            {leg.distance != null ? ` · ${leg.distance} m` : ""}
+            {leg.startMethod ? ` · ${leg.startMethod}` : ""}
+            {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
+          </div>
+        </div>
+        <div className="pick-cells">
+          <span className="pick-cell on">{leg.pickLabel || "–"}</span>
+        </div>
+      </div>
+      <div className="reason" style={{ marginBottom: "0.55rem" }}>
+        {leg.summary}
+      </div>
+      <div className="v75-horse-list">
+        {list.map((h) => (
+          <V75HorseRow key={h.startNumber} h={h} />
+        ))}
+      </div>
+      {leg.alerts.length > 0 && (
+        <ul className="alert-list table-alerts" style={{ marginTop: "0.6rem" }}>
+          {leg.alerts.slice(0, 4).map((a) => (
+            <li key={a}>{a}</li>
+          ))}
+        </ul>
+      )}
+    </article>
+  );
+}
+
+function V75View({ tip }: { tip: V75DayTip }) {
+  return (
+    <div className="rise">
+      <section className="panel">
+        <h2>
+          V75 · {tip.playDateLabel}
+          {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
+        </h2>
+        <p className="panel-lead">
+          ATG {tip.status}
+          {tip.startTime ? ` · start ${fmtTime(tip.startTime)}` : ""}
+          {tip.jackpotKr != null
+            ? ` · jackpot ${fmtKr(tip.jackpotKr)} kr`
+            : tip.estimatedJackpotKr != null
+              ? ` · ber. jackpot ${fmtKr(tip.estimatedJackpotKr)} kr`
+              : ""}
+          {tip.turnoverKr != null
+            ? ` · omsättning ${fmtKr(tip.turnoverKr)} kr`
+            : ""}
+          {" · "}
+          radpris {String(tip.rowPriceKr).replace(".", ",")} kr
+        </p>
+        <div className="tip-strip" aria-label="V75 tipprad">
+          <strong>Tipprad</strong>
+          <div className="tip-strip-picks">
+            {tip.legs.map((l) => (
+              <span key={l.leg} className="tip-strip-pick">
+                <em>{l.leg}</em>
+                {l.pickLabel || "–"}
+              </span>
+            ))}
+          </div>
+        </div>
+        <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
+          {tip.couponLine}
+        </p>
+        <ul className="alert-list table-alerts">
+          {tip.rules.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+        <p className="panel-lead">
+          <a href={tip.atgUrl} target="_blank" rel="noreferrer" className="oddset-link">
+            Öppna V75 på ATG
+          </a>
+        </p>
+      </section>
+
+      {(tip.misleadingFavorites.length > 0 ||
+        tip.valueHorses.length > 0 ||
+        tip.homeTrackHorses.length > 0) && (
+        <section className="panel">
+          <h2>Signaler · överodds, hemma &amp; varningar</h2>
+          <div className="grid-2 mobile-stack">
+            {tip.misleadingFavorites.length > 0 && (
+              <div>
+                <h3>Missvisande favoriter</h3>
+                <ul className="alert-list learning-alerts">
+                  {tip.misleadingFavorites.map((m) => (
+                    <li key={`${m.leg}-${m.startNumber}`}>
+                      V75-{m.leg} #{m.startNumber} {m.name}: {m.note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {tip.valueHorses.length > 0 && (
+              <div>
+                <h3>Överodds / värde</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.valueHorses.map((v) => (
+                    <li key={`${v.leg}-${v.startNumber}`}>
+                      V75-{v.leg} #{v.startNumber} {v.name} (+
+                      {String(v.edgePct).replace(".", ",")}%)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {tip.homeTrackHorses.length > 0 && (
+            <>
+              <h3>Hästar som trivs hemma</h3>
+              <p className="panel-lead">
+                {tip.homeTrackHorses
+                  .slice(0, 10)
+                  .map(
+                    (h) =>
+                      `V75-${h.leg} #${h.startNumber} ${h.name}`
+                  )
+                  .join(" · ")}
+              </p>
+            </>
+          )}
+        </section>
+      )}
+
+      <section className="panel panel-systems">
+        <h2>Avdelningar</h2>
+        <p className="panel-lead">
+          Jämför ATG-odds med V75-streck och tips från flera sajter. Spik /
+          gardering / skräll per lopp.
+        </p>
+        <div className="match-cards">
+          {tip.legs.map((leg) => (
+            <V75LegCard key={leg.leg} leg={leg} />
+          ))}
+        </div>
+      </section>
+
+      <section className="panel panel-articles">
+        <h2>Tips från webben</h2>
+        <p className="panel-lead">
+          Källor som lästs in nu
+          {tip.externalSources.filter((s) => s.ok).length
+            ? ` (${tip.externalSources.filter((s) => s.ok).length} ok)`
+            : ""}
+          . Premium/paywall ger ofta bara rubriker.
+        </p>
+        <ul className="alert-list table-alerts">
+          {tip.externalSources.map((s) => (
+            <li key={s.source}>
+              {s.ok ? "✓" : "✗"}{" "}
+              {s.url ? (
+                <a href={s.url} target="_blank" rel="noreferrer">
+                  {s.source}
+                </a>
+              ) : (
+                s.source
+              )}
+              {s.note ? ` – ${s.note}` : ""}
+            </li>
+          ))}
+        </ul>
+        {tip.headlineSignals.length > 0 && (
+          <>
+            <h3>Rubriker / signaler</h3>
+            <ul className="alert-list learning-alerts">
+              {tip.headlineSignals.slice(0, 8).map((h, i) => (
+                <li key={`${h.source}-${i}`}>
+                  <strong>{h.source}</strong>: {h.snippet || h.title}
+                  {h.sentiment !== "mention" ? ` · ${h.sentiment}` : ""}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <p className="panel-lead">{tip.disclaimer}</p>
+      </section>
+    </div>
+  );
 }
 
 type ApiResponse = {
@@ -2542,6 +2814,7 @@ export default function App() {
   const [product, setProduct] = useState<ProductKind>("topptipset");
   const [data, setData] = useState<ApiResponse | null>(null);
   const [oddset, setOddset] = useState<OddsetDayTip | null>(null);
+  const [v75, setV75] = useState<V75DayTip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -2623,12 +2896,25 @@ export default function App() {
           setError(null);
           setData(null);
           setOddset(null);
+          setV75(null);
           if (opts.resetSelection !== false) setSelectedDraw(null);
         } else {
           setRefreshing(true);
         }
 
-        if (product === "oddset") {
+        if (product === "v75") {
+          const res = await fetch(
+            `/api/v75${fresh ? "?fresh=1" : ""}`,
+            { cache: "no-store" }
+          );
+          const json = (await res.json()) as V75DayTip & {
+            error?: string;
+            fresh?: boolean;
+          };
+          if (!res.ok) throw new Error(json.error || "Kunde inte hämta V75");
+          setV75(json);
+          if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
+        } else if (product === "oddset") {
           const localTips = loadOddsetLocalTips();
           const localLessons = loadOddsetLocalLessons();
           const res = await fetch(
@@ -2964,6 +3250,11 @@ export default function App() {
   }, [data, selectedDraw, product]);
 
   const closeTimes = useMemo(() => {
+    if (product === "v75" && v75) {
+      return (v75.legs || [])
+        .map((l) => l.startTime)
+        .filter((t): t is string => Boolean(t));
+    }
     if (product === "oddset" && oddset) {
       const list = oddset.selected?.length
         ? oddset.selected
@@ -2971,7 +3262,7 @@ export default function App() {
       return list.map((c) => c.kickoff).filter(Boolean);
     }
     return (data?.draws || []).map((d) => d.closeTime).filter(Boolean);
-  }, [product, data, oddset]);
+  }, [product, data, oddset, v75]);
 
   // Schemalägg uppdatering 12 min före spelstopp (alla produkter)
   useEffect(() => {
@@ -3094,7 +3385,7 @@ export default function App() {
             type="button"
             className="product-btn tips-launch"
             onClick={scrollToAnalysisTips}
-            disabled={product === "oddset"}
+            disabled={product === "oddset" || product === "v75"}
             title="Hoppa till 1X2-tips från analys"
           >
             1X2
@@ -3124,6 +3415,13 @@ export default function App() {
             onClick={() => setProduct("oddset")}
           >
             Oddset
+          </button>
+          <button
+            type="button"
+            className={`product-btn ${product === "v75" ? "active" : ""}`}
+            onClick={() => setProduct("v75")}
+          >
+            V75
           </button>
           {authUser?.isOwner && (
             <a
@@ -3179,13 +3477,17 @@ export default function App() {
               {authUser.isOwner ? " · huvudkonto" : ""}
             </span>
           )}{" "}
-          {product === "oddset"
-            ? oddset
-              ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
-              : "Hämtar Oddset…"
-            : data
-              ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
-              : "Hämtar Svenska Spel…"}
+          {product === "v75"
+            ? v75
+              ? `Uppdaterad ${fmtTime(v75.generatedAt)} · V75 ${v75.playDate}`
+              : "Hämtar V75…"
+            : product === "oddset"
+              ? oddset
+                ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
+                : "Hämtar Oddset…"
+              : data
+                ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
+                : "Hämtar Svenska Spel…"}
           {refreshing ? " · uppdaterar…" : ""}
           {lastFreshAt ? ` · färsk före stopp ${fmtTime(lastFreshAt)}` : ""}
         </div>
@@ -3223,9 +3525,11 @@ export default function App() {
 
       {loading && (
         <div className="loading">
-          {product === "oddset"
-            ? "Analyserar öppna Oddset-matcher…"
-            : `Läser in öppna ${productLabel(product)}-omgångar…`}
+          {product === "v75"
+            ? "Hämtar V75 från ATG och jämför tips/odds…"
+            : product === "oddset"
+              ? "Analyserar öppna Oddset-matcher…"
+              : `Läser in öppna ${productLabel(product)}-omgångar…`}
         </div>
       )}
       {error && <div className="status-banner error">{error}</div>}
@@ -3234,7 +3538,14 @@ export default function App() {
         <OddsetView tip={oddset} />
       )}
 
-      {data && data.product === product && product !== "oddset" && (
+      {!loading && !error && product === "v75" && v75 && (
+        <V75View tip={v75} />
+      )}
+
+      {data &&
+        data.product === product &&
+        product !== "oddset" &&
+        product !== "v75" && (
         <>
           <nav className="draw-tabs" aria-label="Speltillfällen">
             {data.draws.map((d, idx) => {

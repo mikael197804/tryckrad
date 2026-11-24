@@ -2202,3 +2202,126 @@ a.product-btn:hover {
     max-width: none;
   }
 }
+
+/* —— V75 (ATG) —— */
+.v75-leg-card {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.v75-horse-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.v75-horse {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr;
+  gap: 0.55rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 10px;
+  background: rgba(8, 28, 42, 0.45);
+  border: 1px solid transparent;
+}
+
+.v75-horse.v75-role-spik {
+  border-color: rgba(74, 211, 154, 0.35);
+  background: rgba(74, 211, 154, 0.08);
+}
+
+.v75-horse.v75-role-skrall {
+  border-color: rgba(240, 180, 41, 0.4);
+  background: rgba(240, 180, 41, 0.08);
+}
+
+.v75-horse.v75-role-gard {
+  border-color: rgba(62, 199, 184, 0.28);
+}
+
+.v75-horse.v75-warn {
+  border-color: rgba(239, 107, 107, 0.45);
+}
+
+.v75-horse-num {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 0.15rem;
+}
+
+.v75-horse-num strong {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.v75-post {
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.v75-horse-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 650;
+}
+
+.v75-role-tag,
+.v75-home-tag {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.v75-role-tag.v75-role-spik {
+  color: var(--ok);
+  border-color: rgba(74, 211, 154, 0.45);
+}
+
+.v75-role-tag.v75-role-skrall {
+  color: var(--accent-2);
+  border-color: rgba(240, 180, 41, 0.45);
+}
+
+.v75-role-tag.v75-role-gard {
+  color: var(--accent);
+  border-color: rgba(62, 199, 184, 0.4);
+}
+
+.v75-home-tag {
+  color: var(--accent);
+  border-color: rgba(62, 199, 184, 0.35);
+}
+
+.v75-misleading {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  color: #ffb4b4;
+}
+
+.v75-tip-mentions {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.v75-tip-link {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-decoration: none;
+  border-left: 2px solid rgba(62, 199, 184, 0.35);
+  padding-left: 0.45rem;
+}
+
+.v75-tip-link:hover {
+  color: var(--accent);
+}
