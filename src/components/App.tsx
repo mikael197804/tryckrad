@@ -195,13 +195,46 @@ function saveLocalHistoryPicks(picks: HistoryPick[]): void {
   }
 }
 
+/** Tolka 1X2 från "2" eller målstringen "1-2". */
+function outcomeFromActual(actual: string | null | undefined): "1" | "X" | "2" | null {
+  if (!actual) return null;
+  const s = String(actual).trim().toUpperCase();
+  if (s === "1" || s === "X" || s === "2") return s;
+  const m = s.match(/^(\d+)\s*[-–]\s*(\d+)/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const a = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(a)) return null;
+  if (h > a) return "1";
+  if (h < a) return "2";
+  return "X";
+}
+
+/** Rätta 1X2-status mot målresultat (1X mot 2 = fel). */
+function correctHistoryPickStatus(p: HistoryPick): HistoryPick {
+  if (p.market !== "1x2") return p;
+  const result1x2 = outcomeFromActual(p.actual);
+  if (!result1x2) return p;
+  const hit = p.pick.includes(result1x2);
+  const status: HistoryPick["status"] = hit ? "won" : "lost";
+  if (status === p.status) return p;
+  return {
+    ...p,
+    status,
+    resultNote: hit
+      ? `Rätt · ${p.actual} (tipset ${p.pick.join("")} → ${result1x2})`
+      : `Fel · ${p.actual} (tipset ${p.pick.join("")}, blev ${result1x2})`,
+  };
+}
+
 function buildHistoryViewModel(picks: HistoryPick[]): TipHistoryResponse {
-  const won = picks.filter((p) => p.status === "won").length;
-  const lost = picks.filter((p) => p.status === "lost").length;
-  const live = picks.filter((p) => p.status === "live").length;
-  const pending = picks.filter((p) => p.status === "pending").length;
+  const corrected = picks.map(correctHistoryPickStatus);
+  const won = corrected.filter((p) => p.status === "won").length;
+  const lost = corrected.filter((p) => p.status === "lost").length;
+  const live = corrected.filter((p) => p.status === "live").length;
+  const pending = corrected.filter((p) => p.status === "pending").length;
   const byGame = new Map<string, HistoryPick[]>();
-  for (const p of picks) {
+  for (const p of corrected) {
     const list = byGame.get(p.gameKey) || [];
     list.push(p);
     byGame.set(p.gameKey, list);
@@ -238,10 +271,10 @@ function buildHistoryViewModel(picks: HistoryPick[]): TipHistoryResponse {
   return {
     generatedAt: new Date().toISOString(),
     retentionHours: 24,
-    picks,
+    picks: corrected,
     games,
     totals: {
-      total: picks.length,
+      total: corrected.length,
       settled: won + lost,
       won,
       lost,
@@ -1416,8 +1449,19 @@ function HistoryGameCard({
             const bk = b.kickoff ? Date.parse(b.kickoff) : 0;
             return ak - bk || (a.eventNumber ?? 0) - (b.eventNumber ?? 0);
           })
-          .map((p) => (
-          <li key={p.id} className={`history-pick ${p.status}`}>
+          .map((p) => {
+            const result1x2 =
+              p.market === "1x2" ? outcomeFromActual(p.actual) : null;
+            // Rätt/fel utifrån tipset mot slutsignal – inte bara sparad status
+            // (1X mot 2 ska alltid bli Fel även om status felaktigt sagt Rätt).
+            const displayStatus: HistoryPick["status"] =
+              p.market === "1x2" && result1x2
+                ? p.pick.includes(result1x2)
+                  ? "won"
+                  : "lost"
+                : p.status;
+            return (
+          <li key={p.id} className={`history-pick ${displayStatus}`}>
             <div>
               <strong>
                 {p.eventNumber != null ? `${p.eventNumber}. ` : ""}
@@ -1436,11 +1480,13 @@ function HistoryGameCard({
                       <span
                         key={o}
                         className={`history-mark ${
-                          p.pick.includes(o) ? "on" : ""
+                          p.pick.includes(o) || result1x2 === o ? "on" : ""
                         } ${
-                          p.status === "won" && p.actual === o
-                            ? "hit"
-                            : p.status === "lost" && p.pick.includes(o)
+                          result1x2 === o
+                            ? p.pick.includes(o)
+                              ? "hit"
+                              : "miss"
+                            : displayStatus === "lost" && p.pick.includes(o)
                               ? "miss"
                               : ""
                         }`}
@@ -1452,9 +1498,9 @@ function HistoryGameCard({
                 {(p.market === "over_1_5" || p.market === "over_2_5") && (
                   <span
                     className={`history-mark on ${
-                      p.status === "won"
+                      displayStatus === "won"
                         ? "hit"
-                        : p.status === "lost"
+                        : displayStatus === "lost"
                           ? "miss"
                           : ""
                     }`}
@@ -1465,9 +1511,9 @@ function HistoryGameCard({
                 {p.market === "mal" && (
                   <span
                     className={`history-mark on ${
-                      p.status === "won"
+                      displayStatus === "won"
                         ? "hit"
-                        : p.status === "lost"
+                        : displayStatus === "lost"
                           ? "miss"
                           : ""
                     }`}
@@ -1485,7 +1531,11 @@ function HistoryGameCard({
                   : p.market === "mal"
                     ? "Målmatch"
                     : p.pick.join("")}
-                {p.actual ? ` · resultat ${p.actual}` : ""}
+                {p.actual
+                  ? ` · resultat ${p.actual}${
+                      result1x2 ? ` (1X2 ${result1x2})` : ""
+                    }`
+                  : ""}
               </div>
               {p.resultNote && (
                 <div className="oddset-result-note">{p.resultNote}</div>
@@ -1493,25 +1543,26 @@ function HistoryGameCard({
             </div>
             <span
               className={`oddset-result-badge ${
-                p.status === "won"
+                displayStatus === "won"
                   ? "won"
-                  : p.status === "lost"
+                  : displayStatus === "lost"
                     ? "lost"
-                    : p.status === "live"
+                    : displayStatus === "live"
                       ? "live"
                       : ""
               }`}
             >
-              {p.status === "won"
+              {displayStatus === "won"
                 ? "Rätt"
-                : p.status === "lost"
+                : displayStatus === "lost"
                   ? "Fel"
-                  : p.status === "live"
+                  : displayStatus === "live"
                     ? "Live"
                     : "Väntar"}
             </span>
           </li>
-        ))}
+            );
+          })}
       </ul>
     </section>
   );

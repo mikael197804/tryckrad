@@ -110,6 +110,39 @@ function prune(picks: HistoryPick[], now = Date.now()): HistoryPick[] {
   });
 }
 
+/** Tolka 1X2 från "2" eller "1-2". */
+function outcomeFromActual(actual: string | null | undefined): Outcome | null {
+  if (!actual) return null;
+  const s = String(actual).trim().toUpperCase();
+  if (s === "1" || s === "X" || s === "2") return s as Outcome;
+  const m = s.match(/^(\d+)\s*[-–]\s*(\d+)/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const a = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(a)) return null;
+  if (h > a) return "1";
+  if (h < a) return "2";
+  return "X";
+}
+
+/** 1X mot slutsignal 2 ska alltid bli fel – rätta motstridig status. */
+function correctOneXTwoStatus(p: HistoryPick): HistoryPick {
+  if (p.market !== "1x2") return p;
+  const result = outcomeFromActual(p.actual);
+  if (!result) return p;
+  const hit = p.pick.includes(result);
+  const status: HistoryPickStatus = hit ? "won" : "lost";
+  if (status === p.status) return p;
+  return {
+    ...p,
+    status,
+    settledAt: p.settledAt || new Date().toISOString(),
+    resultNote: hit
+      ? `Rätt · ${p.actual} (tipset ${p.pick.join("")} → ${result})`
+      : `Fel · ${p.actual} (tipset ${p.pick.join("")}, blev ${result})`,
+  };
+}
+
 function mergePicks(groups: HistoryPick[][]): HistoryPick[] {
   const byId = new Map<string, HistoryPick>();
   for (const group of groups) {
@@ -578,7 +611,7 @@ export async function buildTipHistory(
     }
   }
   picks = await settleDrawPicks(settledOddset);
-  picks = prune(picks);
+  picks = prune(picks).map(correctOneXTwoStatus);
 
   // Skriv tillbaka settlade 192 kr till servern så resultat syns 24 h
   try {
