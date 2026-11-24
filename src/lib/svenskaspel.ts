@@ -128,12 +128,51 @@ async function fetchJson(url: string): Promise<unknown> {
   return res.json();
 }
 
+const HISTORY_KEEP_MS = 24 * 60 * 60 * 1000;
+
+/** Stängda/finaliserade omgångar som fortfarande ska synas (Spelas nu + resultat). */
+function isRecentClosedDraw(d: RawDraw, now = Date.now()): boolean {
+  const state = String(d.drawState || "");
+  if (state !== "Closed" && state !== "Finalized") return false;
+  const close = Date.parse(d.regCloseTime);
+  if (!Number.isFinite(close)) return false;
+  return now - close <= HISTORY_KEEP_MS;
+}
+
 export async function fetchPowerplayDraws(): Promise<RawDraw[]> {
   const data = (await fetchJson(DRAWS_URL)) as { draws?: RawDraw[] };
-  const draws = (data.draws ?? []).filter(
+  const listed = (data.draws ?? []).filter(
     (d) => Array.isArray(d.drawEvents) && d.drawEvents.length > 0
   );
-  return draws.sort(
+
+  // List-API ger bara Open – hämta nyligen Closed/Finalized bakåt så
+  // "Spelas nu" (t.ex. Örebro–Frölunda) syns i tipp + resultat.
+  const openNums = listed
+    .map((d) => d.drawNumber)
+    .filter((n) => Number.isFinite(n));
+  const lowestOpen = openNums.length ? Math.min(...openNums) : null;
+  const probeFrom = lowestOpen ?? null;
+  const recentClosed: RawDraw[] = [];
+  if (probeFrom != null && probeFrom > 1) {
+    const probes: number[] = [];
+    for (let n = probeFrom - 1; n >= Math.max(1, probeFrom - 10); n--) {
+      probes.push(n);
+    }
+    const fetched = await Promise.all(
+      probes.map((n) => fetchOptionalDraw("powerplay", n))
+    );
+    for (const d of fetched) {
+      if (!d?.drawEvents?.length) continue;
+      if (!isRecentClosedDraw(d)) continue;
+      recentClosed.push(d);
+    }
+  }
+
+  const byNum = new Map<number, RawDraw>();
+  for (const d of [...recentClosed, ...listed]) {
+    byNum.set(d.drawNumber, d);
+  }
+  return [...byNum.values()].sort(
     (a, b) =>
       new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
   );

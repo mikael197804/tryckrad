@@ -222,16 +222,21 @@ async function resolveFsign(): Promise<string> {
   return FALLBACK_FSIGN;
 }
 
-async function fetchDayFeed(dayOffset: number): Promise<FlashscoreMatch[]> {
-  const key = `d${dayOffset}`;
+/** Flashscore sport-id: 1 = fotboll, 4 = ishockey (Powerplay). */
+const FS_SPORTS = [1, 4] as const;
+
+async function fetchSportDayFeed(
+  sportId: number,
+  dayOffset: number
+): Promise<FlashscoreMatch[]> {
+  const key = `s${sportId}:d${dayOffset}`;
   const cached = feedCache.get(key);
   if (cached && Date.now() - cached.at < 45_000) {
     return cached.matches;
   }
 
   const fsign = await resolveFsign();
-  // sv_1: svenska namn där det finns; samma matcher som en-feed.
-  const url = `https://global.flashscore.ninja/2/x/feed/f_1_${dayOffset}_8_sv_1`;
+  const url = `https://global.flashscore.ninja/2/x/feed/f_${sportId}_${dayOffset}_8_sv_1`;
   try {
     const res = await fetch(url, {
       method: "GET",
@@ -273,12 +278,15 @@ async function matchesForKickoff(kickoffIso: string): Promise<FlashscoreMatch[]>
 
   const out: FlashscoreMatch[] = [];
   const seen = new Set<string>();
-  for (const off of offsets) {
-    const list = await fetchDayFeed(off);
-    for (const m of list) {
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
-      out.push(m);
+  for (const sportId of FS_SPORTS) {
+    for (const off of offsets) {
+      const list = await fetchSportDayFeed(sportId, off);
+      for (const m of list) {
+        const id = `${sportId}:${m.id}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push(m);
+      }
     }
   }
   return out;

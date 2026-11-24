@@ -1443,8 +1443,8 @@ function HistoryView({
 
         {!library && (
           <p className="panel-lead">
-            Välj ett bibliotek per spelform. Powerplay och Topptipset sparar 192
-            kr varje dag – resultat syns 24 timmar efter färdigt spel.
+            Välj ett bibliotek per spelform. Powerplay som spelas nu (t.ex.
+            Örebro–Frölunda) och 192 kr-system syns här – live via Flashscore.
           </p>
         )}
 
@@ -2799,7 +2799,16 @@ export default function App() {
                 Number.isFinite(closeMs)
                   ? (closeMs - Date.now()) / (60 * 60 * 1000)
                   : Infinity;
-              const isNextUp = idx === 0 || hoursLeft <= 12;
+              const state = String(d.drawState || "");
+              const isPlaying =
+                state === "Closed" ||
+                (state !== "Finalized" && hoursLeft <= 0);
+              const isNextUp =
+                isPlaying || idx === 0 || hoursLeft <= 12;
+              const firstMatch = d.matches?.[0];
+              const firstLabel = firstMatch
+                ? `${firstMatch.home.name}–${firstMatch.away.name}`
+                : null;
               return (
                 <button
                   key={d.drawNumber}
@@ -2813,14 +2822,19 @@ export default function App() {
                 >
                   <span className="label">
                     {fmtCloseLabel(d.closeTime)}
-                    {idx === 0 && (
+                    {isPlaying ? (
                       <em className="draw-now-badge">Spelas nu</em>
-                    )}
+                    ) : idx === 0 ? (
+                      <em className="draw-now-badge">Nästa</em>
+                    ) : null}
                   </span>
                   <span className="sub">
-                    #{d.drawNumber} · stänger {fmtTime(d.closeTime)}
+                    #{d.drawNumber} ·{" "}
+                    {isPlaying
+                      ? "stängd · pågår"
+                      : `stänger ${fmtTime(d.closeTime)}`}
                     <br />
-                    {d.leagueSummary || d.sport}
+                    {firstLabel || d.leagueSummary || d.sport}
                     {product === "powerplay" &&
                       d.systems?.some((s) => s.costKr === 192) && (
                         <>
@@ -2839,9 +2853,17 @@ export default function App() {
               <section className="panel">
                 <h2>{draw.closeDescription || `Omgång #${draw.drawNumber}`}</h2>
                 <p className="panel-lead">
-                  Öppen omgång · {fmtCloseLabel(draw.closeTime)} · #
-                  {draw.drawNumber} · {draw.matches.length} matcher ·{" "}
-                  {draw.leagueSummary} · stänger {fmtTime(draw.closeTime)}
+                  {String(draw.drawState || "") === "Closed"
+                    ? "Spelas nu"
+                    : String(draw.drawState || "") === "Finalized"
+                      ? "Färdigspelad"
+                      : "Öppen omgång"}{" "}
+                  · {fmtCloseLabel(draw.closeTime)} · #{draw.drawNumber} ·{" "}
+                  {draw.matches.length} matcher · {draw.leagueSummary}
+                  {String(draw.drawState || "") === "Closed" ||
+                  String(draw.drawState || "") === "Finalized"
+                    ? " · stängd"
+                    : ` · stänger ${fmtTime(draw.closeTime)}`}
                   {draw.netSale ? ` · omsättning ${draw.netSale} kr` : ""}
                 </p>
 

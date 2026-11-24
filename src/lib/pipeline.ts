@@ -14,8 +14,26 @@ function parseRowPrice(value: string): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-function isStillOpen(closeTime: string, graceMs = 2 * 60 * 1000): boolean {
-  return new Date(closeTime).getTime() + graceMs >= Date.now();
+const RESULT_KEEP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Visa omgångar som fortfarande går att tippa, eller nyligen stängda
+ * ("Spelas nu" / resultat 24 h) – t.ex. Powerplay Örebro–Frölunda.
+ */
+function shouldIncludeDraw(
+  closeTime: string,
+  drawState?: string,
+  graceMs = 2 * 60 * 1000
+): boolean {
+  const close = new Date(closeTime).getTime();
+  if (!Number.isFinite(close)) return false;
+  const now = Date.now();
+  const state = String(drawState || "");
+  if (state === "Closed" || state === "Finalized") {
+    return now - close <= RESULT_KEEP_MS;
+  }
+  // Open / okänd status
+  return close + graceMs >= now;
 }
 
 function defaultSport(product: ProductKind): string {
@@ -28,7 +46,7 @@ export async function buildAllDrawBundles(
 ): Promise<DrawBundle[]> {
   const [draws, learning] = await Promise.all([
     fetchDrawsForProduct(product).then((d) =>
-      d.filter((x) => isStillOpen(x.regCloseTime))
+      d.filter((x) => shouldIncludeDraw(x.regCloseTime, x.drawState))
     ),
     loadLearningMemory(product),
   ]);
@@ -61,13 +79,14 @@ export async function buildAllDrawBundles(
           ),
         ]);
 
-        return {
+        const bundle: DrawBundle = {
           drawNumber: draw.drawNumber,
           productName: draw.productName,
           productKind: product,
           closeDescription: draw.regCloseDescription,
           closeTime: draw.regCloseTime,
           openTime: draw.regOpenTime,
+          drawState: draw.drawState,
           rowPrice,
           netSale: draw.currentNetSale ?? null,
           sport: draw.sport?.name ?? defaultSport(product),
@@ -84,7 +103,8 @@ export async function buildAllDrawBundles(
           learningAlerts: learningAlerts ?? [],
           safeWinners: safeWinners ?? [],
           malTip: malTip ?? [],
-        } satisfies DrawBundle;
+        };
+        return bundle;
       } catch (error) {
         console.error(
           `Hoppar omgång ${draw.drawNumber}:`,
@@ -97,9 +117,19 @@ export async function buildAllDrawBundles(
 
   const open = bundles
     .filter((b): b is DrawBundle => b != null && b.matches.length > 0)
-    .sort(
-      (a, b) => new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime()
-    );
+    .sort((a, b) => {
+      // Closed (Spelas nu) först, sedan öppna, sist finaliserade
+      const rank = (d: DrawBundle) => {
+        const s = String(d.drawState || "");
+        if (s === "Closed") return 0;
+        if (s === "Finalized") return 2;
+        return 1;
+      };
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime();
+    });
 
   // Powerplay + Topptipset 192 kr sparas varje dag till resultat (24 h)
   if ((product === "powerplay" || product === "topptipset") && open.length) {

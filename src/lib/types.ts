@@ -214,6 +214,8 @@ export type DrawBundle = {
   closeDescription: string;
   closeTime: string;
   openTime: string;
+  /** Open | Closed (spelas nu) | Finalized */
+  drawState?: string;
   rowPrice: number;
   netSale: string | null;
   sport: string;
