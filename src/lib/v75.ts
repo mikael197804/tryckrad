@@ -501,6 +501,8 @@ type HorseEnrichment = {
   fieldMedianWinPct: number | null;
 };
 
+export type AtgAnalysisProduct = AtgPoolProduct | "Tvilling";
+
 function analyzeHorse(
   start: AtgStart,
   leg: number,
@@ -508,14 +510,20 @@ function analyzeHorse(
   trackName: string,
   mentions: ExternalTipMention[],
   enrich: HorseEnrichment,
-  product: AtgPoolProduct = "V75"
+  product: AtgAnalysisProduct = "V75"
 ): V75HorseTip {
   const winOdds = atgOddsToDecimal(start.pools?.vinnare?.odds);
-  const v75Pct = atgDistToPct(atgPoolDistRaw(start, product));
   const impliedWinPct =
     winOdds != null && winOdds > 1
       ? Math.round((100 / winOdds) * 10) / 10
       : null;
+  // Tvilling saknar pool-streck – använd odds-implied som marknadsandel.
+  const poolPct =
+    product === "Tvilling"
+      ? null
+      : atgDistToPct(atgPoolDistRaw(start, product));
+  const v75Pct =
+    poolPct ?? (product === "Tvilling" ? impliedWinPct : null);
 
   const home = homeTrackSignals(start, trackId, trackName);
   const formWin = winPctFromStats(start);
@@ -557,7 +565,10 @@ function analyzeHorse(
         ? formWin * 0.7
         : 8;
   if (formWin != null) model += formWin * 0.25;
-  if (place != null) model += place * 0.08;
+  if (place != null) {
+    // Tvilling belönar platsförmåga (1–2) mer än V75/V64.
+    model += place * (product === "Tvilling" ? 0.16 : 0.08);
+  }
   if (home.horse) model += 2.2;
   if (home.trainer) model += 1.1;
   if (home.driver) model += 0.8;
@@ -596,7 +607,9 @@ function analyzeHorse(
   let misleading: string | null = null;
   if (v75Pct != null && v75Pct >= 28 && impliedWinPct != null) {
     if (impliedWinPct + 8 < v75Pct) {
-      misleading = `Högt ${product}-streck (${v75Pct
+      const marketLabel =
+        product === "Tvilling" ? "odds-implied" : `${product}-streck`;
+      misleading = `Högt ${marketLabel} (${v75Pct
         .toFixed(1)
         .replace(".", ",")}%) mot vinnarodds som ger ≈${impliedWinPct
         .toFixed(1)
@@ -672,7 +685,9 @@ function analyzeHorse(
       reasons.push(
         `överodds/värde: modell ${model
           .toFixed(1)
-          .replace(".", ",")}% vs ${product} ${String(v75Pct ?? "–").replace(".", ",")}%)`
+          .replace(".", ",")}% vs ${
+            product === "Tvilling" ? "marknad" : product
+          } ${String(v75Pct ?? "–").replace(".", ",")}%)`
       );
     }
   } else if (
@@ -753,9 +768,9 @@ function oddsBand(odds: number | null): "low" | "mid" | "high" {
  * Mönster: de brukar vinna ett av loppen, ofta med den dyraste hästen.
  * applyBoosts=false = bara signaler (förhandsfas före förelopp).
  */
-function applyDualDriverSignals(
+export function applyDualDriverSignals(
   legs: V75LegAnalysis[],
-  product: AtgPoolProduct = "V75",
+  product: AtgAnalysisProduct = "V75",
   applyBoosts = true
 ): V75DualDriverSignal[] {
   type Mount = {
@@ -883,9 +898,9 @@ function toStrategyMount(
 }
 
 /** Kuskanalys: lågodds först, högodds om den inte vinner. */
-function buildDriverStrategies(
+export function buildDriverStrategies(
   legs: V75LegAnalysis[],
-  product: AtgPoolProduct
+  product: AtgAnalysisProduct
 ): V75DriverStrategy[] {
   type Mount = { leg: number; horse: V75HorseTip };
   const byKey = new Map<
@@ -1000,10 +1015,10 @@ function buildDriverStrategies(
 }
 
 /** Lyft högodds när kuskstrategi säger lågodds→högodds (efter förelopp). */
-function applyDriverStrategyBoosts(
+export function applyDriverStrategyBoosts(
   legs: V75LegAnalysis[],
   strategies: V75DriverStrategy[],
-  product: AtgPoolProduct
+  product: AtgAnalysisProduct
 ): void {
   for (const s of strategies) {
     if (!s.focusIfLowMisses || !s.highMount) continue;
@@ -1061,7 +1076,7 @@ function applyDriverStrategyBoosts(
   }
 }
 
-async function resolvePreRaces(
+export async function resolvePreRaces(
   playDate: string,
   poolRaces: AtgRace[]
 ): Promise<{
@@ -1145,7 +1160,7 @@ async function resolvePreRaces(
 }
 
 /** Notera kuskar som körde/vann i förelopp. */
-async function enrichStrategiesFromPreRaces(
+export async function enrichStrategiesFromPreRaces(
   strategies: V75DriverStrategy[],
   preRaces: V75PreRace[]
 ): Promise<void> {
@@ -1213,12 +1228,12 @@ function opennessFromPicks(
   return "vidöppet";
 }
 
-function analyzeLeg(
+export function analyzeLeg(
   race: AtgRace,
   leg: number,
   allMentions: ExternalTipMention[],
   details: Map<number, AtgStartDetail>,
-  product: AtgPoolProduct = "V75"
+  product: AtgAnalysisProduct = "V75"
 ): V75LegAnalysis {
   const trackName = race.track?.name || "Okänd bana";
   const trackId = race.track?.id ?? null;
@@ -1252,8 +1267,21 @@ function analyzeLeg(
   // Bygg pick: topp + tydliga garderingar/skrällar – aldrig hela fältet
   const ranked = [...horses];
   const leaderPct = Math.max(...horses.map((h) => h.v75Pct ?? 0), 0);
+  const leaderOdds = ranked[0]?.winOdds ?? 99;
   const maxPicks =
-    leaderPct >= 42 ? 2 : leaderPct >= 30 ? 3 : leaderPct >= 22 ? 4 : 5;
+    product === "Tvilling"
+      ? leaderOdds <= 3.2
+        ? 2
+        : leaderOdds <= 6
+          ? 3
+          : 3
+      : leaderPct >= 42
+        ? 2
+        : leaderPct >= 30
+          ? 3
+          : leaderPct >= 22
+            ? 4
+            : 5;
 
   const picks: V75HorseTip[] = [];
   const top = ranked[0];

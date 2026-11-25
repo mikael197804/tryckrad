@@ -1,69 +1,62 @@
 import {
-  atgOddsToDecimal,
   fetchAtgGame,
   fetchCalendarDay,
   fetchRace,
   fetchStartDetailsForRace,
   isAtgRaceFinished,
-  personName,
   type AtgGameSummary,
   type AtgRace,
-  type AtgStart,
-  type AtgStartDetail,
 } from "./atg";
+import {
+  applyDriverStrategyBoosts,
+  applyDualDriverSignals,
+  analyzeLeg,
+  buildDriverStrategies,
+  enrichStrategiesFromPreRaces,
+  resolvePreRaces,
+  type V75DayTip,
+  type V75HorseTip,
+  type V75LegAnalysis,
+} from "./v75";
+import { collectExternalAtgTips } from "./v75Tips";
 
-export type TvillingHorseTip = {
-  startNumber: number;
-  name: string;
-  driver: string;
-  winOdds: number | null;
-  winRatePct: number | null;
-  isHomeTrack: boolean;
-  score: number;
-  reason: string;
+export type TvillingHorseTip = V75HorseTip & {
   inTip: boolean;
   inBestPair: boolean;
 };
 
-export type TvillingRaceTip = {
-  raceId: string;
+export type TvillingRaceTip = Omit<V75LegAnalysis, "horses"> & {
   gameId: string;
   raceNumber: number;
-  raceName: string;
-  trackName: string;
-  trackId: number | null;
-  startTime: string | null;
-  status: string;
   horses: TvillingHorseTip[];
-  /** Tipphästar (startnr) – 2–3 st. */
-  pickNumbers: number[];
-  pickLabel: string;
   /** Bästa tvillingpar. */
   bestPair: [number, number];
   bestPairLabel: string;
   bestPairOdds: number | null;
   tipCombinations: number;
   tipCostKr: number;
-  summary: string;
 };
 
-export type TvillingDayTip = {
-  generatedAt: string;
+export type TvillingDayTip = Omit<
+  V75DayTip,
+  | "product"
+  | "gameId"
+  | "status"
+  | "turnoverKr"
+  | "jackpotKr"
+  | "estimatedJackpotKr"
+  | "tipBudgetMinKr"
+  | "tipBudgetMaxKr"
+  | "legs"
+  | "dualDriverSignals"
+  | "driverStrategies"
+> & {
   product: "tvilling";
-  playDate: string;
-  playDateLabel: string;
-  trackNames: string[];
-  startTime: string | null;
-  rowPriceKr: number;
-  tipRows: number;
-  tipCostKr: number;
-  tipsStreck: string;
-  tipsStreckLabel: string;
-  couponLine: string;
-  atgUrl: string;
+  gameId: string | null;
+  status: string;
   races: TvillingRaceTip[];
-  rules: string[];
-  disclaimer: string;
+  dualDriverSignals: V75DayTip["dualDriverSignals"];
+  driverStrategies: V75DayTip["driverStrategies"];
 };
 
 const ROW_PRICE_KR = 5;
@@ -85,19 +78,6 @@ function fmtDateLabel(isoDate: string): string {
   }
 }
 
-function winPct(start: AtgStart): number | null {
-  const life = start.horse.statistics?.life?.winPercentage;
-  if (life != null && Number.isFinite(life)) {
-    return life > 100 ? Math.round((life / 100) * 10) / 10 : life;
-  }
-  const years = start.horse.statistics?.years || {};
-  const y2026 = years["2026"]?.winPercentage;
-  if (y2026 != null && Number.isFinite(y2026)) {
-    return y2026 > 100 ? Math.round((y2026 / 100) * 10) / 10 : y2026;
-  }
-  return null;
-}
-
 /** ATG comboOdds: triangel index [hi-1][lo-1] för hi > lo. */
 export function tvillingComboOdds(
   comboOdds: number[][] | undefined,
@@ -114,59 +94,6 @@ export function tvillingComboOdds(
     return null;
   }
   return Math.round((raw / 100) * 100) / 100;
-}
-
-function scoreHorse(
-  start: AtgStart,
-  trackId: number | null,
-  detail: AtgStartDetail | null
-): TvillingHorseTip {
-  const winOdds = atgOddsToDecimal(start.pools?.vinnare?.odds);
-  const wr = winPct(start);
-  const home =
-    trackId != null && start.horse.homeTrack?.id === trackId;
-  let score = 0;
-  const reasons: string[] = [];
-
-  if (winOdds != null && winOdds > 1 && winOdds < 80) {
-    score += Math.max(0, 22 - winOdds * 1.1);
-    reasons.push(`vinnarodds ${String(winOdds).replace(".", ",")}`);
-  }
-  if (wr != null) {
-    score += Math.min(12, wr / 4);
-    reasons.push(`seger% ${String(wr).replace(".", ",")}`);
-  }
-  if (home) {
-    score += 2.2;
-    reasons.push("hemma");
-  }
-  const driverHome = trackId != null && start.driver?.homeTrack?.id === trackId;
-  if (driverHome) {
-    score += 0.8;
-    reasons.push("kusk hemma");
-  }
-  // Platsstatistik hjälper tvilling (1–2)
-  const placeRaw = start.horse.statistics?.life?.placePercentage;
-  if (placeRaw != null && Number.isFinite(placeRaw)) {
-    const placePct = placeRaw > 100 ? placeRaw / 100 : placeRaw;
-    score += Math.min(8, placePct / 8);
-  }
-  if (detail?.horse?.results?.records?.length) {
-    score += 0.4;
-  }
-
-  return {
-    startNumber: start.number,
-    name: start.horse.name,
-    driver: personName(start.driver),
-    winOdds,
-    winRatePct: wr,
-    isHomeTrack: home,
-    score: Math.round(score * 10) / 10,
-    reason: reasons.join(" · ") || "fältet",
-    inTip: false,
-    inBestPair: false,
-  };
 }
 
 type CalGame = AtgGameSummary & {
@@ -224,7 +151,6 @@ async function findUpcomingTvillingBatch(): Promise<{
     (a, b) => a.rank - b.rank || a.start.localeCompare(b.start)
   );
 
-  // Prefer one Swedish track cluster (most races soon)
   const byTrack = new Map<number, Cand[]>();
   for (const c of cands.filter((x) => x.rank === 0)) {
     const tid = c.trackId ?? -1;
@@ -263,43 +189,38 @@ async function findUpcomingTvillingBatch(): Promise<{
   return { date, games: pool.map((p) => p.game), trackNames };
 }
 
-function analyzeTvillingRace(
-  race: AtgRace,
-  gameId: string,
-  comboOdds: number[][] | undefined,
-  details: Map<number, AtgStartDetail>,
-  rowPriceKr: number
-): TvillingRaceTip {
-  const trackName = race.track?.name || "Okänd bana";
-  const trackId = race.track?.id ?? null;
-  const starts = (race.starts || []).filter((s) => !s.scratched);
-  const horses = starts
-    .map((s) => scoreHorse(s, trackId, details.get(s.number) || null))
-    .sort((a, b) => b.score - a.score);
+function pickBestPair(
+  horses: TvillingHorseTip[],
+  pickNumbers: number[],
+  comboOdds: number[][] | undefined
+): {
+  bestPair: [number, number];
+  bestPairOdds: number | null;
+  bestPairLabel: string;
+} {
+  const tipSet = new Set(pickNumbers);
+  const pool =
+    horses.filter((h) => tipSet.has(h.startNumber)).length >= 2
+      ? horses.filter((h) => tipSet.has(h.startNumber))
+      : horses.slice(0, Math.min(4, horses.length));
 
-  const leaderOdds = horses[0]?.winOdds ?? 99;
-  const pickCount = leaderOdds <= 3.2 ? 2 : leaderOdds <= 6 ? 3 : 3;
-  const picks = horses.slice(0, Math.min(pickCount, horses.length));
-  for (const h of picks) h.inTip = true;
-  const pickNumbers = picks.map((h) => h.startNumber);
-
-  // Best pair among tip horses (or top 4 scored)
-  const poolForPair = horses.slice(0, Math.min(4, horses.length));
   let bestPair: [number, number] = [
-    poolForPair[0]?.startNumber || 1,
-    poolForPair[1]?.startNumber || 2,
+    pool[0]?.startNumber || 1,
+    pool[1]?.startNumber || 2,
   ];
   let bestPairOdds: number | null = null;
   let bestScore = -1;
-  for (let i = 0; i < poolForPair.length; i++) {
-    for (let j = i + 1; j < poolForPair.length; j++) {
-      const a = poolForPair[i]!;
-      const b = poolForPair[j]!;
+
+  for (let i = 0; i < pool.length; i++) {
+    for (let j = i + 1; j < pool.length; j++) {
+      const a = pool[i]!;
+      const b = pool[j]!;
       const odds = tvillingComboOdds(comboOdds, a.startNumber, b.startNumber);
       const pairScore =
         a.score +
         b.score +
-        (odds != null ? Math.max(0, 8 - Math.log10(Math.max(odds, 1.5))) : 0);
+        (odds != null ? Math.max(0, 8 - Math.log10(Math.max(odds, 1.5))) : 0) +
+        (a.role === "spik" || b.role === "spik" ? 1.5 : 0);
       if (pairScore > bestScore) {
         bestScore = pairScore;
         bestPair = [a.startNumber, b.startNumber];
@@ -307,51 +228,102 @@ function analyzeTvillingRace(
       }
     }
   }
-  for (const h of horses) {
-    h.inBestPair = bestPair.includes(h.startNumber);
+
+  const pairNames = bestPair
+    .map((n) => horses.find((h) => h.startNumber === n)?.name || `#${n}`)
+    .join(" + ");
+
+  return {
+    bestPair,
+    bestPairOdds,
+    bestPairLabel: `${bestPair[0]}-${bestPair[1]} (${pairNames})`,
+  };
+}
+
+function toTvillingRace(
+  leg: V75LegAnalysis,
+  gameId: string,
+  raceNumber: number,
+  comboOdds: number[][] | undefined,
+  rowPriceKr: number
+): TvillingRaceTip {
+  // Behåll V75-analysens picks men max 3 för tvilling-system
+  let pickNumbers = [...leg.pickNumbers].sort((a, b) => a - b);
+  if (pickNumbers.length > 3) {
+    const ranked = [...leg.horses]
+      .filter((h) => pickNumbers.includes(h.startNumber))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+    pickNumbers = ranked.map((h) => h.startNumber).sort((a, b) => a - b);
   }
+  if (pickNumbers.length < 2) {
+    const ranked = [...leg.horses].sort((a, b) => b.score - a.score);
+    pickNumbers = ranked
+      .slice(0, Math.min(2, ranked.length))
+      .map((h) => h.startNumber)
+      .sort((a, b) => a - b);
+  }
+
+  const tipSet = new Set(pickNumbers);
+  const pairInfo = pickBestPair(
+    leg.horses.map((h) => ({
+      ...h,
+      inTip: tipSet.has(h.startNumber),
+      inBestPair: false,
+    })),
+    pickNumbers,
+    comboOdds
+  );
+  const pairSet = new Set(pairInfo.bestPair);
+
+  const horses: TvillingHorseTip[] = leg.horses.map((h) => ({
+    ...h,
+    inTip: tipSet.has(h.startNumber),
+    inBestPair: pairSet.has(h.startNumber),
+  }));
 
   const tipCombinations =
     pickNumbers.length < 2
       ? 0
       : (pickNumbers.length * (pickNumbers.length - 1)) / 2;
   const tipCostKr = Math.round(tipCombinations * rowPriceKr * 100) / 100;
-  const pairNames = bestPair
-    .map((n) => horses.find((h) => h.startNumber === n)?.name || `#${n}`)
-    .join(" + ");
 
   return {
-    raceId: race.id,
+    ...leg,
+    leg: raceNumber,
     gameId,
-    raceNumber: race.number,
-    raceName: race.name || `Lopp ${race.number}`,
-    trackName,
-    trackId,
-    startTime: race.startTime || race.scheduledStartTime || null,
-    status: race.status || "unknown",
+    raceNumber,
     horses,
     pickNumbers,
     pickLabel: pickNumbers.join(","),
-    bestPair,
-    bestPairLabel: `${bestPair[0]}-${bestPair[1]} (${pairNames})`,
-    bestPairOdds,
+    bestPair: pairInfo.bestPair,
+    bestPairLabel: pairInfo.bestPairLabel,
+    bestPairOdds: pairInfo.bestPairOdds,
     tipCombinations,
     tipCostKr,
     summary:
       pickNumbers.length >= 2
-        ? `Tvilling ${pickNumbers.join("-")} · bäst par ${bestPair[0]}-${bestPair[1]}` +
-          (bestPairOdds != null
-            ? ` @ ${String(bestPairOdds).replace(".", ",")}`
+        ? `${leg.openness === "spikläge" ? "Spikläge" : leg.openness === "halvöppet" ? "Halvöppet" : "Vidöppet"} · Tvilling ${pickNumbers.join("-")} · bäst par ${pairInfo.bestPair[0]}-${pairInfo.bestPair[1]}` +
+          (pairInfo.bestPairOdds != null
+            ? ` @ ${String(pairInfo.bestPairOdds).replace(".", ",")}`
             : "")
-        : "För tunt fält",
+        : leg.summary,
   };
 }
 
 export async function buildTvillingDayTip(): Promise<TvillingDayTip> {
-  const { date, games, trackNames } = await findUpcomingTvillingBatch();
+  const { date, games, trackNames: initialTracks } = await findUpcomingTvillingBatch();
   const rowPriceKr = ROW_PRICE_KR;
 
-  const races: TvillingRaceTip[] = [];
+  type Loaded = {
+    summary: CalGame;
+    race: AtgRace;
+    gameId: string;
+    comboOdds: number[][] | undefined;
+    rowPrice: number;
+  };
+  const loaded: Loaded[] = [];
+
   await Promise.all(
     games.map(async (summary) => {
       try {
@@ -361,34 +333,151 @@ export async function buildTvillingDayTip(): Promise<TvillingDayTip> {
         const comboOdds = (
           game.pools as { tvilling?: { comboOdds?: number[][] } } | undefined
         )?.tvilling?.comboOdds;
-        const nums = (race.starts || [])
-          .filter((s) => !s.scratched)
-          .map((s) => s.number);
-        const details = await fetchStartDetailsForRace(race.id, nums, 4);
-        races.push(
-          analyzeTvillingRace(
-            race,
-            game.id,
-            comboOdds,
-            details,
-            game.newBettingSystem ? 5 : rowPriceKr
-          )
-        );
+        loaded.push({
+          summary,
+          race,
+          gameId: game.id,
+          comboOdds,
+          rowPrice: game.newBettingSystem ? 5 : rowPriceKr,
+        });
       } catch {
-        /* skip race */
+        /* skip */
       }
     })
   );
 
-  races.sort(
+  loaded.sort(
     (a, b) =>
-      (a.startTime || "").localeCompare(b.startTime || "") ||
-      a.raceNumber - b.raceNumber
+      (a.race.startTime || "").localeCompare(b.race.startTime || "") ||
+      a.race.number - b.race.number
   );
 
-  if (!races.length) {
+  if (!loaded.length) {
     throw new Error("Kunde inte analysera några Tvilling-lopp just nu.");
   }
+
+  const racesOnly = loaded.map((l) => l.race);
+
+  const horseIndex: Array<{ name: string; number: number; leg: number }> = [];
+  for (const race of racesOnly) {
+    for (const s of race.starts || []) {
+      if (s.scratched) continue;
+      horseIndex.push({
+        name: s.horse.name,
+        number: s.number,
+        leg: race.number,
+      });
+    }
+  }
+
+  const { mentions, sources } = await collectExternalAtgTips(
+    "Tvilling",
+    horseIndex
+  );
+  const horseMentions = mentions.filter((m) => m.horseName);
+  const headlineSignals = mentions
+    .filter((m) => !m.horseName && m.snippet)
+    .slice(0, 12);
+
+  const detailsByRace = new Map<string, Map<number, import("./atg").AtgStartDetail>>();
+  await Promise.all(
+    racesOnly.map(async (race) => {
+      const nums = (race.starts || [])
+        .filter((s) => !s.scratched)
+        .map((s) => s.number);
+      const map = await fetchStartDetailsForRace(race.id, nums, 5);
+      detailsByRace.set(race.id, map);
+    })
+  );
+
+  // Samma analysmotor som V75/V64 (leg = loppnummer)
+  const rawLegs = racesOnly.map((race) =>
+    analyzeLeg(
+      race,
+      race.number,
+      horseMentions,
+      detailsByRace.get(race.id) || new Map(),
+      "Tvilling"
+    )
+  );
+
+  const {
+    preRaces,
+    preRacesDone,
+    tipsActivated,
+    tipsPhaseNote,
+  } = await resolvePreRaces(date, racesOnly);
+
+  const driverStrategies = buildDriverStrategies(rawLegs, "Tvilling");
+  if (preRaces.some((r) => r.finished)) {
+    await enrichStrategiesFromPreRaces(driverStrategies, preRaces);
+  }
+
+  const dualDriverSignals = applyDualDriverSignals(
+    rawLegs,
+    "Tvilling",
+    tipsActivated
+  );
+  if (tipsActivated) {
+    applyDriverStrategyBoosts(rawLegs, driverStrategies, "Tvilling");
+  }
+
+  // Om tippboostar ändrat score – bygg om picks med samma analys
+  const boostedLegs = tipsActivated
+    ? racesOnly.map((race) => {
+        const existing = rawLegs.find((l) => l.raceId === race.id);
+        // Re-run pick logic is already in analyzeLeg; boosts mutated horse scores
+        // so re-select picks from boosted horses
+        if (!existing) return analyzeLeg(race, race.number, horseMentions, detailsByRace.get(race.id) || new Map(), "Tvilling");
+        const ranked = [...existing.horses].sort((a, b) => b.score - a.score);
+        const leaderOdds = ranked[0]?.winOdds ?? 99;
+        const maxPicks = leaderOdds <= 3.2 ? 2 : 3;
+        const picks: typeof ranked = [];
+        if (ranked[0]) {
+          if (ranked[0].role === "skip") ranked[0].role = "gardering";
+          picks.push(ranked[0]);
+        }
+        for (const h of ranked.slice(1)) {
+          if (picks.length >= maxPicks) break;
+          if (
+            h.role === "spik" ||
+            h.role === "gardering" ||
+            h.role === "skräll" ||
+            h.classDrop?.dropped ||
+            h.highWinRate ||
+            h.dualDriverLongshot ||
+            (h.valueEdgePct != null && h.valueEdgePct >= 5)
+          ) {
+            if (h.role === "skip") h.role = "gardering";
+            picks.push(h);
+          }
+        }
+        while (picks.length < Math.min(2, ranked.length)) {
+          const next = ranked.find((h) => !picks.includes(h));
+          if (!next) break;
+          if (next.role === "skip") next.role = "gardering";
+          picks.push(next);
+        }
+        picks.sort((a, b) => a.startNumber - b.startNumber);
+        const pickNumbers = picks.map((p) => p.startNumber);
+        return {
+          ...existing,
+          pickNumbers,
+          pickLabel: pickNumbers.join(","),
+        };
+      })
+    : rawLegs;
+
+  const races: TvillingRaceTip[] = boostedLegs.map((leg) => {
+    const src = loaded.find((l) => l.race.id === leg.raceId)!;
+    return toTvillingRace(
+      leg,
+      src.gameId,
+      src.race.number,
+      src.comboOdds,
+      src.rowPrice
+    );
+  });
 
   const tipRows = races.reduce((s, r) => s + r.tipCombinations, 0);
   const tipCostKr =
@@ -401,11 +490,115 @@ export async function buildTvillingDayTip(): Promise<TvillingDayTip> {
     )
     .join(" · ");
 
+  const trackNames = [
+    ...new Set(
+      [...initialTracks, ...races.map((r) => r.trackName)].filter(Boolean)
+    ),
+  ];
+
+  const valueHorses = races
+    .flatMap((race) =>
+      race.horses
+        .filter((h) => h.valueEdgePct != null && h.valueEdgePct >= 3.5)
+        .map((h) => ({
+          leg: race.raceNumber,
+          startNumber: h.startNumber,
+          name: h.name,
+          edgePct: h.valueEdgePct!,
+          reason: h.reason,
+        }))
+    )
+    .sort((a, b) => b.edgePct - a.edgePct)
+    .slice(0, 10);
+
+  const homeTrackHorses = races
+    .flatMap((race) =>
+      race.horses
+        .filter((h) => h.isHomeTrack)
+        .map((h) => ({
+          leg: race.raceNumber,
+          startNumber: h.startNumber,
+          name: h.name,
+          note: h.homeNote || `Trivs/hemma på ${race.trackName}`,
+        }))
+    )
+    .slice(0, 16);
+
+  const misleadingFavorites = races
+    .flatMap((race) =>
+      race.horses
+        .filter((h) => h.misleading)
+        .map((h) => ({
+          leg: race.raceNumber,
+          startNumber: h.startNumber,
+          name: h.name,
+          note: h.misleading!,
+        }))
+    )
+    .slice(0, 8);
+
+  const classDropHorses = races
+    .flatMap((race) =>
+      race.horses
+        .filter((h) => h.classDrop?.dropped || h.classDrop?.note)
+        .map((h) => ({
+          leg: race.raceNumber,
+          startNumber: h.startNumber,
+          name: h.name,
+          note: h.classDrop?.note || "Lättare uppgift än tidigare",
+          dropped: !!h.classDrop?.dropped,
+        }))
+    )
+    .sort((a, b) => Number(b.dropped) - Number(a.dropped))
+    .slice(0, 12)
+    .map(({ leg, startNumber, name, note }) => ({
+      leg,
+      startNumber,
+      name,
+      note,
+    }));
+
+  const highWinRateHorses = races
+    .flatMap((race) =>
+      race.horses
+        .filter((h) => h.highWinRate && h.winRatePct != null)
+        .map((h) => ({
+          leg: race.raceNumber,
+          startNumber: h.startNumber,
+          name: h.name,
+          winRatePct: h.winRatePct!,
+          edgePct: h.winRateEdgePct ?? 0,
+          note:
+            h.formNote ||
+            `Seger% ${String(h.winRatePct).replace(".", ",")}% i fältet`,
+        }))
+    )
+    .sort((a, b) => b.edgePct - a.edgePct)
+    .slice(0, 12);
+
+  const lowOddsReviews = races
+    .flatMap((race) =>
+      race.horses
+        .filter((h) => h.lowOddsReview?.isLowOdds && h.winOdds != null)
+        .map((h) => ({
+          leg: race.raceNumber,
+          startNumber: h.startNumber,
+          name: h.name,
+          winOdds: h.winOdds!,
+          supported: h.lowOddsReview?.supported ?? null,
+          note: h.lowOddsReview?.note || "",
+        }))
+    )
+    .sort((a, b) => a.winOdds - b.winOdds)
+    .slice(0, 14);
+
   return {
     generatedAt: new Date().toISOString(),
     product: "tvilling",
+    gameId: loaded[0]?.gameId || null,
     playDate: date,
     playDateLabel: fmtDateLabel(date),
+    status: loaded[0]?.summary.status || "bettable",
     trackNames,
     startTime: races[0]?.startTime || null,
     rowPriceKr,
@@ -416,15 +609,35 @@ export async function buildTvillingDayTip(): Promise<TvillingDayTip> {
     couponLine,
     atgUrl: `https://www.atg.se/spel/tvilling/${date}`,
     races,
+    valueHorses,
+    homeTrackHorses,
+    misleadingFavorites,
+    classDropHorses,
+    highWinRateHorses,
+    lowOddsReviews,
+    dualDriverSignals,
+    driverStrategies,
+    preRaces,
+    preRacesDone,
+    tipsActivated,
+    tipsPhase: tipsActivated ? "aktiv" : "forhands",
+    tipsPhaseNote,
+    externalSources: sources,
+    headlineSignals,
     rules: [
-      "Tvilling = två hästar i målordning 1–2 (valfri ordning).",
-      `Tips: 2–3 hästar per lopp (system). Radpris ca ${String(rowPriceKr).replace(".", ",")} kr per kombination.`,
-      "Bästa par = högst poäng bland toppade hästar (odds + form + hemma).",
-      "ATG-data: vinnarodds, seger%/plats%, hemma-bana och kombinationsodds.",
-      "Analys – ingen garanti. 18+ spela ansvarsfullt.",
+      tipsActivated
+        ? `Riktiga tips aktiva (förelopp klara). ${`TS ${tipsStreck}`} · ${String(tipCostKr).replace(".", ",")} kr.`
+        : `Förhandstips – TS ${tipsStreck} visas nu; tippboostar aktiveras efter föreloppen.`,
+      "Tvilling = två hästar i målordning 1–2 (valfri ordning). Tips: 2–3 hästar per lopp.",
+      "Samma analysmotor som V75/V64: odds, form, hemma, klassdroppe, lågoddsgranskning, kuskstrategi, förelopp och externa tips.",
+      "TS = tipsstreck (antal hästar per lopp). Bästa par = högst poäng bland tipphästar (inkl. kombinationsodds).",
+      "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
+      "Dubbelkusk = kusk i exakt två Tvilling-lopp; fokus på hästen med högst vinnarodds.",
+      "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News.",
+      "Analys – ingen garanti. 18+ spelansvarsfullt.",
     ],
     disclaimer:
-      "Analysverktyg för Tvilling – inga spelråd med garanti. Odds ändras. 18+ spela ansvarsfullt.",
+      "Analysverktyg för Tvilling – samma motor som V75/V64. Inga spelråd med garanti. Odds ändras. 18+ spela ansvarsfullt.",
   };
 }
 

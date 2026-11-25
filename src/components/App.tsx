@@ -41,7 +41,6 @@ import type {
 } from "../lib/v75";
 import type {
   TvillingDayTip,
-  TvillingHorseTip,
   TvillingRaceTip,
 } from "../lib/tvilling";
 
@@ -646,7 +645,9 @@ function tvillingTipToHistoryPicks(tip: TvillingDayTip): HistoryPick[] {
     .map((r) => (r.startTime ? Date.parse(r.startTime) : NaN))
     .filter((n) => Number.isFinite(n))
     .sort((a, b) => a - b)[0];
-  const started = firstStart != null && firstStart <= Date.now();
+  const started =
+    tip.tipsActivated === true ||
+    (firstStart != null && firstStart <= Date.now());
   if (!started) return [];
 
   const tippedAt = tip.generatedAt || new Date().toISOString();
@@ -695,43 +696,6 @@ function tvillingTipToHistoryPicks(tip: TvillingDayTip): HistoryPick[] {
   return out;
 }
 
-function TvillingHorseRow({ h }: { h: TvillingHorseTip }) {
-  const roleClass = h.inBestPair
-    ? "v75-role-spik"
-    : h.inTip
-      ? "v75-role-gard"
-      : "";
-  return (
-    <div className={`v75-horse ${roleClass}`}>
-      <div className="v75-horse-num">
-        <strong>{h.startNumber}</strong>
-      </div>
-      <div className="v75-horse-main">
-        <div className="v75-horse-name">
-          {h.name}
-          {h.inBestPair && (
-            <span className={`v75-role-tag ${roleClass}`}>bästa par</span>
-          )}
-          {!h.inBestPair && h.inTip && (
-            <span className={`v75-role-tag ${roleClass}`}>tips</span>
-          )}
-          {h.isHomeTrack && <span className="v75-home-tag">hemma</span>}
-        </div>
-        <div className="reason">
-          {h.driver ? `kusk ${h.driver}` : ""}
-          {h.winOdds != null
-            ? `${h.driver ? " · " : ""}vinnare ${String(h.winOdds).replace(".", ",")}`
-            : ""}
-          {h.winRatePct != null
-            ? ` · seger% ${String(h.winRatePct).replace(".", ",")}`
-            : ""}
-        </div>
-        <div className="reason">{h.reason}</div>
-      </div>
-    </div>
-  );
-}
-
 function TvillingRaceCard({
   race,
   open,
@@ -741,10 +705,21 @@ function TvillingRaceCard({
   open: boolean;
   onToggle: () => void;
 }) {
-  const list = race.horses
-    .filter((h) => h.inTip || h.inBestPair)
-    .sort((a, b) => a.startNumber - b.startNumber);
-  const shown = list.length ? list : race.horses.slice(0, 4);
+  const shown = race.horses.filter(
+    (h) =>
+      h.inTip ||
+      h.inBestPair ||
+      h.misleading ||
+      h.classDrop?.dropped ||
+      h.highWinRate ||
+      h.lowOddsReview?.isLowOdds ||
+      h.dualDriverLongshot ||
+      (h.valueEdgePct != null && h.valueEdgePct >= 6) ||
+      (h.tipMentions.length > 0 && h.tipConsensus !== "none")
+  );
+  const list = (shown.length ? shown : race.horses.slice(0, 4)).sort(
+    (a, b) => a.startNumber - b.startNumber
+  );
   const shortName =
     race.raceName.length > 48
       ? `${race.raceName.slice(0, 46)}…`
@@ -769,6 +744,7 @@ function TvillingRaceCard({
           </span>
           <span className="reason">
             {race.trackName}
+            {race.distance != null ? ` · ${race.distance} m` : ""}
             {race.startTime ? ` · ${fmtTime(race.startTime)}` : ""}
             {` · ${race.summary}`}
           </span>
@@ -784,8 +760,15 @@ function TvillingRaceCard({
       {open && (
         <div className="v75-leg-body">
           <div className="v75-horse-list">
-            {shown.map((h) => (
-              <TvillingHorseRow key={h.startNumber} h={h} />
+            {list.map((h) => (
+              <div key={h.startNumber}>
+                <V75HorseRow h={h} />
+                {(h.inBestPair || h.inTip) && (
+                  <div className="reason" style={{ marginLeft: "2.5rem" }}>
+                    {h.inBestPair ? "★ bästa tvillingpar" : "i tipset"}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
           <p className="panel-lead" style={{ marginTop: "0.6rem" }}>
@@ -796,6 +779,16 @@ function TvillingRaceCard({
             {" · "}
             {race.tipCombinations} komb · {fmtKr(race.tipCostKr)} kr
           </p>
+          {race.alerts.length > 0 && (
+            <ul
+              className="alert-list table-alerts"
+              style={{ marginTop: "0.6rem" }}
+            >
+              {race.alerts.slice(0, 4).map((a) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </article>
@@ -803,6 +796,7 @@ function TvillingRaceCard({
 }
 
 function TvillingView({ tip }: { tip: TvillingDayTip }) {
+  const product = "Tvilling";
   const [openRaces, setOpenRaces] = useState<Record<string, boolean>>({});
   const isOpen = (id: string) => openRaces[id] === true;
   const toggleRace = (id: string) =>
@@ -815,24 +809,154 @@ function TvillingView({ tip }: { tip: TvillingDayTip }) {
       >
     );
   const collapseAll = () => setOpenRaces({});
+  const tipsActive = tip.tipsActivated !== false;
+  const strategies = tip.driverStrategies || [];
+  const preRaces = tip.preRaces || [];
 
   return (
     <div className="rise">
       <section className="panel">
         <h2>
-          Tvilling · {tip.playDateLabel}
+          {product} · {tip.playDateLabel}
           {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
         </h2>
         <p className="panel-lead">
-          {tip.tipsStreckLabel} · {tip.tipRows} komb · ca {fmtKr(tip.tipCostKr)}{" "}
-          kr
-          {tip.startTime ? ` · första start ${fmtTime(tip.startTime)}` : ""}
+          ATG {tip.status}
+          {tip.startTime ? ` · start ${fmtTime(tip.startTime)}` : ""}
+          {" · "}
+          radpris {String(tip.rowPriceKr).replace(".", ",")} kr
         </p>
-        <p className="panel-lead">{tip.couponLine}</p>
         <p className="panel-lead">
-          <a href={tip.atgUrl} target="_blank" rel="noreferrer">
-            Öppna på ATG
+          <a
+            href={tip.atgUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="oddset-link"
+          >
+            Öppna Tvilling på ATG
           </a>
+        </p>
+      </section>
+
+      {(strategies.length > 0 ||
+        tip.dualDriverSignals.length > 0 ||
+        preRaces.length > 0) && (
+        <section className="panel">
+          <h2>Kuskanalys · före tippraden</h2>
+          <p className="panel-lead">
+            Samma kusklogik som V75/V64: lågodds först, högodds om den missar.
+          </p>
+          {preRaces.length > 0 && (
+            <>
+              <h3>Förelopp</h3>
+              <p className="panel-lead">
+                {tip.tipsPhaseNote ||
+                  (tipsActive
+                    ? "Förelopp klara – riktiga tips aktiva."
+                    : "Väntar på förelopp innan riktiga tips aktiveras.")}
+              </p>
+              <ul className="alert-list table-alerts">
+                {preRaces.map((r) => (
+                  <li key={r.raceId}>
+                    {r.trackName} lopp {r.raceNumber}
+                    {r.startTime ? ` · ${fmtTime(r.startTime)}` : ""}
+                    {" · "}
+                    {r.finished ? "klart" : r.status || "väntar"}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {strategies.length > 0 && (
+            <>
+              <h3>Lågodds → högodds</h3>
+              <ul className="alert-list learning-alerts">
+                {strategies.map((s) => (
+                  <li key={`${s.driver}-${s.lowMount?.leg}-${s.highMount?.leg}`}>
+                    <strong>{s.driver}</strong>
+                    {s.lowBeforeHigh ? " · klassiskt mönster" : " · omvänt"}
+                    <div className="reason" style={{ marginTop: "0.2rem" }}>
+                      {s.strategy}
+                    </div>
+                    {s.focusIfLowMisses && (
+                      <div className="reason" style={{ marginTop: "0.15rem" }}>
+                        Om lågodds missar → L{s.focusIfLowMisses.leg} #
+                        {s.focusIfLowMisses.startNumber}{" "}
+                        {s.focusIfLowMisses.horseName}
+                        {s.focusIfLowMisses.winOdds != null
+                          ? ` @ ${String(s.focusIfLowMisses.winOdds).replace(".", ",")}`
+                          : ""}
+                      </div>
+                    )}
+                    {s.preRaceNote && (
+                      <div className="reason" style={{ marginTop: "0.15rem" }}>
+                        {s.preRaceNote}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {tip.dualDriverSignals.length > 0 && (
+            <>
+              <h3>Dubbelkuskar (2 lopp) · högst odds</h3>
+              <ul className="alert-list table-alerts">
+                {tip.dualDriverSignals.map((s) => (
+                  <li key={`${s.driver}-${s.focusLeg}-${s.focusStartNumber}`}>
+                    <strong>{s.driver}</strong>: fokusera L{s.focusLeg} #
+                    {s.focusStartNumber} {s.focusHorse}
+                    {s.focusOdds != null
+                      ? ` @ ${String(s.focusOdds).replace(".", ",")}`
+                      : ""}{" "}
+                    (högst odds av två)
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
+
+      <section className="panel">
+        <h2>
+          Tvilling tipprad · {tip.tipsStreckLabel}
+          {!tipsActive ? " · förhands" : ""}
+        </h2>
+        {!tipsActive && (
+          <p className="panel-lead">
+            {tip.tipsPhaseNote ||
+              "Riktiga tippboostar aktiveras när föreloppen är klara."}
+          </p>
+        )}
+        <div className="tip-strip" aria-label="Tvilling tipsstreck">
+          <strong>
+            {tip.tipsStreckLabel}
+            {" · "}
+            {fmtKr(tip.tipCostKr)} kr
+            <span style={{ fontWeight: 500, opacity: 0.85 }}>
+              {" "}
+              ({tip.tipRows} komb ×{" "}
+              {String(tip.rowPriceKr).replace(".", ",")} kr)
+              {!tipsActive ? " · förhandstips" : ""}
+            </span>
+          </strong>
+          <div className="tip-strip-picks">
+            {tip.races.map((r) => (
+              <span key={r.raceId} className="tip-strip-pick">
+                <em>L{r.raceNumber}</em>
+                {r.pickLabel || "–"}
+                <span style={{ opacity: 0.65, marginLeft: "0.25rem" }}>
+                  (par {r.bestPair[0]}-{r.bestPair[1]})
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+        <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
+          <strong style={{ fontWeight: 650 }}>{tip.tipsStreckLabel}</strong>
+          {" · "}
+          {tip.couponLine}
         </p>
         <ul className="alert-list table-alerts">
           {tip.rules.map((r) => (
@@ -841,11 +965,107 @@ function TvillingView({ tip }: { tip: TvillingDayTip }) {
         </ul>
       </section>
 
+      {(tip.misleadingFavorites.length > 0 ||
+        tip.valueHorses.length > 0 ||
+        tip.homeTrackHorses.length > 0 ||
+        tip.classDropHorses.length > 0 ||
+        tip.highWinRateHorses.length > 0 ||
+        tip.lowOddsReviews.length > 0) && (
+        <section className="panel">
+          <h2>Signaler · klass, seger%, lågodds &amp; värde</h2>
+          <div className="grid-2 mobile-stack">
+            {tip.classDropHorses.length > 0 && (
+              <div>
+                <h3>Nergraderade</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.classDropHorses.map((m) => (
+                    <li key={`cd-${m.leg}-${m.startNumber}`}>
+                      L{m.leg} #{m.startNumber} {m.name}: {m.note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {tip.highWinRateHorses.length > 0 && (
+              <div>
+                <h3>Högre seger% än fältet</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.highWinRateHorses.map((m) => (
+                    <li key={`wr-${m.leg}-${m.startNumber}`}>
+                      L{m.leg} #{m.startNumber} {m.name}:{" "}
+                      {String(m.winRatePct).replace(".", ",")}% (+
+                      {String(m.edgePct).replace(".", ",")}%-enh.)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {tip.lowOddsReviews.length > 0 && (
+            <>
+              <h3>Lågoddsare granskade</h3>
+              <ul className="alert-list table-alerts">
+                {tip.lowOddsReviews.map((m) => (
+                  <li key={`lo-${m.leg}-${m.startNumber}`}>
+                    L{m.leg} #{m.startNumber} {m.name} @{" "}
+                    {String(m.winOdds).replace(".", ",")}
+                    {m.supported === true
+                      ? " · stödd"
+                      : m.supported === false
+                        ? " · svag"
+                        : ""}
+                    {m.note ? ` – ${m.note}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="grid-2 mobile-stack">
+            {tip.misleadingFavorites.length > 0 && (
+              <div>
+                <h3>Missvisande favoriter</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.misleadingFavorites.map((m) => (
+                    <li key={`${m.leg}-${m.startNumber}`}>
+                      L{m.leg} #{m.startNumber} {m.name}: {m.note}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {tip.valueHorses.length > 0 && (
+              <div>
+                <h3>Överodds / värde</h3>
+                <ul className="alert-list table-alerts">
+                  {tip.valueHorses.map((v) => (
+                    <li key={`${v.leg}-${v.startNumber}`}>
+                      L{v.leg} #{v.startNumber} {v.name} (+
+                      {String(v.edgePct).replace(".", ",")}%)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {tip.homeTrackHorses.length > 0 && (
+            <>
+              <h3>Hästar som trivs hemma</h3>
+              <p className="panel-lead">
+                {tip.homeTrackHorses
+                  .slice(0, 10)
+                  .map((h) => `L${h.leg} #${h.startNumber} ${h.name}`)
+                  .join(" · ")}
+              </p>
+            </>
+          )}
+        </section>
+      )}
+
       <section className="panel panel-systems">
         <h2>Lopp</h2>
         <p className="panel-lead">
-          Tippa 2–3 hästar per lopp. Rätt = 1:a och 2:a ingår i tipset (valfri
-          ordning).
+          Samma analys som V75/V64. Tippa 2–3 hästar – rätt om 1:a och 2:a ingår
+          (valfri ordning).
         </p>
         <div className="v75-leg-toolbar">
           <button type="button" className="system-btn" onClick={expandAll}>
@@ -865,6 +1085,45 @@ function TvillingView({ tip }: { tip: TvillingDayTip }) {
             />
           ))}
         </div>
+      </section>
+
+      <section className="panel panel-articles">
+        <h2>Tips från webben</h2>
+        <p className="panel-lead">
+          Källor som lästs in nu
+          {tip.externalSources.filter((s) => s.ok).length
+            ? ` (${tip.externalSources.filter((s) => s.ok).length} ok)`
+            : ""}
+          .
+        </p>
+        <ul className="alert-list table-alerts">
+          {tip.externalSources.map((s) => (
+            <li key={s.source}>
+              {s.ok ? "✓" : "✗"}{" "}
+              {s.url ? (
+                <a href={s.url} target="_blank" rel="noreferrer">
+                  {s.source}
+                </a>
+              ) : (
+                s.source
+              )}
+              {s.note ? ` – ${s.note}` : ""}
+            </li>
+          ))}
+        </ul>
+        {tip.headlineSignals.length > 0 && (
+          <>
+            <h3>Rubriker / signaler</h3>
+            <ul className="alert-list learning-alerts">
+              {tip.headlineSignals.slice(0, 8).map((h, i) => (
+                <li key={`${h.source}-${i}`}>
+                  <strong>{h.source}</strong>: {h.snippet || h.title}
+                  {h.sentiment !== "mention" ? ` · ${h.sentiment}` : ""}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         <p className="panel-lead">{tip.disclaimer}</p>
       </section>
     </div>
