@@ -668,7 +668,9 @@ function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
   return out;
 }
 
-function outcomeRank(o: OddsetTrackedTip["outcome"] | undefined): number {
+function outcomeRank(
+  o: OddsetTrackedTip["outcome"] | HistoryPick["status"] | undefined
+): number {
   if (o === "won" || o === "lost") return 3;
   if (o === "live") return 2;
   return 1;
@@ -967,113 +969,291 @@ function V75LegCard({
   );
 }
 
-/** Egen kolumn/vy: bara ATG-tvillingtips från V75/V64-analysen. */
-function TwinView({ tip }: { tip: V75DayTip }) {
-  const product = tip.product || "V75";
-  const twins = tip.twinTips || [];
+/** Egen kolumn: tips + resultat för ATG-tvilling (V75/V64). */
+function TwinView({
+  tips,
+  results,
+  onOpenResults,
+}: {
+  tips: V75DayTip[];
+  results: HistoryPick[];
+  onOpenResults: () => void;
+}) {
+  const resultByRace = useMemo(() => {
+    const map = new Map<string, HistoryPick>();
+    for (const p of results) {
+      if (p.market !== "atg_twin") continue;
+      const key =
+        p.raceId ||
+        `${p.gameKey || ""}:${p.eventNumber ?? ""}:${p.pick.join("-")}`;
+      const prev = map.get(key);
+      if (!prev || outcomeRank(p.status) >= outcomeRank(prev.status)) {
+        map.set(key, p);
+      }
+    }
+    return map;
+  }, [results]);
+
+  const settled = results.filter(
+    (p) => p.market === "atg_twin" && (p.status === "won" || p.status === "lost")
+  );
+  const won = settled.filter((p) => p.status === "won").length;
+  const lost = settled.filter((p) => p.status === "lost").length;
+  const waiting = results.filter(
+    (p) =>
+      p.market === "atg_twin" &&
+      (p.status === "pending" || p.status === "live")
+  ).length;
+
   return (
     <div className="rise">
       <section className="panel">
-        <h2>
-          Tvilling · {product} · {tip.playDateLabel}
-          {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
-        </h2>
+        <h2>Tvilling · tips och resultat</h2>
         <p className="panel-lead">
-          Egen kolumn för ATG-tvilling (1–2 i valfri ordning) per avdelning.
-          Bygger på samma analys som {product}, inkl. kusk 2:an.
+          Egen kolumn för ATG-tvilling (1–2 i valfri ordning). Tips per
+          avdelning inkl. kusk 2:an, och rätt/fel när loppet är klart (4 h).
         </p>
-        <p className="panel-lead">
-          <a
-            href={tip.atgUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="oddset-link"
-          >
-            Öppna {product} på ATG
-          </a>
-        </p>
+        <div className="history-actions" style={{ marginTop: "0.5rem" }}>
+          <button type="button" className="history-btn" onClick={onOpenResults}>
+            Öppna resultatbibliotek
+          </button>
+          {tips.map((tip) => (
+            <a
+              key={`atg-${tip.product || tip.playDate}`}
+              href={tip.atgUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="oddset-link"
+              style={{ alignSelf: "center" }}
+            >
+              {tip.product || "V75"} på ATG
+            </a>
+          ))}
+        </div>
       </section>
 
       <section className="panel">
-        <h2>Tvillingtips</h2>
-        {twins.length === 0 ? (
+        <h2>Tips</h2>
+        {tips.length === 0 ? (
           <p className="panel-lead">Inga tvillingtips klara ännu.</p>
         ) : (
-          <>
-            <div className="tip-strip" aria-label="Tvillingtips">
-              <div className="tip-strip-picks">
-                {twins.map((t) => (
-                  <span key={`twin-col-${t.leg}`} className="tip-strip-pick">
-                    <em>
-                      {product}-{t.leg}
-                    </em>
-                    {t.label}
-                    {t.includesDriverSecond ? (
-                      <span style={{ opacity: 0.75, marginLeft: "0.25rem" }}>
-                        (kusk 2:an)
-                      </span>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <ul
-              className="alert-list table-alerts"
-              style={{ marginTop: "0.75rem" }}
-            >
-              {twins.map((t) => (
-                <li key={`twin-col-note-${t.leg}`}>
-                  <strong>
-                    {product}-{t.leg}
-                  </strong>
-                  : #{t.numbers[0]} {t.horseNames[0]} · #{t.numbers[1]}{" "}
-                  {t.horseNames[1]}
-                  {t.note ? (
-                    <div className="reason" style={{ marginTop: "0.15rem" }}>
-                      {t.note}
+          tips.map((tip) => {
+            const product = tip.product || "V75";
+            const twins = tip.twinTips || [];
+            return (
+              <div key={`tip-block-${product}-${tip.playDate}`} style={{ marginBottom: "1rem" }}>
+                <p className="panel-lead">
+                  {product} · {tip.playDateLabel}
+                  {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
+                </p>
+                {twins.length === 0 ? (
+                  <p className="panel-lead">Inga tvillingtips för {product}.</p>
+                ) : (
+                  <>
+                    <div
+                      className="tip-strip"
+                      aria-label={`${product} tvillingtips`}
+                    >
+                      <div className="tip-strip-picks">
+                        {twins.map((t) => (
+                          <span
+                            key={`twin-col-${product}-${t.leg}`}
+                            className="tip-strip-pick"
+                          >
+                            <em>
+                              {product}-{t.leg}
+                            </em>
+                            {t.label}
+                            {t.includesDriverSecond ? (
+                              <span
+                                style={{ opacity: 0.75, marginLeft: "0.25rem" }}
+                              >
+                                (kusk 2:an)
+                              </span>
+                            ) : null}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </>
+                    <ul
+                      className="alert-list table-alerts"
+                      style={{ marginTop: "0.75rem" }}
+                    >
+                      {twins.map((t) => (
+                        <li key={`twin-col-note-${product}-${t.leg}`}>
+                          <strong>
+                            {product}-{t.leg}
+                          </strong>
+                          : #{t.numbers[0]} {t.horseNames[0]} · #
+                          {t.numbers[1]} {t.horseNames[1]}
+                          {t.note ? (
+                            <div
+                              className="reason"
+                              style={{ marginTop: "0.15rem" }}
+                            >
+                              {t.note}
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            );
+          })
         )}
       </section>
 
-      <section className="panel panel-systems">
-        <h2>Avdelningar · tvilling</h2>
-        <div className="match-cards v75-leg-list">
-          {tip.legs.map((leg) => (
-            <article key={leg.leg} className="match-card v75-leg-card">
-              <div className="history-game-toggle-main" style={{ padding: "0.75rem" }}>
-                <div className="history-game-toggle-title">
-                  <span className="match-num v75-toggle-num">
-                    {product}-{leg.leg}
-                  </span>{" "}
-                  {leg.raceName}
-                </div>
-                <div className="reason">
-                  {leg.trackName}
-                  {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
-                </div>
-                <div style={{ marginTop: "0.45rem" }}>
-                  <span className="pick-cell on">
-                    T {leg.twinLabel || "–"}
-                  </span>
-                  {leg.twinIncludesDriverSecond ? (
-                    <span className="v75-home-tag" style={{ marginLeft: "0.4rem" }}>
-                      kusk 2:an
-                    </span>
-                  ) : null}
-                </div>
-                {leg.twinNote ? (
-                  <div className="reason" style={{ marginTop: "0.35rem" }}>
-                    {leg.twinNote}
+      <section className="panel">
+        <h2>Resultat</h2>
+        <p className="panel-lead">
+          {settled.length || waiting
+            ? `${won} rätt · ${lost} fel${
+                waiting ? ` · ${waiting} väntar` : ""
+              }`
+            : "Inga avräknade tvillingtips ännu – syns här när avdelningen startat."}
+        </p>
+        {results.filter((p) => p.market === "atg_twin").length > 0 ? (
+          <ul className="history-pick-list" style={{ marginTop: "0.5rem" }}>
+            {[...results]
+              .filter((p) => p.market === "atg_twin")
+              .sort((a, b) => {
+                const ak = a.kickoff ? Date.parse(a.kickoff) : 0;
+                const bk = b.kickoff ? Date.parse(b.kickoff) : 0;
+                return bk - ak || (a.eventNumber ?? 0) - (b.eventNumber ?? 0);
+              })
+              .map((p) => (
+                <li key={p.id} className={`history-pick ${p.status}`}>
+                  <div>
+                    <strong>{p.description}</strong>
+                    {p.kickoff && (
+                      <div className="history-pick-date">
+                        {fmtTime(p.kickoff)}
+                      </div>
+                    )}
+                    <div className="reason">
+                      Tipset: T {p.pick.join("-")}
+                      {p.actual ? ` · resultat ${p.actual}` : ""}
+                    </div>
+                    {p.resultNote && (
+                      <div className="oddset-result-note">{p.resultNote}</div>
+                    )}
                   </div>
-                ) : null}
-              </div>
-            </article>
-          ))}
+                  <span
+                    className={`oddset-result-badge ${
+                      p.status === "won"
+                        ? "won"
+                        : p.status === "lost"
+                          ? "lost"
+                          : p.status === "live"
+                            ? "live"
+                            : ""
+                    }`}
+                  >
+                    {p.status === "won"
+                      ? "Rätt"
+                      : p.status === "lost"
+                        ? "Fel"
+                        : p.status === "live"
+                          ? "Live"
+                          : "Väntar"}
+                  </span>
+                </li>
+              ))}
+          </ul>
+        ) : null}
+      </section>
+
+      <section className="panel panel-systems">
+        <h2>Avdelningar · tips + resultat</h2>
+        <div className="match-cards v75-leg-list">
+          {tips.flatMap((tip) => {
+            const product = tip.product || "V75";
+            return tip.legs.map((leg) => {
+              const byRace = leg.raceId
+                ? resultByRace.get(leg.raceId)
+                : undefined;
+              const byLeg = [...resultByRace.values()].find(
+                (p) =>
+                  p.eventNumber === leg.leg &&
+                  (p.description || "").includes(`${product}-${leg.leg}`)
+              );
+              const res = byRace || byLeg;
+              return (
+                <article
+                  key={`${product}-${leg.leg}-${leg.raceId || tip.playDate}`}
+                  className="match-card v75-leg-card"
+                >
+                  <div
+                    className="history-game-toggle-main"
+                    style={{ padding: "0.75rem" }}
+                  >
+                    <div className="history-game-toggle-title">
+                      <span className="match-num v75-toggle-num">
+                        {product}-{leg.leg}
+                      </span>{" "}
+                      {leg.raceName}
+                    </div>
+                    <div className="reason">
+                      {leg.trackName}
+                      {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: "0.45rem",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "0.4rem",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span className="pick-cell on">
+                        T {leg.twinLabel || "–"}
+                      </span>
+                      {leg.twinIncludesDriverSecond ? (
+                        <span className="v75-home-tag">kusk 2:an</span>
+                      ) : null}
+                      {res ? (
+                        <span
+                          className={`oddset-result-badge ${
+                            res.status === "won"
+                              ? "won"
+                              : res.status === "lost"
+                                ? "lost"
+                                : res.status === "live"
+                                  ? "live"
+                                  : ""
+                          }`}
+                        >
+                          {res.status === "won"
+                            ? "Rätt"
+                            : res.status === "lost"
+                              ? "Fel"
+                              : res.status === "live"
+                                ? "Live"
+                                : "Väntar"}
+                        </span>
+                      ) : null}
+                    </div>
+                    {leg.twinNote ? (
+                      <div className="reason" style={{ marginTop: "0.35rem" }}>
+                        {leg.twinNote}
+                      </div>
+                    ) : null}
+                    {res?.resultNote ? (
+                      <div
+                        className="oddset-result-note"
+                        style={{ marginTop: "0.35rem" }}
+                      >
+                        {res.resultNote}
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+              );
+            });
+          })}
         </div>
       </section>
     </div>
@@ -3120,7 +3300,9 @@ function HistoryView({
                   ? " Öppna Powerplay i menyn – tipset sparas automatiskt (192 kr)."
                   : library === "topptipset"
                     ? " Öppna Topptipset – 192 kr sparas i det här biblioteket."
-                    : ""}
+                    : library === "tvilling"
+                      ? " Öppna Tvilling i menyn – tips + rätt/fel syns där och här."
+                      : ""}
               </p>
             ) : (
               <div
@@ -3815,6 +3997,8 @@ export default function App() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [oddset, setOddset] = useState<OddsetDayTip | null>(null);
   const [v75, setV75] = useState<V75DayTip | null>(null);
+  /** Extra V64-tips när Tvilling-kolumnen laddar båda spelen. */
+  const [twinV64, setTwinV64] = useState<V75DayTip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -3848,6 +4032,7 @@ export default function App() {
       setV75(null);
     } else if (next === "v75" || next === "v64" || next === "tvilling") {
       setV75(null);
+      setTwinV64(null);
       setData(null);
       setOddset(null);
     } else {
@@ -3936,41 +4121,83 @@ export default function App() {
           forProduct === "v64" ||
           forProduct === "tvilling"
         ) {
-          // Tvilling-kolumnen använder V75-analysen (samma motor, egen vy)
-          const apiProduct =
-            forProduct === "tvilling"
-              ? "v75"
-              : forProduct === "v64"
-                ? "v64"
-                : "v75";
-          const label =
-            forProduct === "tvilling"
-              ? "Tvilling"
-              : forProduct === "v64"
-                ? "V64"
-                : "V75";
-          const res = await fetch(
-            `/api/${apiProduct}${fresh ? "?fresh=1" : ""}`,
-            { cache: "no-store" }
-          );
-          if (!isCurrent()) return;
-          const json = (await res.json()) as V75DayTip & {
-            error?: string;
-            fresh?: boolean;
-          };
-          if (!isCurrent()) return;
-          if (!res.ok)
-            throw new Error(json.error || `Kunde inte hämta ${label}`);
-          const tip = { ...json, product: json.product || label };
-          setV75(tip);
-          const atgPicks = atgTipToHistoryPicks(tip);
-          if (atgPicks.length) {
-            saveLocalHistoryPicks([
-              ...loadLocalHistoryPicks(),
-              ...atgPicks,
+          if (forProduct === "tvilling") {
+            // Tips + resultat: hämta både V75 och V64 till Tvilling-kolumnen
+            const [res75, res64] = await Promise.all([
+              fetch(`/api/v75${fresh ? "?fresh=1" : ""}`, {
+                cache: "no-store",
+              }),
+              fetch(`/api/v64${fresh ? "?fresh=1" : ""}`, {
+                cache: "no-store",
+              }),
             ]);
+            if (!isCurrent()) return;
+            const json75 = (await res75.json()) as V75DayTip & {
+              error?: string;
+              fresh?: boolean;
+            };
+            const json64 = (await res64.json()) as V75DayTip & {
+              error?: string;
+              fresh?: boolean;
+            };
+            if (!isCurrent()) return;
+            if (!res75.ok && !res64.ok) {
+              throw new Error(
+                json75.error ||
+                  json64.error ||
+                  "Kunde inte hämta Tvilling"
+              );
+            }
+            const tip75 = res75.ok
+              ? { ...json75, product: json75.product || "V75" }
+              : null;
+            const tip64 = res64.ok
+              ? { ...json64, product: json64.product || "V64" }
+              : null;
+            if (tip75) setV75(tip75);
+            else if (tip64) setV75(tip64);
+            setTwinV64(tip64);
+            const atgPicks = [
+              ...(tip75 ? atgTipToHistoryPicks(tip75) : []),
+              ...(tip64 ? atgTipToHistoryPicks(tip64) : []),
+            ];
+            if (atgPicks.length) {
+              saveLocalHistoryPicks([
+                ...loadLocalHistoryPicks(),
+                ...atgPicks,
+              ]);
+            }
+            if (fresh || json75.fresh || json64.fresh) {
+              setLastFreshAt(
+                tip75?.generatedAt || tip64?.generatedAt || null
+              );
+            }
+          } else {
+            const label = forProduct === "v64" ? "V64" : "V75";
+            const res = await fetch(
+              `/api/${forProduct}${fresh ? "?fresh=1" : ""}`,
+              { cache: "no-store" }
+            );
+            if (!isCurrent()) return;
+            const json = (await res.json()) as V75DayTip & {
+              error?: string;
+              fresh?: boolean;
+            };
+            if (!isCurrent()) return;
+            if (!res.ok)
+              throw new Error(json.error || `Kunde inte hämta ${label}`);
+            const tip = { ...json, product: json.product || label };
+            setV75(tip);
+            setTwinV64(null);
+            const atgPicks = atgTipToHistoryPicks(tip);
+            if (atgPicks.length) {
+              saveLocalHistoryPicks([
+                ...loadLocalHistoryPicks(),
+                ...atgPicks,
+              ]);
+            }
+            if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
           }
-          if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else if (forProduct === "oddset") {
           const localTips = loadOddsetLocalTips();
           const localLessons = loadOddsetLocalLessons();
@@ -4124,8 +4351,11 @@ export default function App() {
     if (v75) {
       out.push(...atgTipToHistoryPicks(v75));
     }
+    if (twinV64) {
+      out.push(...atgTipToHistoryPicks(twinV64));
+    }
     return out;
-  }, [data, oddset, v75]);
+  }, [data, oddset, v75, twinV64]);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -4141,7 +4371,10 @@ export default function App() {
         mergeOddsetTracked(loadOddsetLocalTips(), oddset?.tracked),
         oddset?.generatedAt || new Date().toISOString()
       );
-      const fromAtg = v75 ? atgTipToHistoryPicks(v75) : [];
+      const fromAtg = [
+        ...(v75 ? atgTipToHistoryPicks(v75) : []),
+        ...(twinV64 ? atgTipToHistoryPicks(twinV64) : []),
+      ];
       const local = mergeHistoryPickLists(
         loadLocalHistoryPicks(),
         fromDraws,
@@ -4227,7 +4460,13 @@ export default function App() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [data, oddset, v75, historySeedPicks]);
+  }, [data, oddset, v75, twinV64, historySeedPicks]);
+
+  // Tvilling-kolumnen: håll resultat (rätt/fel) synkade med tipsen
+  useEffect(() => {
+    if (product !== "tvilling") return;
+    void loadHistory();
+  }, [product, v75, twinV64, loadHistory]);
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
@@ -4694,7 +4933,15 @@ export default function App() {
         !error &&
         product === "tvilling" &&
         v75Matches &&
-        v75 && <TwinView tip={v75} />}
+        v75 && (
+          <TwinView
+            tips={[v75, twinV64].filter((t): t is V75DayTip => Boolean(t))}
+            results={(history?.picks || historySeedPicks).filter(
+              (p) => p.product === "tvilling" || p.market === "atg_twin"
+            )}
+            onOpenResults={openHistory}
+          />
+        )}
 
       {!contentPending &&
         !error &&
