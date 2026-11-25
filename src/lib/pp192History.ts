@@ -6,11 +6,11 @@ import type { HistoryPick, HistoryProduct } from "./tipHistory";
 
 /**
  * Dagligt 192 kr-system för Powerplay och Topptipset –
- * sparas server-side och visas i resultat 24 h.
+ * sparas server-side och visas i resultat 8 h.
  */
 
 const STORE_PATH = path.join("/tmp", "mikaels-daily192-history.json");
-const RETENTION_MS = 24 * 60 * 60 * 1000;
+const RETENTION_MS = 8 * 60 * 60 * 1000;
 
 const DAILY_PRODUCTS = new Set<HistoryProduct>(["powerplay", "topptipset"]);
 
@@ -52,6 +52,8 @@ function anchorMs(p: HistoryPick): number {
 
 function prune(picks: HistoryPick[], now = Date.now()): HistoryPick[] {
   return picks.filter((p) => {
+    const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+    if (Number.isFinite(kick) && kick > now) return false;
     const at = anchorMs(p);
     return Number.isFinite(at) && now - at <= RETENTION_MS;
   });
@@ -170,7 +172,19 @@ export async function rememberDaily192(
 ): Promise<HistoryPick[]> {
   await ensureLoaded();
   const s = store();
-  const incoming = draws.flatMap((d) => daily192PicksFromDraw(d, tippedAt));
+  // Bara omgångar som stängt / spelas nu – inte framtida öppna tipp
+  const started = draws.filter((d) => {
+    const state = String(d.drawState || "");
+    if (state === "Closed" || state === "Finalized") return true;
+    const close = Date.parse(d.closeTime);
+    return Number.isFinite(close) && close <= Date.now();
+  });
+  const incoming = started
+    .flatMap((d) => daily192PicksFromDraw(d, tippedAt))
+    .filter((p) => {
+      const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+      return !Number.isFinite(kick) || kick <= Date.now();
+    });
   if (!incoming.length) {
     s.picks = prune(s.picks);
     return s.picks.filter((p) => p.costKr === DAILY_SYSTEM_COST_KR);
@@ -216,7 +230,7 @@ export async function listDaily192Picks(): Promise<HistoryPick[]> {
 /** @deprecated Använd listDaily192Picks */
 export const listPowerplay192Picks = listDaily192Picks;
 
-/** Uppdatera sparade 192 kr-rader med settlat rätt/fel (24 h). */
+/** Uppdatera sparade 192 kr-rader med settlat rätt/fel (8 h). */
 export async function rememberDaily192Settled(
   settled: HistoryPick[]
 ): Promise<void> {

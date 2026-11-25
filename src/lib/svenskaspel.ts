@@ -134,7 +134,7 @@ async function fetchJson(url: string): Promise<unknown> {
   return res.json();
 }
 
-const HISTORY_KEEP_MS = 24 * 60 * 60 * 1000;
+const HISTORY_KEEP_MS = 8 * 60 * 60 * 1000;
 
 /** Stängda/finaliserade omgångar som fortfarande ska synas (Spelas nu + resultat). */
 function isRecentClosedDraw(d: RawDraw, now = Date.now()): boolean {

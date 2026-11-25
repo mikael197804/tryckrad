@@ -32,7 +32,7 @@ export type HistoryPick = {
   status: HistoryPickStatus;
   actual: string | null;
   resultNote: string | null;
-  /** När spelet settlades (färdigt) – resultat visas 24 h efter detta. */
+  /** När spelet settlades (färdigt) – resultat visas 8 h efter detta. */
   settledAt?: string | null;
   /** Systemkostnad 48–720 kr (null för Oddset). */
   costKr?: number | null;
@@ -91,8 +91,8 @@ export type TipHistoryResponse = {
   };
 };
 
-export const TIP_HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000;
-export const TIP_HISTORY_RETENTION_HOURS = 24;
+export const TIP_HISTORY_RETENTION_MS = 8 * 60 * 60 * 1000;
+export const TIP_HISTORY_RETENTION_HOURS = 8;
 
 const PRODUCT_SLUG: Record<
   Exclude<HistoryProduct, "oddset" | "esports_battle">,
@@ -106,8 +106,8 @@ const PRODUCT_SLUG: Record<
 };
 
 /**
- * Behåll tips 24 h efter att spelet är färdigt.
- * Väntande tips behålls tills kickoff/tipp + 24 h så de hinner settlas.
+ * Behåll tips 8 h efter att spelet är färdigt / startat.
+ * Framtida matcher (kickoff > nu) hör inte hemma i resultat.
  */
 export function historyRetentionAnchorMs(p: HistoryPick): number {
   if (p.status === "won" || p.status === "lost") {
@@ -124,8 +124,19 @@ export function historyRetentionAnchorMs(p: HistoryPick): number {
   return Number.isFinite(kick) ? kick : tipped;
 }
 
+/** true om matchen/tippet fortfarande ligger i framtiden. */
+export function isFutureHistoryPick(
+  p: HistoryPick,
+  now = Date.now()
+): boolean {
+  const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+  if (Number.isFinite(kick) && kick > now) return true;
+  return false;
+}
+
 function prune(picks: HistoryPick[], now = Date.now()): HistoryPick[] {
   return picks.filter((p) => {
+    if (isFutureHistoryPick(p, now)) return false;
     const at = historyRetentionAnchorMs(p);
     return Number.isFinite(at) && now - at <= TIP_HISTORY_RETENTION_MS;
   });
@@ -688,7 +699,7 @@ async function attachPayouts(
   );
 }
 
-/** Settla och summera klientens sparade tips (24 h). */
+/** Settla och summera klientens sparade tips (8 h). */
 export async function buildTipHistory(
   clientPicks: HistoryPick[]
 ): Promise<TipHistoryResponse> {
@@ -717,7 +728,7 @@ export async function buildTipHistory(
   picks = await settleDrawPicks(settledOddset);
   picks = prune(picks).map(correctOneXTwoStatus);
 
-  // Skriv tillbaka settlade 192 kr till servern så resultat syns 24 h
+  // Skriv tillbaka settlade 192 kr till servern så resultat syns 8 h
   try {
     const { rememberDaily192Settled } = await import("./pp192History");
     await rememberDaily192Settled(

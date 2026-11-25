@@ -27,6 +27,11 @@ import type {
   HistoryProduct,
   TipHistoryResponse,
 } from "../lib/tipHistory";
+import {
+  isFutureHistoryPick,
+  TIP_HISTORY_RETENTION_HOURS,
+  TIP_HISTORY_RETENTION_MS,
+} from "../lib/tipHistory";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 import type {
   V75DayTip,
@@ -58,13 +63,13 @@ function isStrykFamily(p: string): boolean {
   return p === "stryktipset" || p === "europatipset";
 }
 
-const ODDSET_LS_KEY = "mikaels-oddset-tips-24h";
+const ODDSET_LS_KEY = "mikaels-oddset-tips-8h";
 const ODDSET_LEARN_LS_KEY = "mikaels-oddset-lessons";
-const HISTORY_LS_KEY = "mikaels-tips-history-24h";
+const HISTORY_LS_KEY = "mikaels-tips-history-8h";
 const ESPORTS_BATTLE_LS_KEY = "mikaels-esports-battle-3h";
-const ODDSET_RETENTION_MS = 24 * 60 * 60 * 1000;
+const ODDSET_RETENTION_MS = TIP_HISTORY_RETENTION_MS;
 const ODDSET_LEARN_RETENTION_MS = 21 * 24 * 60 * 60 * 1000;
-const HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000;
+const HISTORY_RETENTION_MS = TIP_HISTORY_RETENTION_MS;
 
 function loadEsportsBattleLocal(): EsportsBattleMatch[] {
   if (typeof window === "undefined") return [];
@@ -103,7 +108,9 @@ function saveEsportsBattleLocal(matches: EsportsBattleMatch[]): void {
 function loadOddsetLocalTips(): OddsetTrackedTip[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(ODDSET_LS_KEY);
+    const raw =
+      window.localStorage.getItem(ODDSET_LS_KEY) ||
+      window.localStorage.getItem("mikaels-oddset-tips-24h");
     if (!raw) return [];
     const parsed = JSON.parse(raw) as OddsetTrackedTip[];
     if (!Array.isArray(parsed)) return [];
@@ -186,12 +193,15 @@ function historyKeepUntilMs(p: HistoryPick): number {
 function loadLocalHistoryPicks(): HistoryPick[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(HISTORY_LS_KEY);
+    const raw =
+      window.localStorage.getItem(HISTORY_LS_KEY) ||
+      window.localStorage.getItem("mikaels-tips-history-24h");
     if (!raw) return [];
     const parsed = JSON.parse(raw) as HistoryPick[];
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
     return parsed.filter((p) => {
+      if (isFutureHistoryPick(p, now)) return false;
       const at = historyKeepUntilMs(p);
       return Number.isFinite(at) && now - at <= HISTORY_RETENTION_MS;
     });
@@ -213,6 +223,7 @@ function mergeHistoryPickLists(...groups: HistoryPick[][]): HistoryPick[] {
   for (const group of groups) {
     for (const p of group) {
       if (!p?.id) continue;
+      if (isFutureHistoryPick(p, now)) continue;
       const at = historyKeepUntilMs(p);
       if (!Number.isFinite(at) || now - at > HISTORY_RETENTION_MS) continue;
       const prev = byId.get(p.id);
@@ -289,7 +300,14 @@ function buildHistoryViewModel(
   picks: HistoryPick[],
   prevGames?: TipHistoryResponse["games"]
 ): TipHistoryResponse {
-  const corrected = picks.map(correctHistoryPickStatus);
+  const now = Date.now();
+  const corrected = picks
+    .filter((p) => {
+      if (isFutureHistoryPick(p, now)) return false;
+      const at = Date.parse(p.settledAt || p.kickoff || p.tippedAt);
+      return Number.isFinite(at) && now - at <= HISTORY_RETENTION_MS;
+    })
+    .map(correctHistoryPickStatus);
   const won = corrected.filter((p) => p.status === "won").length;
   const lost = corrected.filter((p) => p.status === "lost").length;
   const live = corrected.filter((p) => p.status === "live").length;
@@ -343,7 +361,7 @@ function buildHistoryViewModel(
   });
   return {
     generatedAt: new Date().toISOString(),
-    retentionHours: 24,
+    retentionHours: TIP_HISTORY_RETENTION_HOURS,
     picks: corrected,
     games,
     totals: {
@@ -361,8 +379,12 @@ function oddsetToHistoryPicks(
   tips: OddsetTrackedTip[],
   tippedAtFallback: string
 ): HistoryPick[] {
-  return tips.map((t) => {
+  const now = Date.now();
+  return tips.flatMap((t) => {
     const tippedAt = t.tippedAt || tippedAtFallback;
+    const kickMs = t.kickoff ? Date.parse(t.kickoff) : NaN;
+    // Resultat: inga framtida matcher som “väntar”
+    if (Number.isFinite(kickMs) && kickMs > now) return [];
     const status =
       t.outcome === "won" || t.outcome === "lost" || t.outcome === "live"
         ? t.outcome
@@ -377,7 +399,7 @@ function oddsetToHistoryPicks(
       /* keep tippedAt */
     }
     const dayLabel = fmtHistoryDate(kickIso);
-    return {
+    return [{
       id: is1x2
         ? `oddset:${t.eventId}:1x2:${pick1}`
         : `oddset:${t.eventId}:over`,
@@ -403,7 +425,7 @@ function oddsetToHistoryPicks(
           ? `${t.homeGoals}-${t.awayGoals}`
           : null,
       resultNote: t.resultNote,
-    };
+    }];
   });
 }
 
@@ -421,10 +443,20 @@ function drawToHistoryPicks(
   ) {
     return [];
   }
+
+  // Resultat: bara omgångar som stängt / spelas nu – inte framtida tipp
+  const state = String(draw.drawState || "");
+  const closeMs = Date.parse(draw.closeTime);
+  const started =
+    state === "Closed" ||
+    state === "Finalized" ||
+    (Number.isFinite(closeMs) && closeMs <= Date.now());
+  if (!started) return [];
+
   let systems = (draw.systems || []).filter(
     (s) => s.costKr >= 48 && s.costKr <= 720
   );
-  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 24 h
+  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 8 h
   if (product === "powerplay" || product === "topptipset") {
     const has192 = systems.some((s) => s.costKr === 192);
     if (!has192) {
@@ -442,12 +474,11 @@ function drawToHistoryPicks(
   const firstLabel = first
     ? `${first.home.name}–${first.away.name}`
     : null;
-  const state = String(draw.drawState || "");
   const playing =
     state === "Closed" ||
     (state !== "Finalized" &&
-      Number.isFinite(Date.parse(draw.closeTime)) &&
-      Date.parse(draw.closeTime) <= Date.now());
+      Number.isFinite(closeMs) &&
+      closeMs <= Date.now());
   const baseLabel = [
     `${productHistoryLabel(product)} #${draw.drawNumber}`,
     playing ? "Spelas nu" : null,
@@ -456,6 +487,7 @@ function drawToHistoryPicks(
     .filter(Boolean)
     .join(" · ");
   const out: HistoryPick[] = [];
+  const now = Date.now();
 
   for (const system of systems) {
     const costKr = system.costKr;
@@ -470,6 +502,8 @@ function drawToHistoryPicks(
       );
       for (const m of draw.matches) {
         if (!malNums.has(m.eventNumber) && !m.malSelected) continue;
+        const kick = m.matchStart ? Date.parse(m.matchStart) : NaN;
+        if (Number.isFinite(kick) && kick > now) continue;
         out.push({
           id: `${product}:${draw.drawNumber}:${costKr}:${m.eventNumber}`,
           product,
@@ -496,6 +530,8 @@ function drawToHistoryPicks(
 
     for (const p of system.picks) {
       const match = draw.matches.find((m) => m.eventNumber === p.eventNumber);
+      const kick = match?.matchStart ? Date.parse(match.matchStart) : NaN;
+      if (Number.isFinite(kick) && kick > now) continue;
       out.push({
         id: `${product}:${draw.drawNumber}:${costKr}:${p.eventNumber}`,
         product,
@@ -2588,9 +2624,9 @@ function HistoryView({
 
         {!library && (
           <p className="panel-lead">
-            Välj ett bibliotek per spelform. Powerplay som spelas nu (t.ex.
-            Örebro–Frölunda) och 192 kr-system syns här – live via Flashscore.
-            Esports Battle uppdateras automatiskt.
+            Välj ett bibliotek per spelform. Bara matcher som startat eller är
+            klara (8 h), inga framtida som “väntar”. 192 kr-system live via
+            Flashscore. Esports Battle uppdateras automatiskt.
           </p>
         )}
 
@@ -2804,7 +2840,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
     [...picks, ...picks1x2].map((p) => oddsetTrackKey(p))
   );
   const history = tracked.filter((t) => !openKeys.has(oddsetTrackKey(t)));
-  const retention = tip.retentionHours ?? 24;
+  const retention = tip.retentionHours ?? TIP_HISTORY_RETENTION_HOURS;
   const won = tracked.filter((t) => t.outcome === "won").length;
   const lost = tracked.filter((t) => t.outcome === "lost").length;
   const learning = tip.learning;
@@ -2826,7 +2862,10 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
             ? ` · 1X2 ${tip.eligible1x2Count}`
             : ""}{" "}
           klarade filtret
-          {tracked.length > 0 ? ` · 24h: ${won} rätt / ${lost} fel` : ""}.
+          {tracked.length > 0
+            ? ` · ${retention}h: ${won} rätt / ${lost} fel`
+            : ""}
+          .
         </p>
         <ul className="alert-list table-alerts">
           {tip.rules.map((r) => (
@@ -4073,7 +4112,7 @@ export default function App() {
             type="button"
             className="product-btn history-launch"
             onClick={openHistory}
-            title="Gamla resultat – tips med rätt/fel i 24 timmar efter färdigt spel"
+            title="Gamla resultat – tips med rätt/fel i 8 timmar efter färdigt spel"
           >
             <span className="btn-label-full">Gamla resultat</span>
             <span className="btn-label-short">Resultat</span>
@@ -4173,7 +4212,7 @@ export default function App() {
           </h1>
           <p className="brand-tag">
             Alla spel uppdateras 12 min före spelstopp. Tryck på Gamla resultat
-            för rätt/fel – syns 24 h efter att spelet är färdigt.
+            för rätt/fel – syns 8 h efter start/klart (inga framtida matcher).
             Powerplay/Topptipset lär av missar. Stryk/Mål: lagnyheter ca 15 min
             före avspark.
           </p>

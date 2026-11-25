@@ -498,7 +498,7 @@ export function generateMaltipsetSystems(
   return systems;
 }
 
-/** Dagligt system (Powerplay + Topptipset) som alltid sparas i resultat 24 h. */
+/** Dagligt system (Powerplay + Topptipset) som alltid sparas i resultat 8 h. */
 export const DAILY_SYSTEM_COST_KR = 192;
 /** @deprecated Använd DAILY_SYSTEM_COST_KR */
 export const POWERPLAY_DAILY_COST_KR = DAILY_SYSTEM_COST_KR;
@@ -636,7 +636,7 @@ function buildSystemForCost(
     cost === 48
       ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
       : cost === DAILY_SYSTEM_COST_KR
-        ? `Dagligt system ${DAILY_SYSTEM_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – sparas i resultat 24 h.`
+        ? `Dagligt system ${DAILY_SYSTEM_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – sparas i resultat 8 h.`
         : `${hel} hel · ${halv} halv · ${enklar.length} enkel.`;
 
   const winLabel =
@@ -672,7 +672,7 @@ export type GenerateSystemsOptions = {
 /**
  * Bygg system 48–720 kr. För 48 kr (Powerplay/Topptipset) maximeras
  * uppskattad träffsannolikhet via djupare p-modell och optimal gardering.
- * 192 kr tvingas alltid med (dagligt PP/Topp-resultat 24 h).
+ * 192 kr tvingas alltid med (dagligt PP/Topp-resultat 8 h).
  * Stryk/Europa: 6 systemspel inkl. R 4-4-144 (ersätter matematiskt 144 kr).
  */
 export function generateSystems(
