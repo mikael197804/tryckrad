@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import BackgroundMusic from "./BackgroundMusic";
+import GhostWelcome from "./GhostWelcome";
 import type {
   OddsetCandidate,
   OddsetDayTip,
@@ -4963,6 +4964,7 @@ export default function App() {
           )}
         </>
       )}
+      <GhostWelcome />
       <BackgroundMusic />
     </div>
   );

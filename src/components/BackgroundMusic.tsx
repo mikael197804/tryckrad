@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PLAY_MUSIC_EVENT } from "./GhostWelcome";
 
 const AUDIO_SRC = "/audio/mama-robot-telling-me.mp3";
 const TRACK_TITLE = "Mama robot telling me";
@@ -11,44 +12,13 @@ const QUIET_VOLUME = 0.22;
 const STORAGE_KEY = "mikaels-bg-music-on";
 
 /**
- * Bakgrundsmusik från Suno – startas med knapp (krävs av webbläsaren).
+ * Bakgrundsmusik från Suno – startas via Kasper-quiz eller knapp.
  */
 export default function BackgroundMusic() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    audio.volume = QUIET_VOLUME;
-
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
-    const onError = () =>
-      setError("Kunde inte ladda ljudfilen – ladda om sidan");
-
-    audio.addEventListener("play", onPlay);
-    audio.addEventListener("pause", onPause);
-    audio.addEventListener("error", onError);
-
-    try {
-      if (localStorage.getItem(STORAGE_KEY) === "1") {
-        setEnabled(true);
-        // Autoplay blockeras ofta – användaren får trycka Spela
-      }
-    } catch {
-      // ignore
-    }
-
-    return () => {
-      audio.removeEventListener("play", onPlay);
-      audio.removeEventListener("pause", onPause);
-      audio.removeEventListener("error", onError);
-    };
-  }, []);
 
   const playNow = useCallback(async () => {
     const audio = audioRef.current;
@@ -73,6 +43,42 @@ export default function BackgroundMusic() {
       setError("Tryck Spela igen (webbläsaren blockerade ljud)");
     }
   }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    audio.volume = QUIET_VOLUME;
+
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onError = () =>
+      setError("Kunde inte ladda ljudfilen – ladda om sidan");
+    const onGhostPlay = () => {
+      void playNow();
+    };
+
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("error", onError);
+    window.addEventListener(PLAY_MUSIC_EVENT, onGhostPlay);
+
+    try {
+      if (localStorage.getItem(STORAGE_KEY) === "1") {
+        setEnabled(true);
+        // Autoplay blockeras ofta – Kasper-quiz / Spela startar
+      }
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("error", onError);
+      window.removeEventListener(PLAY_MUSIC_EVENT, onGhostPlay);
+    };
+  }, [playNow]);
 
   const toggle = useCallback(() => {
     const audio = audioRef.current;
