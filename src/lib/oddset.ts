@@ -92,7 +92,7 @@ export type OddsetDayTip = {
   /** Upp till 5 1X2-tips med samma analysram. */
   selected1x2: OddsetCandidate[];
   candidates1x2: OddsetCandidate[];
-  /** Tips som sparats senaste 4 h, med grönt/rött när resultatet är klart. */
+  /** Tips som sparats senaste 8 h, med grönt/rött när resultatet är klart. */
   tracked: OddsetTrackedTip[];
   retentionHours: number;
   analyzedCount: number;

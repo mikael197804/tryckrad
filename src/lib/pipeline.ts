@@ -22,7 +22,7 @@ const RESULT_KEEP_MS = 4 * 60 * 60 * 1000;
 
 /**
  * Visa omgångar som fortfarande går att tippa, eller nyligen stängda
- * ("Spelas nu" / resultat 4 h) – t.ex. Powerplay Örebro–Frölunda.
+ * ("Spelas nu" / resultat 8 h) – t.ex. Powerplay Örebro–Frölunda.
  */
 function shouldIncludeDraw(
   closeTime: string,
@@ -154,7 +154,7 @@ export async function buildAllDrawBundles(
       return new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime();
     });
 
-  // Powerplay + Topptipset 192 kr sparas varje dag till resultat (4 h)
+  // Powerplay + Topptipset 192 kr sparas varje dag till resultat (8 h)
   if ((product === "powerplay" || product === "topptipset") && open.length) {
     await rememberDaily192(open).catch(() => null);
   }

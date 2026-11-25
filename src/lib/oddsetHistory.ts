@@ -16,7 +16,7 @@ export type OddsetTrackedTip = OddsetCandidate & {
   resultNote: string | null;
 };
 
-const RETENTION_MS = 4 * 60 * 60 * 1000;
+const RETENTION_MS = 8 * 60 * 60 * 1000;
 const STORE_PATH = path.join("/tmp", "mikaels-oddset-history.json");
 
 export function oddsetTipKey(
@@ -121,7 +121,7 @@ function toTracked(
   };
 }
 
-/** Spara/uppdatera dagens tips så de syns i 4 h. */
+/** Spara/uppdatera dagens tips så de syns i 8 h. */
 export async function rememberOddsetTips(
   selected: OddsetCandidate[],
   tippedAt = new Date().toISOString()
@@ -230,7 +230,7 @@ function applyScore(
   };
 }
 
-/** Uppdatera resultat för alla tips inom 4 h. */
+/** Uppdatera resultat för alla tips inom 8 h. */
 export async function settleOddsetTips(): Promise<OddsetTrackedTip[]> {
   await ensureLoaded();
   const s = store();
@@ -282,4 +282,4 @@ export async function listTrackedOddsetTips(): Promise<OddsetTrackedTip[]> {
   );
 }
 
-export const ODDSET_TIP_RETENTION_HOURS = 4;
+export const ODDSET_TIP_RETENTION_HOURS = 8;

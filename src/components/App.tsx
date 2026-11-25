@@ -467,7 +467,7 @@ function drawToHistoryPicks(
   let systems = (draw.systems || []).filter(
     (s) => s.costKr >= 48 && s.costKr <= 720
   );
-  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 4 h
+  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 8 h
   if (product === "powerplay" || product === "topptipset") {
     const has192 = systems.some((s) => s.costKr === 192);
     if (!has192) {
@@ -983,7 +983,7 @@ function TwinView({
         <h2>Tvilling · tips</h2>
         <p className="panel-lead">
           ATG-tvilling (1–2 i valfri ordning) per avdelning, inkl. kusk 2:an.
-          Rätt och fel syns under Gamla resultat → Tvilling (4 h).
+          Rätt och fel syns under Gamla resultat → Tvilling (8 h).
         </p>
         <div className="history-actions" style={{ marginTop: "0.5rem" }}>
           <button type="button" className="history-btn" onClick={onOpenResults}>
@@ -3003,7 +3003,7 @@ function HistoryView({
         {!library && (
           <p className="panel-lead">
             Välj ett bibliotek per spelform. Bara matcher som startat eller är
-            klara (4 h), inga framtida som “väntar”. 192 kr-system live via
+            klara (8 h), inga framtida som “väntar”. 192 kr-system live via
             Flashscore. Esports Battle uppdateras automatiskt.
           </p>
         )}
@@ -4595,7 +4595,7 @@ export default function App() {
             type="button"
             className="product-btn history-launch"
             onClick={openHistory}
-            title="Gamla resultat – tips med rätt/fel i 4 timmar efter färdigt spel"
+            title="Gamla resultat – tips med rätt/fel i 8 timmar efter färdigt spel"
           >
             <span className="btn-label-full">Gamla resultat</span>
             <span className="btn-label-short">Resultat</span>
@@ -4707,7 +4707,7 @@ export default function App() {
           </h1>
           <p className="brand-tag">
             Alla spel uppdateras 12 min före spelstopp. Tryck på Gamla resultat
-            för rätt/fel – syns 4 h efter start/klart (inga framtida matcher).
+            för rätt/fel – syns 8 h efter start/klart (inga framtida matcher).
             Powerplay/Topptipset lär av missar. Stryk/Mål: lagnyheter ca 15 min
             före avspark.
           </p>

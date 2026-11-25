@@ -6,11 +6,11 @@ import type { HistoryPick, HistoryProduct } from "./tipHistory";
 
 /**
  * Dagligt 192 kr-system för Powerplay och Topptipset –
- * sparas server-side och visas i resultat 4 h.
+ * sparas server-side och visas i resultat 8 h.
  */
 
 const STORE_PATH = path.join("/tmp", "mikaels-daily192-history.json");
-const RETENTION_MS = 4 * 60 * 60 * 1000;
+const RETENTION_MS = 8 * 60 * 60 * 1000;
 
 const DAILY_PRODUCTS = new Set<HistoryProduct>(["powerplay", "topptipset"]);
 
@@ -230,7 +230,7 @@ export async function listDaily192Picks(): Promise<HistoryPick[]> {
 /** @deprecated Använd listDaily192Picks */
 export const listPowerplay192Picks = listDaily192Picks;
 
-/** Uppdatera sparade 192 kr-rader med settlat rätt/fel (4 h). */
+/** Uppdatera sparade 192 kr-rader med settlat rätt/fel (8 h). */
 export async function rememberDaily192Settled(
   settled: HistoryPick[]
 ): Promise<void> {
