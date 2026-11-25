@@ -3,8 +3,11 @@ import {
   atgOddsToDecimal,
   atgPoolDistRaw,
   fetchAtgGame,
+  fetchCalendarDay,
+  fetchRace,
   fetchStartDetailsForRace,
   findUpcomingAtgPool,
+  isAtgRaceFinished,
   personName,
   type AtgGame,
   type AtgPoolProduct,
@@ -54,6 +57,45 @@ export type V75DualDriverSignal = {
   focusHorse: string;
   focusOdds: number | null;
   note: string;
+};
+
+/** Kuskstrategi: lågodds först, högodds om den inte vinner. */
+export type V75DriverStrategyMount = {
+  leg: number;
+  startNumber: number;
+  horseName: string;
+  winOdds: number | null;
+  poolPct: number | null;
+  /** low = favorit/lågodds, high = högoddsare, mid = övrigt. */
+  band: "low" | "mid" | "high";
+};
+
+export type V75DriverStrategy = {
+  driver: string;
+  driverId: number | null;
+  mounts: V75DriverStrategyMount[];
+  lowMount: V75DriverStrategyMount | null;
+  highMount: V75DriverStrategyMount | null;
+  /** true om lågodds-loppet går före högodds-loppet. */
+  lowBeforeHigh: boolean;
+  strategy: string;
+  focusIfLowMisses: {
+    leg: number;
+    startNumber: number;
+    horseName: string;
+    winOdds: number | null;
+  } | null;
+  preRaceNote: string | null;
+};
+
+export type V75PreRace = {
+  raceId: string;
+  raceNumber: number;
+  trackName: string;
+  trackId: number | null;
+  startTime: string | null;
+  status: string;
+  finished: boolean;
 };
 
 export type V75HorseTip = {
@@ -178,6 +220,15 @@ export type V75DayTip = {
   }>;
   /** Kuskar som kör i exakt två V75-avdelningar – fokus på högsta odds-hästen. */
   dualDriverSignals: V75DualDriverSignal[];
+  /** Kuskanalys före tipprad: lågodds → högodds om ej seger. */
+  driverStrategies: V75DriverStrategy[];
+  /** Lopp på samma bana före spelformeln (förelopp). */
+  preRaces: V75PreRace[];
+  preRacesDone: boolean;
+  /** false = förhandstips; true = riktiga tips efter förelopp. */
+  tipsActivated: boolean;
+  tipsPhase: "forhands" | "aktiv";
+  tipsPhaseNote: string;
   externalSources: TipSourceReport[];
   headlineSignals: ExternalTipMention[];
   rules: string[];
@@ -682,13 +733,26 @@ function analyzeHorse(
   };
 }
 
+function realWinOdds(h: V75HorseTip): number | null {
+  return h.winOdds != null && h.winOdds > 1 && h.winOdds < 80 ? h.winOdds : null;
+}
+
+function oddsBand(odds: number | null): "low" | "mid" | "high" {
+  if (odds == null) return "mid";
+  if (odds <= 5.5) return "low";
+  if (odds >= 12) return "high";
+  return "mid";
+}
+
 /**
  * Kuskar i exakt två avdelningar: flagga hästen med högst vinnarodds.
  * Mönster: de brukar vinna ett av loppen, ofta med den dyraste hästen.
+ * applyBoosts=false = bara signaler (förhandsfas före förelopp).
  */
 function applyDualDriverSignals(
   legs: V75LegAnalysis[],
-  product: AtgPoolProduct = "V75"
+  product: AtgPoolProduct = "V75",
+  applyBoosts = true
 ): V75DualDriverSignal[] {
   type Mount = {
     leg: number;
@@ -713,16 +777,12 @@ function applyDualDriverSignals(
   const signals: V75DualDriverSignal[] = [];
 
   for (const row of byKey.values()) {
-    // Exakt två starter i omgången (en per lopp)
     const uniqueLegs = [...new Set(row.mounts.map((m) => m.leg))];
     if (uniqueLegs.length !== 2 || row.mounts.length !== 2) continue;
 
     const [a, b] = row.mounts;
-    // ATG sätter ofta ~99,99 när odds saknas – ignorera som “riktiga” odds
-    const realOdds = (h: V75HorseTip) =>
-      h.winOdds != null && h.winOdds > 1 && h.winOdds < 80 ? h.winOdds : null;
-    const oddsA = realOdds(a.horse);
-    const oddsB = realOdds(b.horse);
+    const oddsA = realWinOdds(a.horse);
+    const oddsB = realWinOdds(b.horse);
     let focus: Mount;
     if (oddsA != null && oddsB != null) {
       focus = oddsA >= oddsB ? a : b;
@@ -731,14 +791,13 @@ function applyDualDriverSignals(
     } else if (oddsB != null) {
       focus = b;
     } else {
-      // Fallback: lägst V75-streck = “högre odds” i poolen
       const pctA = a.horse.v75Pct ?? 50;
       const pctB = b.horse.v75Pct ?? 50;
       focus = pctA <= pctB ? a : b;
     }
     const other = focus === a ? b : a;
-    const focusOdds = realOdds(focus.horse) ?? focus.horse.winOdds;
-    const otherOdds = realOdds(other.horse) ?? other.horse.winOdds;
+    const focusOdds = realWinOdds(focus.horse) ?? focus.horse.winOdds;
+    const otherOdds = realWinOdds(other.horse) ?? other.horse.winOdds;
 
     const note =
       `${row.driver} kör ${product}-${a.leg} (#${a.horse.startNumber} ${a.horse.name}` +
@@ -748,37 +807,37 @@ function applyDualDriverSignals(
       ` – fokus på högsta odds: #${focus.horse.startNumber} ${focus.horse.name}` +
       (focusOdds != null ? ` @ ${String(focusOdds).replace(".", ",")}` : "");
 
-    focus.horse.dualDriverLongshot = true;
-    focus.horse.dualDriverNote = note;
-    focus.horse.score += 5.5;
-    if (focus.horse.modelWinPct != null) {
-      focus.horse.modelWinPct = Math.min(
-        65,
-        Math.round((focus.horse.modelWinPct + 3.5) * 10) / 10
-      );
-    }
-    if (focus.horse.role === "skip") focus.horse.role = "skräll";
-    else if (focus.horse.role === "gardering") focus.horse.role = "skräll";
-    const tag = `dubbelkusk-skräll (högst odds av ${row.driver}s två lopp)`;
-    if (!focus.horse.reason.includes("dubbelkusk")) {
-      focus.horse.reason = `${tag} · ${focus.horse.reason}`;
-    }
+    if (applyBoosts) {
+      focus.horse.dualDriverLongshot = true;
+      focus.horse.dualDriverNote = note;
+      focus.horse.score += 5.5;
+      if (focus.horse.modelWinPct != null) {
+        focus.horse.modelWinPct = Math.min(
+          65,
+          Math.round((focus.horse.modelWinPct + 3.5) * 10) / 10
+        );
+      }
+      if (focus.horse.role === "skip") focus.horse.role = "skräll";
+      else if (focus.horse.role === "gardering") focus.horse.role = "skräll";
+      const tag = `dubbelkusk-skräll (högst odds av ${row.driver}s två lopp)`;
+      if (!focus.horse.reason.includes("dubbelkusk")) {
+        focus.horse.reason = `${tag} · ${focus.horse.reason}`;
+      }
 
-    // Mild boost även på den andra starten (kusk kan ta segern där)
-    other.horse.score += 1.5;
-    if (other.horse.role === "skip" && (otherOdds ?? 99) <= 8) {
-      other.horse.role = "gardering";
-    }
+      other.horse.score += 1.5;
+      if (other.horse.role === "skip" && (otherOdds ?? 99) <= 8) {
+        other.horse.role = "gardering";
+      }
 
-    // Alert på båda loppen
-    for (const leg of legs) {
-      if (leg.leg !== focus.leg && leg.leg !== other.leg) continue;
-      const alert =
-        leg.leg === focus.leg
-          ? `Dubbelkusk ${row.driver}: högst odds #${focus.horse.startNumber} ${focus.horse.name}`
-          : `Dubbelkusk ${row.driver}: även ${product}-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name} (högst odds)`;
-      if (!leg.alerts.some((x) => x.includes(`Dubbelkusk ${row.driver}`))) {
-        leg.alerts.unshift(alert);
+      for (const leg of legs) {
+        if (leg.leg !== focus.leg && leg.leg !== other.leg) continue;
+        const alert =
+          leg.leg === focus.leg
+            ? `Dubbelkusk ${row.driver}: högst odds #${focus.horse.startNumber} ${focus.horse.name}`
+            : `Dubbelkusk ${row.driver}: även ${product}-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name} (högst odds)`;
+        if (!leg.alerts.some((x) => x.includes(`Dubbelkusk ${row.driver}`))) {
+          leg.alerts.unshift(alert);
+        }
       }
     }
 
@@ -800,12 +859,343 @@ function applyDualDriverSignals(
     });
   }
 
-  // Sortera: längst odds först
-  signals.sort(
-    (a, b) => (b.focusOdds ?? 0) - (a.focusOdds ?? 0)
-  );
+  signals.sort((a, b) => (b.focusOdds ?? 0) - (a.focusOdds ?? 0));
   return signals;
 }
+
+function toStrategyMount(
+  leg: number,
+  horse: V75HorseTip
+): V75DriverStrategyMount {
+  const winOdds = realWinOdds(horse) ?? horse.winOdds;
+  return {
+    leg,
+    startNumber: horse.startNumber,
+    horseName: horse.name,
+    winOdds,
+    poolPct: horse.v75Pct,
+    band: oddsBand(winOdds),
+  };
+}
+
+/** Kuskanalys: lågodds först, högodds om den inte vinner. */
+function buildDriverStrategies(
+  legs: V75LegAnalysis[],
+  product: AtgPoolProduct
+): V75DriverStrategy[] {
+  type Mount = { leg: number; horse: V75HorseTip };
+  const byKey = new Map<
+    string,
+    { driver: string; driverId: number | null; mounts: Mount[] }
+  >();
+
+  for (const leg of legs) {
+    for (const h of leg.horses) {
+      if (!h.driver) continue;
+      const key =
+        h.driverId != null ? `id:${h.driverId}` : `name:${h.driver.toLowerCase()}`;
+      let row = byKey.get(key);
+      if (!row) {
+        row = { driver: h.driver, driverId: h.driverId, mounts: [] };
+        byKey.set(key, row);
+      }
+      row.mounts.push({ leg: leg.leg, horse: h });
+    }
+  }
+
+  const out: V75DriverStrategy[] = [];
+
+  for (const row of byKey.values()) {
+    const uniqueLegs = [...new Set(row.mounts.map((m) => m.leg))];
+    if (uniqueLegs.length < 2) continue;
+
+    const mounts = row.mounts
+      .map((m) => toStrategyMount(m.leg, m.horse))
+      .sort((a, b) => a.leg - b.leg);
+
+    const withOdds = mounts.filter((m) => m.winOdds != null && m.winOdds < 80);
+    let lowMount: V75DriverStrategyMount | null = null;
+    let highMount: V75DriverStrategyMount | null = null;
+
+    if (withOdds.length >= 2) {
+      lowMount = [...withOdds].sort(
+        (a, b) => (a.winOdds ?? 99) - (b.winOdds ?? 99)
+      )[0];
+      highMount = [...withOdds].sort(
+        (a, b) => (b.winOdds ?? 0) - (a.winOdds ?? 0)
+      )[0];
+      if (lowMount.leg === highMount.leg) {
+        highMount = withOdds.find((m) => m.leg !== lowMount!.leg) || null;
+      }
+    } else if (mounts.length >= 2) {
+      const byPct = [...mounts].sort(
+        (a, b) => (b.poolPct ?? 0) - (a.poolPct ?? 0)
+      );
+      lowMount = byPct[0];
+      highMount = byPct[byPct.length - 1];
+    }
+
+    if (!lowMount || !highMount || lowMount.leg === highMount.leg) continue;
+
+    const spread =
+      lowMount.winOdds != null && highMount.winOdds != null
+        ? highMount.winOdds - lowMount.winOdds
+        : null;
+    if (spread != null && spread < 3) continue;
+
+    const lowBeforeHigh = lowMount.leg < highMount.leg;
+    const fmt = (m: V75DriverStrategyMount) =>
+      `${product}-${m.leg} #${m.startNumber} ${m.horseName}` +
+      (m.winOdds != null
+        ? ` @ ${String(m.winOdds).replace(".", ",")}`
+        : "");
+
+    let strategy: string;
+    if (lowBeforeHigh) {
+      strategy =
+        `${row.driver}: klassiskt lågodds→högodds – vinna först med ${fmt(lowMount)}, ` +
+        `annars sikta ${fmt(highMount)}.`;
+    } else {
+      strategy =
+        `${row.driver}: högodds (${fmt(highMount)}) går före lågodds (${fmt(lowMount)}) – ` +
+        `mindre klassiskt mönster; högodds kan vara "första chansen".`;
+    }
+
+    out.push({
+      driver: row.driver,
+      driverId: row.driverId,
+      mounts,
+      lowMount,
+      highMount,
+      lowBeforeHigh,
+      strategy,
+      focusIfLowMisses: {
+        leg: highMount.leg,
+        startNumber: highMount.startNumber,
+        horseName: highMount.horseName,
+        winOdds: highMount.winOdds,
+      },
+      preRaceNote: null,
+    });
+  }
+
+  out.sort((a, b) => {
+    const aScore = a.lowBeforeHigh ? 2 : 0;
+    const bScore = b.lowBeforeHigh ? 2 : 0;
+    const aSpread =
+      (a.highMount?.winOdds ?? 0) - (a.lowMount?.winOdds ?? 0);
+    const bSpread =
+      (b.highMount?.winOdds ?? 0) - (b.lowMount?.winOdds ?? 0);
+    return bScore - aScore || bSpread - aSpread;
+  });
+
+  return out.slice(0, 16);
+}
+
+/** Lyft högodds när kuskstrategi säger lågodds→högodds (efter förelopp). */
+function applyDriverStrategyBoosts(
+  legs: V75LegAnalysis[],
+  strategies: V75DriverStrategy[],
+  product: AtgPoolProduct
+): void {
+  for (const s of strategies) {
+    if (!s.focusIfLowMisses || !s.highMount) continue;
+    if (!s.lowBeforeHigh && s.mounts.length > 2) continue;
+
+    const focusLeg = legs.find((l) => l.leg === s.focusIfLowMisses!.leg);
+    const focusHorse = focusLeg?.horses.find(
+      (h) => h.startNumber === s.focusIfLowMisses!.startNumber
+    );
+    if (!focusHorse) continue;
+
+    const boost = s.lowBeforeHigh ? 4.2 : 2.2;
+    focusHorse.score += boost;
+    if (focusHorse.modelWinPct != null) {
+      focusHorse.modelWinPct = Math.min(
+        62,
+        Math.round(
+          (focusHorse.modelWinPct + (s.lowBeforeHigh ? 2.8 : 1.5)) * 10
+        ) / 10
+      );
+    }
+    if (focusHorse.role === "skip") focusHorse.role = "skräll";
+    else if (focusHorse.role === "gardering") focusHorse.role = "skräll";
+    const tag = s.lowBeforeHigh
+      ? `kuskstrategi lågodds→högodds (${s.driver})`
+      : `kuskstrategi högodds-fokus (${s.driver})`;
+    if (!focusHorse.reason.includes("kuskstrategi")) {
+      focusHorse.reason = `${tag} · ${focusHorse.reason}`;
+    }
+
+    if (
+      focusLeg &&
+      !focusLeg.alerts.some((a) => a.includes(`Kuskstrategi ${s.driver}`))
+    ) {
+      focusLeg.alerts.unshift(
+        `Kuskstrategi ${s.driver}: ${product}-${s.highMount.leg} #${s.highMount.startNumber} ${s.highMount.horseName}` +
+          (s.lowBeforeHigh
+            ? ` om lågodds ${product}-${s.lowMount?.leg} missar`
+            : "")
+      );
+    }
+
+    if (s.lowMount) {
+      const lowLeg = legs.find((l) => l.leg === s.lowMount!.leg);
+      const lowHorse = lowLeg?.horses.find(
+        (h) => h.startNumber === s.lowMount!.startNumber
+      );
+      if (lowHorse) {
+        lowHorse.score += 1.2;
+        if (lowHorse.role === "skip" && (lowHorse.winOdds ?? 99) <= 6) {
+          lowHorse.role = "gardering";
+        }
+      }
+    }
+  }
+}
+
+async function resolvePreRaces(
+  playDate: string,
+  poolRaces: AtgRace[]
+): Promise<{
+  preRaces: V75PreRace[];
+  preRacesDone: boolean;
+  tipsActivated: boolean;
+  tipsPhaseNote: string;
+}> {
+  const trackIds = [
+    ...new Set(
+      poolRaces
+        .map((r) => r.track?.id)
+        .filter((id): id is number => id != null)
+    ),
+  ];
+  const poolRaceIds = new Set(poolRaces.map((r) => r.id));
+  const minByTrack = new Map<number, number>();
+  for (const r of poolRaces) {
+    const tid = r.track?.id;
+    if (tid == null) continue;
+    const prev = minByTrack.get(tid);
+    if (prev == null || r.number < prev) minByTrack.set(tid, r.number);
+  }
+
+  let cal;
+  try {
+    cal = await fetchCalendarDay(playDate);
+  } catch {
+    return {
+      preRaces: [],
+      preRacesDone: true,
+      tipsActivated: true,
+      tipsPhaseNote:
+        "Kunde inte hämta förelopp – tipsen visas som aktiva.",
+    };
+  }
+
+  const preRaces: V75PreRace[] = [];
+  for (const track of cal.tracks || []) {
+    if (!trackIds.includes(track.id)) continue;
+    const minPool = minByTrack.get(track.id);
+    if (minPool == null) continue;
+    for (const race of track.races || []) {
+      if (poolRaceIds.has(race.id)) continue;
+      if (race.number >= minPool) continue;
+      preRaces.push({
+        raceId: race.id,
+        raceNumber: race.number,
+        trackName: track.name,
+        trackId: track.id,
+        startTime: race.startTime || null,
+        status: race.status || "unknown",
+        finished: isAtgRaceFinished(race.status),
+      });
+    }
+  }
+
+  preRaces.sort(
+    (a, b) =>
+      a.raceNumber - b.raceNumber ||
+      a.trackName.localeCompare(b.trackName, "sv")
+  );
+
+  const preRacesDone =
+    preRaces.length === 0 || preRaces.every((r) => r.finished);
+  const tipsActivated = preRacesDone;
+  const doneCount = preRaces.filter((r) => r.finished).length;
+  const firstPoolNum = poolRaces.length
+    ? Math.min(...poolRaces.map((r) => r.number))
+    : null;
+  const tipsPhaseNote =
+    preRaces.length === 0
+      ? "Inga förelopp före omgången – riktiga tips är aktiva."
+      : tipsActivated
+        ? `Förelopp klara (${preRaces.length}) – riktiga tips aktiva.`
+        : `Förelopp ${doneCount}/${preRaces.length} klara – förhandstips tills alla lopp före${
+            firstPoolNum != null ? ` lopp ${firstPoolNum}` : " omgången"
+          } är färdiga.`;
+
+  return { preRaces, preRacesDone, tipsActivated, tipsPhaseNote };
+}
+
+/** Notera kuskar som körde/vann i förelopp. */
+async function enrichStrategiesFromPreRaces(
+  strategies: V75DriverStrategy[],
+  preRaces: V75PreRace[]
+): Promise<void> {
+  const finished = preRaces.filter((r) => r.finished);
+  if (!finished.length || !strategies.length) return;
+
+  const driverWins = new Map<string, string[]>();
+  const driverStarts = new Map<string, string[]>();
+
+  await Promise.all(
+    finished.map(async (pr) => {
+      const detail = await fetchRace(pr.raceId);
+      if (!detail?.starts) return;
+      for (const s of detail.starts) {
+        if (s.scratched) continue;
+        const dName = personName(s.driver);
+        if (!dName) continue;
+        const key =
+          s.driver?.id != null
+            ? `id:${s.driver.id}`
+            : `name:${dName.toLowerCase()}`;
+        const placeRaw = s.result?.place;
+        const place =
+          typeof placeRaw === "number"
+            ? placeRaw
+            : placeRaw != null
+              ? Number(placeRaw)
+              : null;
+        const label =
+          `${pr.trackName} lopp ${pr.raceNumber} #${s.number} ${s.horse?.name || ""}`.trim();
+        const starts = driverStarts.get(key) || [];
+        starts.push(label);
+        driverStarts.set(key, starts);
+        if (place === 1) {
+          const wins = driverWins.get(key) || [];
+          wins.push(label);
+          driverWins.set(key, wins);
+        }
+      }
+    })
+  );
+
+  for (const s of strategies) {
+    const key =
+      s.driverId != null
+        ? `id:${s.driverId}`
+        : `name:${s.driver.toLowerCase()}`;
+    const wins = driverWins.get(key);
+    const starts = driverStarts.get(key);
+    if (wins?.length) {
+      s.preRaceNote = `Vann förelopp: ${wins.join("; ")} – varm kusk.`;
+    } else if (starts?.length) {
+      s.preRaceNote = `Körde förelopp utan seger: ${starts.slice(0, 3).join("; ")}.`;
+    }
+  }
+}
+
 
 function opennessFromPicks(
   pickCount: number,
@@ -1288,7 +1678,27 @@ export async function buildAtgPoolDayTip(
     )
   );
 
-  const dualDriverSignals = applyDualDriverSignals(rawLegs, product);
+  const {
+    preRaces,
+    preRacesDone,
+    tipsActivated,
+    tipsPhaseNote,
+  } = await resolvePreRaces(found.date, races);
+
+  const driverStrategies = buildDriverStrategies(rawLegs, product);
+  if (preRaces.some((r) => r.finished)) {
+    await enrichStrategiesFromPreRaces(driverStrategies, preRaces);
+  }
+
+  // Riktiga tippboostar (dubbelkusk + kuskstrategi) först efter förelopp
+  const dualDriverSignals = applyDualDriverSignals(
+    rawLegs,
+    product,
+    tipsActivated
+  );
+  if (tipsActivated) {
+    applyDriverStrategyBoosts(rawLegs, driverStrategies, product);
+  }
 
   const rowPriceKr = game.newBettingSystem ? 0.6 : 1;
   const fitted = fitLegsToBudget(
@@ -1436,11 +1846,20 @@ export async function buildAtgPoolDayTip(
     highWinRateHorses,
     lowOddsReviews,
     dualDriverSignals,
+    driverStrategies,
+    preRaces,
+    preRacesDone,
+    tipsActivated,
+    tipsPhase: tipsActivated ? "aktiv" : "forhands",
+    tipsPhaseNote,
     externalSources: sources,
     headlineSignals,
     rules: [
-      `Tippraden kostar ${V75_TIP_MIN_KR}–${V75_TIP_MAX_KR} kr (nu ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader × ${String(rowPriceKr).replace(".", ",")} kr).`,
+      tipsActivated
+        ? `Riktiga tips aktiva (förelopp klara). Tipprad ${V75_TIP_MIN_KR}–${V75_TIP_MAX_KR} kr (nu ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader × ${String(rowPriceKr).replace(".", ",")} kr).`
+        : `Förhandstips – riktiga tips aktiveras efter föreloppen. Preliminär rad ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader.`,
       `ATG-data: vinnarodds, ${product}-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).`,
+      "Kuskanalys före tippraden: lågodds först, högodds om kusken inte vinner med favoriten.",
       "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
       "Högre seger% = klart över fältets median (karriärstatistik).",
       `Dubbelkusk = kusk i exakt två ${product}-lopp; fokus på hästen med högst vinnarodds (brukar ofta ta en seger).`,

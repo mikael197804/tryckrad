@@ -819,6 +819,9 @@ function V75View({ tip }: { tip: V75DayTip }) {
       >
     );
   const collapseAll = () => setOpenLegs({});
+  const tipsActive = tip.tipsActivated !== false;
+  const strategies = tip.driverStrategies || [];
+  const preRaces = tip.preRaces || [];
 
   return (
     <div className="rise">
@@ -841,33 +844,6 @@ function V75View({ tip }: { tip: V75DayTip }) {
           {" · "}
           radpris {String(tip.rowPriceKr).replace(".", ",")} kr
         </p>
-        <div className="tip-strip" aria-label={`${product} tipprad`}>
-          <strong>
-            Tipprad · {fmtKr(tip.tipCostKr)} kr
-            <span style={{ fontWeight: 500, opacity: 0.85 }}>
-              {" "}
-              ({tip.tipRows} rader ×{" "}
-              {String(tip.rowPriceKr).replace(".", ",")} kr · budget{" "}
-              {tip.tipBudgetMinKr}–{tip.tipBudgetMaxKr} kr)
-            </span>
-          </strong>
-          <div className="tip-strip-picks">
-            {tip.legs.map((l) => (
-              <span key={l.leg} className="tip-strip-pick">
-                <em>{l.leg}</em>
-                {l.pickLabel || "–"}
-              </span>
-            ))}
-          </div>
-        </div>
-        <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
-          {tip.couponLine}
-        </p>
-        <ul className="alert-list table-alerts">
-          {tip.rules.map((r) => (
-            <li key={r}>{r}</li>
-          ))}
-        </ul>
         <p className="panel-lead">
           <a href={tip.atgUrl} target="_blank" rel="noreferrer" className="oddset-link">
             Öppna {product} på ATG
@@ -875,15 +851,68 @@ function V75View({ tip }: { tip: V75DayTip }) {
         </p>
       </section>
 
-      {(tip.misleadingFavorites.length > 0 ||
-        tip.valueHorses.length > 0 ||
-        tip.homeTrackHorses.length > 0 ||
-        tip.classDropHorses.length > 0 ||
-        tip.highWinRateHorses.length > 0 ||
-        tip.lowOddsReviews.length > 0 ||
-        tip.dualDriverSignals.length > 0) && (
+      {(strategies.length > 0 ||
+        tip.dualDriverSignals.length > 0 ||
+        preRaces.length > 0) && (
         <section className="panel">
-          <h2>Signaler · klass, seger%, lågodds &amp; värde</h2>
+          <h2>Kuskanalys · före tippraden</h2>
+          <p className="panel-lead">
+            Tänker kusken vinna med högoddsaren om lågoddsaren missar? Analysen
+            ligger före spelformeln.
+          </p>
+          {preRaces.length > 0 && (
+            <>
+              <h3>Förelopp</h3>
+              <p className="panel-lead">
+                {tip.tipsPhaseNote ||
+                  (tipsActive
+                    ? "Förelopp klara – riktiga tips aktiva."
+                    : "Väntar på förelopp innan riktiga tips aktiveras.")}
+              </p>
+              <ul className="alert-list table-alerts">
+                {preRaces.map((r) => (
+                  <li key={r.raceId}>
+                    {r.trackName} lopp {r.raceNumber}
+                    {r.startTime ? ` · ${fmtTime(r.startTime)}` : ""}
+                    {" · "}
+                    {r.finished ? "klart" : r.status || "väntar"}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {strategies.length > 0 && (
+            <>
+              <h3>Lågodds → högodds</h3>
+              <ul className="alert-list learning-alerts">
+                {strategies.map((s) => (
+                  <li key={`${s.driver}-${s.lowMount?.leg}-${s.highMount?.leg}`}>
+                    <strong>{s.driver}</strong>
+                    {s.lowBeforeHigh ? " · klassiskt mönster" : " · omvänt"}
+                    <div className="reason" style={{ marginTop: "0.2rem" }}>
+                      {s.strategy}
+                    </div>
+                    {s.focusIfLowMisses && (
+                      <div className="reason" style={{ marginTop: "0.15rem" }}>
+                        Om lågodds missar → {product}-
+                        {s.focusIfLowMisses.leg} #
+                        {s.focusIfLowMisses.startNumber}{" "}
+                        {s.focusIfLowMisses.horseName}
+                        {s.focusIfLowMisses.winOdds != null
+                          ? ` @ ${String(s.focusIfLowMisses.winOdds).replace(".", ",")}`
+                          : ""}
+                      </div>
+                    )}
+                    {s.preRaceNote && (
+                      <div className="reason" style={{ marginTop: "0.15rem" }}>
+                        {s.preRaceNote}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           {tip.dualDriverSignals.length > 0 && (
             <>
               <h3>Dubbelkuskar (2 lopp) · högst odds</h3>
@@ -917,6 +946,61 @@ function V75View({ tip }: { tip: V75DayTip }) {
               </ul>
             </>
           )}
+        </section>
+      )}
+
+      <section className="panel">
+        <h2>
+          {tipsActive ? "Aktiva tips" : "Förhandstips"}
+          {tip.tipsPhaseNote ? ` · ${tipsActive ? "efter förelopp" : "väntar på förelopp"}` : ""}
+        </h2>
+        {!tipsActive && (
+          <p className="panel-lead">
+            {tip.tipsPhaseNote ||
+              "Riktiga tips aktiveras när föreloppen före omgången är klara."}
+          </p>
+        )}
+        <div
+          className="tip-strip"
+          aria-label={`${product} tipprad`}
+          style={tipsActive ? undefined : { opacity: 0.78 }}
+        >
+          <strong>
+            {tipsActive ? "Tipprad" : "Förhandstips"} · {fmtKr(tip.tipCostKr)} kr
+            <span style={{ fontWeight: 500, opacity: 0.85 }}>
+              {" "}
+              ({tip.tipRows} rader ×{" "}
+              {String(tip.rowPriceKr).replace(".", ",")} kr · budget{" "}
+              {tip.tipBudgetMinKr}–{tip.tipBudgetMaxKr} kr)
+            </span>
+          </strong>
+          <div className="tip-strip-picks">
+            {tip.legs.map((l) => (
+              <span key={l.leg} className="tip-strip-pick">
+                <em>{l.leg}</em>
+                {l.pickLabel || "–"}
+              </span>
+            ))}
+          </div>
+        </div>
+        <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
+          {tip.couponLine}
+        </p>
+        <ul className="alert-list table-alerts">
+          {tip.rules.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      </section>
+
+      {(tip.misleadingFavorites.length > 0 ||
+        tip.valueHorses.length > 0 ||
+        tip.homeTrackHorses.length > 0 ||
+        tip.classDropHorses.length > 0 ||
+        tip.highWinRateHorses.length > 0 ||
+        tip.lowOddsReviews.length > 0) && (
+        <section className="panel">
+          <h2>Signaler · klass, seger%, lågodds &amp; värde</h2>
           <div className="grid-2 mobile-stack">
             {tip.classDropHorses.length > 0 && (
               <div>

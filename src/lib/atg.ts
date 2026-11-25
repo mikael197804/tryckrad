@@ -232,6 +232,55 @@ export async function fetchV75Game(gameId: string): Promise<AtgGame> {
   return fetchAtgGame(gameId);
 }
 
+export type AtgCalendarRace = {
+  id: string;
+  number: number;
+  status?: string;
+  startTime?: string;
+};
+
+export type AtgCalendarTrack = {
+  id: number;
+  name: string;
+  races?: AtgCalendarRace[];
+};
+
+export type AtgCalendarDay = {
+  date?: string;
+  tracks?: AtgCalendarTrack[];
+  games?: Record<string, AtgGameSummary[]>;
+};
+
+export async function fetchCalendarDay(date: string): Promise<AtgCalendarDay> {
+  return atgFetch<AtgCalendarDay>(`/calendar/day/${date}`);
+}
+
+export type AtgRaceDetail = AtgRace & {
+  status?: string;
+  starts?: Array<
+    AtgStart & {
+      result?: {
+        place?: number | string;
+        finishOrder?: number;
+        finalOdds?: number;
+      } | null;
+    }
+  >;
+};
+
+export async function fetchRace(raceId: string): Promise<AtgRaceDetail | null> {
+  try {
+    return await atgFetch<AtgRaceDetail>(`/races/${raceId}`);
+  } catch {
+    return null;
+  }
+}
+
+export function isAtgRaceFinished(status: string | null | undefined): boolean {
+  const s = String(status || "").toLowerCase();
+  return s === "results" || s === "finalized" || s === "finished";
+}
+
 /** Tidigare start från /races/{id}/start/{n} – firstPrize i öre. */
 export type AtgPriorRecord = {
   date?: string;
