@@ -3469,7 +3469,35 @@ export default function App() {
   const [showUsers, setShowUsers] = useState(false);
   const selectedDrawRef = useRef<number | null>(null);
   const preCloseStartedRef = useRef(false);
+  /** Ökar vid produktbyte / ny hämtning – ogiltigförklarar in-flight svar. */
+  const loadGenRef = useRef(0);
   selectedDrawRef.current = selectedDraw;
+
+  const switchProduct = useCallback((next: ProductKind) => {
+    if (next === product) return;
+    loadGenRef.current += 1;
+    setProduct(next);
+    setLoading(true);
+    setError(null);
+    setPreCloseNote(null);
+    preCloseStartedRef.current = false;
+    // Rensa fel produkt så tippet inte “försvinner” / visar fel omgång
+    if (next === "oddset") {
+      setOddset(null);
+      setData(null);
+      setV75(null);
+    } else if (next === "v75" || next === "v64") {
+      setV75(null);
+      setData(null);
+      setOddset(null);
+    } else {
+      setData(null);
+      setOddset(null);
+      setV75(null);
+    }
+    setSelectedDraw(null);
+    setSelectedSystem(0);
+  }, [product]);
 
   useEffect(() => {
     void (async () => {
@@ -3530,33 +3558,36 @@ export default function App() {
     async (opts: { fresh?: boolean; silent?: boolean; resetSelection?: boolean }) => {
       const fresh = opts.fresh === true;
       const silent = opts.silent === true;
+      const forProduct = product;
+      const gen = ++loadGenRef.current;
+      const isCurrent = () => gen === loadGenRef.current;
+
       try {
         if (!silent) {
           setLoading(true);
           setError(null);
-          setData(null);
-          setOddset(null);
-          setV75(null);
           if (opts.resetSelection !== false) setSelectedDraw(null);
         } else {
           setRefreshing(true);
         }
 
-        if (product === "v75" || product === "v64") {
-          const label = product === "v64" ? "V64" : "V75";
+        if (forProduct === "v75" || forProduct === "v64") {
+          const label = forProduct === "v64" ? "V64" : "V75";
           const res = await fetch(
-            `/api/${product}${fresh ? "?fresh=1" : ""}`,
+            `/api/${forProduct}${fresh ? "?fresh=1" : ""}`,
             { cache: "no-store" }
           );
+          if (!isCurrent()) return;
           const json = (await res.json()) as V75DayTip & {
             error?: string;
             fresh?: boolean;
           };
+          if (!isCurrent()) return;
           if (!res.ok)
             throw new Error(json.error || `Kunde inte hämta ${label}`);
           setV75({ ...json, product: json.product || label });
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
-        } else if (product === "oddset") {
+        } else if (forProduct === "oddset") {
           const localTips = loadOddsetLocalTips();
           const localLessons = loadOddsetLocalLessons();
           const res = await fetch(
@@ -3574,10 +3605,12 @@ export default function App() {
               }),
             }
           );
+          if (!isCurrent()) return;
           const json = (await res.json()) as OddsetDayTip & {
             error?: string;
             fresh?: boolean;
           };
+          if (!isCurrent()) return;
           if (!res.ok) throw new Error(json.error || "Kunde inte hämta Oddset");
           const tippedAt = json.generatedAt || new Date().toISOString();
           const fromSelected: OddsetTrackedTip[] = (json.selected || []).map(
@@ -3606,20 +3639,25 @@ export default function App() {
             ...loadLocalHistoryPicks(),
             ...oddsetToHistoryPicks(merged, tippedAt),
           ]);
+          if (!isCurrent()) return;
           setOddset({ ...json, tracked: merged });
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else {
           const res = await fetch(
-            `/api/draws?product=${product}${fresh ? "&fresh=1" : ""}`,
+            `/api/draws?product=${forProduct}${fresh ? "&fresh=1" : ""}`,
             { cache: "no-store" }
           );
+          if (!isCurrent()) return;
           const json = (await res.json()) as ApiResponse;
+          if (!isCurrent()) return;
           if (!res.ok) throw new Error(json.error || "Kunde inte hämta data");
           const keep = selectedDrawRef.current;
-          setData({ ...json, product });
+          setData({ ...json, product: forProduct });
           if (opts.resetSelection === false && keep != null) {
             const still =
-              json.draws.some((d) => d.drawNumber === keep) ? keep : json.draws[0]?.drawNumber ?? null;
+              json.draws.some((d) => d.drawNumber === keep)
+                ? keep
+                : json.draws[0]?.drawNumber ?? null;
             setSelectedDraw(still);
           } else {
             setSelectedDraw(json.draws[0]?.drawNumber ?? null);
@@ -3636,10 +3674,12 @@ export default function App() {
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         }
       } catch (e) {
+        if (!isCurrent()) return;
         if (!silent) {
           setError(e instanceof Error ? e.message : "Nätverksfel");
         }
       } finally {
+        if (!isCurrent()) return;
         setLoading(false);
         setRefreshing(false);
       }
@@ -3648,13 +3688,10 @@ export default function App() {
   );
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (cancelled) return;
-      await loadProduct({ resetSelection: true });
-    })();
+    void loadProduct({ resetSelection: true });
     return () => {
-      cancelled = true;
+      // Avbryt state-uppdateringar från föregående produkts hämtning
+      loadGenRef.current += 1;
     };
   }, [loadProduct]);
 
@@ -3893,6 +3930,8 @@ export default function App() {
 
   const closeTimes = useMemo(() => {
     if ((product === "v75" || product === "v64") && v75) {
+      const want = product === "v64" ? "V64" : "V75";
+      if (v75.product && v75.product !== want) return [];
       return (v75.legs || [])
         .map((l) => l.startTime)
         .filter((t): t is string => Boolean(t));
@@ -3903,8 +3942,24 @@ export default function App() {
         : oddset.candidates || [];
       return list.map((c) => c.kickoff).filter(Boolean);
     }
-    return (data?.draws || []).map((d) => d.closeTime).filter(Boolean);
+    if (!data || data.product !== product) return [];
+    return (data.draws || []).map((d) => d.closeTime).filter(Boolean);
   }, [product, data, oddset, v75]);
+
+  const v75Matches =
+    !!v75 &&
+    (product === "v75" || product === "v64") &&
+    (!v75.product || v75.product === (product === "v64" ? "V64" : "V75"));
+  const drawsMatch = !!data && data.product === product;
+  const contentPending =
+    !error &&
+    (loading ||
+      (product === "oddset" && !oddset) ||
+      ((product === "v75" || product === "v64") && !v75Matches) ||
+      (product !== "oddset" &&
+        product !== "v75" &&
+        product !== "v64" &&
+        !drawsMatch));
 
   // Schemalägg uppdatering 12 min före spelstopp (alla produkter)
   useEffect(() => {
@@ -4039,7 +4094,7 @@ export default function App() {
               key={p}
               type="button"
               className={`product-btn ${product === p ? "active" : ""}`}
-              onClick={() => setProduct(p)}
+              onClick={() => switchProduct(p)}
             >
               <span className="btn-label-full">{productLabel(p)}</span>
               <span className="btn-label-short">
@@ -4058,21 +4113,21 @@ export default function App() {
           <button
             type="button"
             className={`product-btn ${product === "oddset" ? "active" : ""}`}
-            onClick={() => setProduct("oddset")}
+            onClick={() => switchProduct("oddset")}
           >
             Oddset
           </button>
           <button
             type="button"
             className={`product-btn ${product === "v75" ? "active" : ""}`}
-            onClick={() => setProduct("v75")}
+            onClick={() => switchProduct("v75")}
           >
             V75
           </button>
           <button
             type="button"
             className={`product-btn ${product === "v64" ? "active" : ""}`}
-            onClick={() => setProduct("v64")}
+            onClick={() => switchProduct("v64")}
           >
             V64
           </button>
@@ -4165,7 +4220,7 @@ export default function App() {
           loading={historyLoading}
           onClose={() => setShowHistory(false)}
           onRefresh={() => void loadHistory()}
-          onOpenProduct={(p) => setProduct(p)}
+          onOpenProduct={(p) => switchProduct(p)}
         />
       )}
 
@@ -4179,7 +4234,7 @@ export default function App() {
         </div>
       )}
 
-      {loading && (
+      {contentPending && (
         <div className="loading">
           {product === "v75" || product === "v64"
             ? `Hämtar ${
@@ -4192,17 +4247,19 @@ export default function App() {
       )}
       {error && <div className="status-banner error">{error}</div>}
 
-      {!loading && !error && product === "oddset" && oddset && (
+      {!contentPending && !error && product === "oddset" && oddset && (
         <OddsetView tip={oddset} />
       )}
 
-      {!loading &&
+      {!contentPending &&
         !error &&
         (product === "v75" || product === "v64") &&
+        v75Matches &&
         v75 && <V75View tip={v75} />}
 
-      {data &&
-        data.product === product &&
+      {!contentPending &&
+        !error &&
+        drawsMatch &&
         product !== "oddset" &&
         product !== "v75" &&
         product !== "v64" && (
