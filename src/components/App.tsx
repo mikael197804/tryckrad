@@ -5134,9 +5134,10 @@ export default function App() {
                 </section>
 
                 <section className="panel panel-articles">
-                  <h2>Artiklar & tips</h2>
+                  <h2>Artiklar, bloggar & tips</h2>
                   <p className="panel-lead">
-                    Nyheter kopplade till lagen i just det här speltillfället.
+                    Nyheter och lagbloggar/vloggar kopplade till lagen i just det
+                    här speltillfället – vägs in i tippet.
                   </p>
                   {draw.articles.length === 0 ? (
                     <p className="panel-lead">Inga träffar just nu.</p>

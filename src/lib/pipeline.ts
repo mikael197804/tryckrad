@@ -4,10 +4,14 @@ import { loadLearningMemory } from "./learning";
 import { rememberDaily192 } from "./pp192History";
 import { generateMaltipsetSystems, generateSystems } from "./systems";
 import {
+  applyTeamMediaToMatch,
+  mergeMediaIntoPick,
+} from "./teamMedia";
+import {
   fetchDrawsForProduct,
   type ProductKind,
 } from "./svenskaspel";
-import type { DrawBundle } from "./types";
+import type { DrawBundle, MatchAnalysis } from "./types";
 
 function parseRowPrice(value: string): number {
   const n = Number(String(value).replace(",", "."));
@@ -68,16 +72,35 @@ export async function buildAllDrawBundles(
           leagueSummary,
         } = await analyzeDraw(draw, draws, product, learning);
         const rowPrice = parseRowPrice(draw.rowPrice);
-        const [articles, systems] = await Promise.all([
-          fetchArticlesForMatches(matches, draw.drawNumber, product).catch(
-            () => []
-          ),
-          Promise.resolve(
-            product === "maltipset"
-              ? generateMaltipsetSystems(matches, rowPrice)
-              : generateSystems(matches, { product })
-          ),
-        ]);
+        const media = await fetchArticlesForMatches(
+          matches,
+          draw.drawNumber,
+          product
+        ).catch(() => ({ articles: [], signals: [] }));
+
+        // Lagbloggar/vloggar vägs in i tippet innan system byggs
+        const enrichedMatches: MatchAnalysis[] = matches.map((m) => {
+          if (!media.signals.length) return m;
+          const adj = applyTeamMediaToMatch(m, media.signals);
+          if (!adj.notes.length && !adj.forceCoverAway) return m;
+          const pick = mergeMediaIntoPick(m.pick, adj.forceCoverAway);
+          const pickReason = adj.notes.length
+            ? `${m.pickReason}. ${adj.notes.join(". ")}`
+            : m.pickReason;
+          return {
+            ...m,
+            score1: adj.score1,
+            scoreX: adj.scoreX,
+            score2: adj.score2,
+            pick,
+            pickReason,
+          };
+        });
+
+        const systems =
+          product === "maltipset"
+            ? generateMaltipsetSystems(enrichedMatches, rowPrice)
+            : generateSystems(enrichedMatches, { product });
 
         const bundle: DrawBundle = {
           drawNumber: draw.drawNumber,
@@ -91,8 +114,8 @@ export async function buildAllDrawBundles(
           netSale: draw.currentNetSale ?? null,
           sport: draw.sport?.name ?? defaultSport(product),
           leagueSummary,
-          matches,
-          articles,
+          matches: enrichedMatches,
+          articles: media.articles,
           systems,
           fatigueAlerts: fatigueAlerts ?? [],
           tableAlerts: tableAlerts ?? [],

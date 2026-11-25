@@ -1,4 +1,5 @@
 import type { Article, MatchAnalysis } from "./types";
+import { collectTeamBlogMedia } from "./teamMedia";
 
 type FeedItem = {
   title: string;
@@ -106,6 +107,18 @@ const TEAM_ALIASES: Record<string, string[]> = {
   aik: ["aik"],
   sodertalje: ["sodertalje", "södertälje"],
   moda: ["modo", "modo hockey"],
+  mjolby: ["mjolby", "mjölby", "mjölby hc", "mhc"],
+  boro: ["boro", "vetlanda", "boro/vetlanda", "boro vetlanda"],
+  kalmar: ["kalmar", "kalmar hc"],
+  mora: ["mora", "mora ik"],
+  almtuna: ["almtuna"],
+  nybro: ["nybro", "nybro vikings"],
+  vimmerby: ["vimmerby"],
+  vasteras: ["vasteras", "västerås", "vik"],
+  ostersund: ["ostersund", "östersund"],
+  karlskoga: ["karlskoga", "bik karlskoga", "bik"],
+  vitahasten: ["vita hasten", "vita hästen"],
+  boras: ["boras", "borås"],
   toronto: ["toronto", "maple leafs"],
   carolina: ["carolina", "hurricanes"],
   pittsburgh: ["pittsburgh", "penguins"],
@@ -152,7 +165,7 @@ export async function fetchArticlesForMatches(
     | "stryktipset"
     | "europatipset"
     | "maltipset" = "powerplay"
-): Promise<Article[]> {
+): Promise<{ articles: Article[]; signals: import("./teamMedia").TeamMediaSignal[] }> {
   const teamQuery = [
     ...new Set(matches.flatMap((m) => [m.home.name, m.away.name])),
   ]
@@ -208,6 +221,12 @@ export async function fetchArticlesForMatches(
           },
           {
             url: `https://news.google.com/rss/search?q=${encodeURIComponent(
+              `(${teamQuery || "HockeyEttan"}) (blogg OR vlogg OR lagblogg OR matchrapport)`
+            )}&hl=sv&gl=SE&ceid=SE:sv`,
+            source: "Lagbloggar",
+          },
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(
               "Powerplay tips ishockey Svenska Spel"
             )}&hl=sv&gl=SE&ceid=SE:sv`,
             source: "Powerplay-tips",
@@ -216,7 +235,7 @@ export async function fetchArticlesForMatches(
 
   const collected: FeedItem[] = [];
 
-  await Promise.all(
+  const feedPromise = Promise.all(
     feeds.map(async (feed) => {
       const text = await fetchText(feed.url);
       if (!text) return;
@@ -249,6 +268,15 @@ export async function fetchArticlesForMatches(
     })
   );
 
+  const blogPromise = footballProduct
+    ? Promise.resolve({ articles: [] as Article[], signals: [] })
+    : collectTeamBlogMedia(matches).catch(() => ({
+        articles: [] as Article[],
+        signals: [],
+      }));
+
+  const [, blogMedia] = await Promise.all([feedPromise, blogPromise]);
+
   const articles: Article[] = [];
   const seen = new Set<string>();
 
@@ -264,9 +292,9 @@ export async function fetchArticlesForMatches(
           ? /stryktipset|europatipset|måltipset|maltipset|topptipset|premier|champions|championship|allsvenskan|tips|match/i.test(
               item.title
             ) || /stryk|europa|måltips|topptipset|tips/i.test(item.snippet)
-          : /powerplay|shl|hockeyallsvenskan|nhl|tips|match/i.test(
+          : /powerplay|shl|hockeyallsvenskan|hockeyettan|nhl|tips|match|blogg|vlogg/i.test(
               item.title
-            ) || /powerplay|shl|tips/i.test(item.snippet));
+            ) || /powerplay|shl|blogg|vlogg|tips/i.test(item.snippet));
       if (!general) continue;
     }
     articles.push({
@@ -280,7 +308,20 @@ export async function fetchArticlesForMatches(
     });
   }
 
+  for (const a of blogMedia.articles) {
+    const key = a.title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    articles.push({
+      ...a,
+      drawNumbers: [drawNumber],
+    });
+  }
+
   articles.sort((a, b) => {
+    const aBlog = /blogg|vlogg|lagblogg/i.test(a.source) ? 1 : 0;
+    const bBlog = /blogg|vlogg|lagblogg/i.test(b.source) ? 1 : 0;
+    if (bBlog !== aBlog) return bBlog - aBlog;
     if (b.matchedTeams.length !== a.matchedTeams.length) {
       return b.matchedTeams.length - a.matchedTeams.length;
     }
@@ -289,5 +330,5 @@ export async function fetchArticlesForMatches(
     return tb - ta;
   });
 
-  return articles.slice(0, 12);
+  return { articles: articles.slice(0, 18), signals: blogMedia.signals };
 }

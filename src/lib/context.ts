@@ -306,6 +306,55 @@ async function fetchHaTable(league: string): Promise<LeagueTable | null> {
   return rows.length ? { league, size: rows.length, rows } : null;
 }
 
+/** HockeyEttan Södra – overview-id uppdateras per säsong. */
+const HOCKEYETTAN_SODRA_OVERVIEW = 21044;
+
+async function fetchHockeyEttanTable(
+  league: string
+): Promise<LeagueTable | null> {
+  try {
+    const res = await fetch(
+      `https://stats.swehockey.se/ScheduleAndResults/Overview/${HOCKEYETTAN_SODRA_OVERVIEW}`,
+      {
+        headers: {
+          Accept: "text/html",
+          "User-Agent": "TryckRad/1.0 (tabell-analys)",
+        },
+        next: { revalidate: 600 },
+      }
+    );
+    if (!res.ok) return null;
+    const page = await res.text();
+    // RK, Team, GP, W, T, L, GF:GA, GD, TP, …
+    const fullRe =
+      /<tr>\s*<td class="tdNormal">(\d+)<\/td><td class="tdNormal">([^<]+)<\/td><td class="tdNormal">(\d+)<\/td><td class="tdNormal">\d+<\/td><td class="tdNormal">\d+<\/td><td class="tdNormal">\d+<\/td>[\s\S]*?<td class="tdNormal">(\d+)<\/td><td class="tdNormal d-none d-md-table-cell">/g;
+    const rows: StandingRow[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = fullRe.exec(page))) {
+      const name = m[2].trim();
+      rows.push({
+        name,
+        aliases: [
+          name,
+          name.replace(/\s+HC$/i, ""),
+          name.replace(/\s+IK$/i, ""),
+          name.replace(/\s+AIF$/i, ""),
+          name.replace(/^HC\s+/i, ""),
+          name.replace(/Boro\/Vetlanda HC/i, "Boro"),
+          name.replace(/Mjölby HC/i, "Mjölby"),
+        ],
+        rank: Number(m[1]),
+        played: Number(m[3]),
+        points: Number(m[4]),
+      });
+    }
+    if (!rows.length) return null;
+    return { league, size: rows.length, rows };
+  } catch {
+    return null;
+  }
+}
+
 export async function loadLeagueTables(
   leagues: string[]
 ): Promise<Map<string, LeagueTable>> {
@@ -318,7 +367,9 @@ export async function loadLeagueTables(
       let table: LeagueTable | null = null;
       if (key === "shl") table = await fetchShlTable(league);
       else if (key === "hockeyallsvenskan") table = await fetchHaTable(league);
-      else if (key === "nhl") table = await fetchEspnNhlTable(league);
+      else if (key.includes("hockeyettan") || /hockey\s*ettan/.test(key)) {
+        table = await fetchHockeyEttanTable(league);
+      } else if (key === "nhl") table = await fetchEspnNhlTable(league);
       else if (ESPN_SOCCER[key]) {
         table = await fetchEspnSoccerTable(ESPN_SOCCER[key], league);
       }
