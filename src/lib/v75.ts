@@ -174,6 +174,10 @@ export type V75DayTip = {
   tipCostKr: number;
   tipBudgetMinKr: number;
   tipBudgetMaxKr: number;
+  /** Tipsstreck, t.ex. "3-2-2-3-2-3" (hästar per avdelning). */
+  tipsStreck: string;
+  /** Visningstext, t.ex. "TS 3-2-2-3-2-3". */
+  tipsStreckLabel: string;
   atgUrl: string;
   legs: V75LegAnalysis[];
   couponLine: string;
@@ -913,7 +917,9 @@ function buildDriverStrategies(
       .map((m) => toStrategyMount(m.leg, m.horse))
       .sort((a, b) => a.leg - b.leg);
 
-    const withOdds = mounts.filter((m) => m.winOdds != null && m.winOdds < 80);
+    const withOdds = mounts.filter(
+      (m) => m.winOdds != null && m.winOdds > 1 && m.winOdds < 80
+    );
     let lowMount: V75DriverStrategyMount | null = null;
     let highMount: V75DriverStrategyMount | null = null;
 
@@ -928,11 +934,12 @@ function buildDriverStrategies(
         highMount = withOdds.find((m) => m.leg !== lowMount!.leg) || null;
       }
     } else if (mounts.length >= 2) {
+      // Fallback via streck% – ignorera saknade/99,99-odds i jämförelsen
       const byPct = [...mounts].sort(
         (a, b) => (b.poolPct ?? 0) - (a.poolPct ?? 0)
       );
       lowMount = byPct[0];
-      highMount = byPct[byPct.length - 1];
+      highMount = [...byPct].reverse().find((m) => m.leg !== lowMount!.leg) || null;
     }
 
     if (!lowMount || !highMount || lowMount.leg === highMount.leg) continue;
@@ -1812,6 +1819,10 @@ export async function buildAtgPoolDayTip(
   const couponLine = legs
     .map((l) => `${product}-${l.leg}: ${l.pickLabel || "–"}`)
     .join(" · ");
+  const tipsStreck = legs
+    .map((l) => String(l.pickNumbers?.length || 0))
+    .join("-");
+  const tipsStreckLabel = tipsStreck ? `TS ${tipsStreck}` : "TS –";
 
   const pool = product === "V64" ? game.pools?.V64 : game.pools?.V75;
   const jackpot =
@@ -1836,6 +1847,8 @@ export async function buildAtgPoolDayTip(
     tipCostKr: fitted.costKr,
     tipBudgetMinKr: V75_TIP_MIN_KR,
     tipBudgetMaxKr: V75_TIP_MAX_KR,
+    tipsStreck,
+    tipsStreckLabel,
     atgUrl: `https://www.atg.se/spel/${product}/${found.date}`,
     legs,
     couponLine,
@@ -1856,10 +1869,10 @@ export async function buildAtgPoolDayTip(
     headlineSignals,
     rules: [
       tipsActivated
-        ? `Riktiga tips aktiva (förelopp klara). Tipprad ${V75_TIP_MIN_KR}–${V75_TIP_MAX_KR} kr (nu ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader × ${String(rowPriceKr).replace(".", ",")} kr).`
-        : `Förhandstips – riktiga tips aktiveras efter föreloppen. Preliminär rad ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader.`,
+        ? `Riktiga tips aktiva (förelopp klara). ${tipsStreckLabel} · ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader × ${String(rowPriceKr).replace(".", ",")} kr (budget ${V75_TIP_MIN_KR}–${V75_TIP_MAX_KR}).`
+        : `Förhandstips – ${tipsStreckLabel} visas nu; tippboostar aktiveras efter föreloppen. ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader.`,
       `ATG-data: vinnarodds, ${product}-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).`,
-      "Kuskanalys före tippraden: lågodds först, högodds om kusken inte vinner med favoriten.",
+      "TS = tipsstreck (antal hästar per avdelning). Kuskanalys ligger före tippraden: lågodds först, högodds om kusken inte vinner med favoriten.",
       "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
       "Högre seger% = klart över fältets median (karriärstatistik).",
       `Dubbelkusk = kusk i exakt två ${product}-lopp; fokus på hästen med högst vinnarodds (brukar ofta ta en seger).`,

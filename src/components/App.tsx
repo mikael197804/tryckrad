@@ -951,39 +951,51 @@ function V75View({ tip }: { tip: V75DayTip }) {
 
       <section className="panel">
         <h2>
-          {tipsActive ? "Aktiva tips" : "Förhandstips"}
-          {tip.tipsPhaseNote ? ` · ${tipsActive ? "efter förelopp" : "väntar på förelopp"}` : ""}
+          {product} tipprad ·{" "}
+          {tip.tipsStreckLabel ||
+            `TS ${tip.legs.map((l) => l.pickNumbers?.length || 0).join("-")}`}
+          {!tipsActive ? " · förhands" : ""}
         </h2>
         {!tipsActive && (
           <p className="panel-lead">
             {tip.tipsPhaseNote ||
-              "Riktiga tips aktiveras när föreloppen före omgången är klara."}
+              "Riktiga tippboostar aktiveras när föreloppen före omgången är klara – TS/tipprad visas redan nu."}
           </p>
         )}
-        <div
-          className="tip-strip"
-          aria-label={`${product} tipprad`}
-          style={tipsActive ? undefined : { opacity: 0.78 }}
-        >
+        <div className="tip-strip" aria-label={`${product} tipsstreck`}>
           <strong>
-            {tipsActive ? "Tipprad" : "Förhandstips"} · {fmtKr(tip.tipCostKr)} kr
+            {tip.tipsStreckLabel ||
+              `TS ${tip.legs.map((l) => l.pickNumbers?.length || 0).join("-")}`}
+            {" · "}
+            {fmtKr(tip.tipCostKr)} kr
             <span style={{ fontWeight: 500, opacity: 0.85 }}>
               {" "}
               ({tip.tipRows} rader ×{" "}
               {String(tip.rowPriceKr).replace(".", ",")} kr · budget{" "}
               {tip.tipBudgetMinKr}–{tip.tipBudgetMaxKr} kr)
+              {!tipsActive ? " · förhandstips" : ""}
             </span>
           </strong>
           <div className="tip-strip-picks">
             {tip.legs.map((l) => (
               <span key={l.leg} className="tip-strip-pick">
-                <em>{l.leg}</em>
+                <em>
+                  {product === "V64" ? "V64-" : "V75-"}
+                  {l.leg}
+                </em>
                 {l.pickLabel || "–"}
+                <span style={{ opacity: 0.65, marginLeft: "0.25rem" }}>
+                  ({l.pickNumbers?.length || 0})
+                </span>
               </span>
             ))}
           </div>
         </div>
         <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
+          <strong style={{ fontWeight: 650 }}>
+            {tip.tipsStreckLabel || "TS"}
+          </strong>
+          {" · "}
           {tip.couponLine}
         </p>
         <ul className="alert-list table-alerts">
