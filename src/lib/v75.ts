@@ -1,18 +1,20 @@
 import {
   atgDistToPct,
   atgOddsToDecimal,
+  atgPoolDistRaw,
+  fetchAtgGame,
   fetchStartDetailsForRace,
-  fetchV75Game,
-  findUpcomingV75,
+  findUpcomingAtgPool,
   personName,
   type AtgGame,
+  type AtgPoolProduct,
   type AtgPriorRecord,
   type AtgRace,
   type AtgStart,
   type AtgStartDetail,
 } from "./atg";
 import {
-  collectExternalV75Tips,
+  collectExternalAtgTips,
   type ExternalTipMention,
   type TipSourceReport,
 } from "./v75Tips";
@@ -112,6 +114,8 @@ export type V75LegAnalysis = {
 
 export type V75DayTip = {
   generatedAt: string;
+  /** V75 eller V64 – samma analysmotor. */
+  product: AtgPoolProduct;
   gameId: string;
   playDate: string;
   playDateLabel: string;
@@ -448,10 +452,11 @@ function analyzeHorse(
   trackId: number | null,
   trackName: string,
   mentions: ExternalTipMention[],
-  enrich: HorseEnrichment
+  enrich: HorseEnrichment,
+  product: AtgPoolProduct = "V75"
 ): V75HorseTip {
   const winOdds = atgOddsToDecimal(start.pools?.vinnare?.odds);
-  const v75Pct = atgDistToPct(start.pools?.V75?.betDistribution);
+  const v75Pct = atgDistToPct(atgPoolDistRaw(start, product));
   const impliedWinPct =
     winOdds != null && winOdds > 1
       ? Math.round((100 / winOdds) * 10) / 10
@@ -536,7 +541,7 @@ function analyzeHorse(
   let misleading: string | null = null;
   if (v75Pct != null && v75Pct >= 28 && impliedWinPct != null) {
     if (impliedWinPct + 8 < v75Pct) {
-      misleading = `Högt V75-streck (${v75Pct
+      misleading = `Högt ${product}-streck (${v75Pct
         .toFixed(1)
         .replace(".", ",")}%) mot vinnarodds som ger ≈${impliedWinPct
         .toFixed(1)
@@ -612,7 +617,7 @@ function analyzeHorse(
       reasons.push(
         `överodds/värde: modell ${model
           .toFixed(1)
-          .replace(".", ",")}% vs V75 ${String(v75Pct ?? "–").replace(".", ",")}%)`
+          .replace(".", ",")}% vs ${product} ${String(v75Pct ?? "–").replace(".", ",")}%)`
       );
     }
   } else if (
@@ -678,10 +683,13 @@ function analyzeHorse(
 }
 
 /**
- * Kuskar i exakt två V75-lopp: flagga hästen med högst vinnarodds.
+ * Kuskar i exakt två avdelningar: flagga hästen med högst vinnarodds.
  * Mönster: de brukar vinna ett av loppen, ofta med den dyraste hästen.
  */
-function applyDualDriverSignals(legs: V75LegAnalysis[]): V75DualDriverSignal[] {
+function applyDualDriverSignals(
+  legs: V75LegAnalysis[],
+  product: AtgPoolProduct = "V75"
+): V75DualDriverSignal[] {
   type Mount = {
     leg: number;
     horse: V75HorseTip;
@@ -733,9 +741,9 @@ function applyDualDriverSignals(legs: V75LegAnalysis[]): V75DualDriverSignal[] {
     const otherOdds = realOdds(other.horse) ?? other.horse.winOdds;
 
     const note =
-      `${row.driver} kör V75-${a.leg} (#${a.horse.startNumber} ${a.horse.name}` +
+      `${row.driver} kör ${product}-${a.leg} (#${a.horse.startNumber} ${a.horse.name}` +
       `${a.horse.winOdds != null ? ` @ ${String(a.horse.winOdds).replace(".", ",")}` : ""})` +
-      ` och V75-${b.leg} (#${b.horse.startNumber} ${b.horse.name}` +
+      ` och ${product}-${b.leg} (#${b.horse.startNumber} ${b.horse.name}` +
       `${b.horse.winOdds != null ? ` @ ${String(b.horse.winOdds).replace(".", ",")}` : ""})` +
       ` – fokus på högsta odds: #${focus.horse.startNumber} ${focus.horse.name}` +
       (focusOdds != null ? ` @ ${String(focusOdds).replace(".", ",")}` : "");
@@ -768,7 +776,7 @@ function applyDualDriverSignals(legs: V75LegAnalysis[]): V75DualDriverSignal[] {
       const alert =
         leg.leg === focus.leg
           ? `Dubbelkusk ${row.driver}: högst odds #${focus.horse.startNumber} ${focus.horse.name}`
-          : `Dubbelkusk ${row.driver}: även V75-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name} (högst odds)`;
+          : `Dubbelkusk ${row.driver}: även ${product}-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name} (högst odds)`;
       if (!leg.alerts.some((x) => x.includes(`Dubbelkusk ${row.driver}`))) {
         leg.alerts.unshift(alert);
       }
@@ -812,7 +820,8 @@ function analyzeLeg(
   race: AtgRace,
   leg: number,
   allMentions: ExternalTipMention[],
-  details: Map<number, AtgStartDetail>
+  details: Map<number, AtgStartDetail>,
+  product: AtgPoolProduct = "V75"
 ): V75LegAnalysis {
   const trackName = race.track?.name || "Okänd bana";
   const trackId = race.track?.id ?? null;
@@ -826,12 +835,20 @@ function analyzeLeg(
 
   const horses = starts
     .map((s) =>
-      analyzeHorse(s, leg, trackId, trackName, allMentions, {
-        detail: details.get(s.number) || null,
-        currentFirstPrizeKr: firstPrize,
-        currentDivisionRank: div.rank,
-        fieldMedianWinPct,
-      })
+      analyzeHorse(
+        s,
+        leg,
+        trackId,
+        trackName,
+        allMentions,
+        {
+          detail: details.get(s.number) || null,
+          currentFirstPrizeKr: firstPrize,
+          currentDivisionRank: div.rank,
+          fieldMedianWinPct,
+        },
+        product
+      )
     )
     .sort((a, b) => b.score - a.score);
 
@@ -1221,13 +1238,15 @@ function fitLegsToBudget(
   return { legs: nextLegs, rows, costKr };
 }
 
-export async function buildV75DayTip(): Promise<V75DayTip> {
-  const found = await findUpcomingV75(12, 2);
+export async function buildAtgPoolDayTip(
+  product: AtgPoolProduct
+): Promise<V75DayTip> {
+  const found = await findUpcomingAtgPool(product, 12, 2);
   if (!found) {
-    throw new Error("Ingen V75-omgång hittades hos ATG just nu.");
+    throw new Error(`Ingen ${product}-omgång hittades hos ATG just nu.`);
   }
 
-  const game: AtgGame = await fetchV75Game(found.summary.id);
+  const game: AtgGame = await fetchAtgGame(found.summary.id);
   const races = [...(game.races || [])].sort((a, b) => a.number - b.number);
 
   const horseIndex: Array<{ name: string; number: number; leg: number }> = [];
@@ -1239,13 +1258,15 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     }
   });
 
-  const { mentions, sources } = await collectExternalV75Tips(horseIndex);
+  const { mentions, sources } = await collectExternalAtgTips(
+    product,
+    horseIndex
+  );
   const horseMentions = mentions.filter((m) => m.horseName);
   const headlineSignals = mentions
     .filter((m) => !m.horseName && m.snippet)
     .slice(0, 12);
 
-  // Historik per häst (förstapris i tidigare lopp) – klassdroppar
   const detailsByRace = new Map<string, Map<number, AtgStartDetail>>();
   await Promise.all(
     races.map(async (race) => {
@@ -1262,11 +1283,12 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
       race,
       idx + 1,
       horseMentions,
-      detailsByRace.get(race.id) || new Map()
+      detailsByRace.get(race.id) || new Map(),
+      product
     )
   );
 
-  const dualDriverSignals = applyDualDriverSignals(rawLegs);
+  const dualDriverSignals = applyDualDriverSignals(rawLegs, product);
 
   const rowPriceKr = game.newBettingSystem ? 0.6 : 1;
   const fitted = fitLegsToBudget(
@@ -1378,28 +1400,24 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     ...new Set(legs.map((l) => l.trackName).filter(Boolean)),
   ];
   const couponLine = legs
-    .map((l) => `V75-${l.leg}: ${l.pickLabel || "–"}`)
+    .map((l) => `${product}-${l.leg}: ${l.pickLabel || "–"}`)
     .join(" · ");
 
-  const pool = game.pools?.V75;
+  const pool = product === "V64" ? game.pools?.V64 : game.pools?.V75;
   const jackpot =
-    pool?.jackpotAmount ??
-    found.summary.jackpotAmount ??
-    null;
-  const estimated =
-    found.summary.estimatedJackpot ?? null;
+    pool?.jackpotAmount ?? found.summary.jackpotAmount ?? null;
+  const estimated = found.summary.estimatedJackpot ?? null;
 
   return {
     generatedAt: new Date().toISOString(),
+    product,
     gameId: game.id,
     playDate: found.date,
     playDateLabel: fmtDateLabel(found.date),
     status: game.status || found.summary.status,
     trackNames,
     startTime:
-      found.summary.startTime ||
-      legs[0]?.startTime ||
-      null,
+      found.summary.startTime || legs[0]?.startTime || null,
     turnoverKr: pool?.turnover ?? null,
     jackpotKr: jackpot,
     estimatedJackpotKr: estimated,
@@ -1408,7 +1426,7 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     tipCostKr: fitted.costKr,
     tipBudgetMinKr: V75_TIP_MIN_KR,
     tipBudgetMaxKr: V75_TIP_MAX_KR,
-    atgUrl: `https://www.atg.se/spel/V75/${found.date}`,
+    atgUrl: `https://www.atg.se/spel/${product}/${found.date}`,
     legs,
     couponLine,
     valueHorses,
@@ -1422,16 +1440,23 @@ export async function buildV75DayTip(): Promise<V75DayTip> {
     headlineSignals,
     rules: [
       `Tippraden kostar ${V75_TIP_MIN_KR}–${V75_TIP_MAX_KR} kr (nu ${String(fitted.costKr).replace(".", ",")} kr · ${fitted.rows} rader × ${String(rowPriceKr).replace(".", ",")} kr).`,
-      "ATG-data: vinnarodds, V75-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).",
+      `ATG-data: vinnarodds, ${product}-streckprocent, form, hemma-bana och tidigare förstapris (klassnivå).`,
       "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
       "Högre seger% = klart över fältets median (karriärstatistik).",
-      "Dubbelkusk = kusk i exakt två V75-lopp; fokus på hästen med högst vinnarodds (brukar ofta ta en seger).",
+      `Dubbelkusk = kusk i exakt två ${product}-lopp; fokus på hästen med högst vinnarodds (brukar ofta ta en seger).`,
       "Lågoddsare (@ ≤5,5) granskas mot seger%, form och klassdroppe – stödd eller svag.",
-      "Överodds = modellchans högre än V75-procenten. Missvisande favorit = högt streck utan stöd.",
+      `Överodds = modellchans högre än ${product}-procenten. Missvisande favorit = högt streck utan stöd.`,
       "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News.",
       "Analys – ingen garanti. 18+ spelansvarsfullt.",
     ],
-    disclaimer:
-      "Analysverktyg för V75 – inga spelråd med garanti. Odds och streck ändras. 18+ spela ansvarsfullt.",
+    disclaimer: `Analysverktyg för ${product} – inga spelråd med garanti. Odds och streck ändras. 18+ spela ansvarsfullt.`,
   };
+}
+
+export async function buildV75DayTip(): Promise<V75DayTip> {
+  return buildAtgPoolDayTip("V75");
+}
+
+export async function buildV64DayTip(): Promise<V75DayTip> {
+  return buildAtgPoolDayTip("V64");
 }

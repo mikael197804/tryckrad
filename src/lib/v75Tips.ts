@@ -409,12 +409,17 @@ async function scrapeSulkysport(): Promise<{
   };
 }
 
-async function scrapeGoogleNewsHeadlines(): Promise<{
+async function scrapeGoogleNewsHeadlinesFor(
+  product: "V75" | "V64" = "V75"
+): Promise<{
   mentions: ExternalTipMention[];
   report: TipSourceReport;
 }> {
-  const url =
-    "https://news.google.com/rss/search?q=V75+tips+Solvalla&hl=sv&gl=SE&ceid=SE:sv";
+  const q =
+    product === "V64"
+      ? "V64+tips+ATG"
+      : "V75+tips+Solvalla";
+  const url = `https://news.google.com/rss/search?q=${q}&hl=sv&gl=SE&ceid=SE:sv`;
   const page = await fetchText(url);
   if (!page.ok) {
     return {
@@ -432,6 +437,7 @@ async function scrapeGoogleNewsHeadlines(): Promise<{
     0,
     12
   );
+  const productRe = product === "V64" ? /v64/i : /v75/i;
   const mentions: ExternalTipMention[] = [];
   for (const it of items) {
     const block = it[1];
@@ -441,7 +447,7 @@ async function scrapeGoogleNewsHeadlines(): Promise<{
     const title = stripHtml(titleM?.[1] || "");
     const sourceM = block.match(/<source[^>]*>(.*?)<\/source>/);
     const source = stripHtml(sourceM?.[1] || "Nyhet");
-    if (!title || !/v75/i.test(title)) continue;
+    if (!title || !productRe.test(title)) continue;
     mentions.push({
       source: `Google News · ${source}`,
       url,
@@ -459,25 +465,45 @@ async function scrapeGoogleNewsHeadlines(): Promise<{
       source: "Google News",
       url,
       ok: true,
-      title: "V75 tips – RSS",
+      title: `${product} tips – RSS`,
       note: `${mentions.length} rubriker`,
     },
   };
 }
 
-export async function collectExternalV75Tips(
+async function scrapeGoogleNewsHeadlines(): Promise<{
+  mentions: ExternalTipMention[];
+  report: TipSourceReport;
+}> {
+  return scrapeGoogleNewsHeadlinesFor("V75");
+}
+
+/** Externa tips – samma sajter; V64 söker V64-sidor där det går. */
+export async function collectExternalAtgTips(
+  product: "V75" | "V64",
   horses: Array<{ name: string; number: number; leg: number }>
 ): Promise<{
   mentions: ExternalTipMention[];
   sources: TipSourceReport[];
 }> {
-  const tasks = [
-    scrapeTravcash(horses),
-    scrapeAftonbladet(horses),
-    scrapeExpressenHeadlines(),
-    scrapeSulkysport(),
-    scrapeGoogleNewsHeadlines(),
-  ];
+  // Tipsscrapers är V75-orienterade; hästnamnsmatchning fungerar ändå för V64.
+  // Google News anpassas till produkten.
+  const tasks =
+    product === "V64"
+      ? [
+          scrapeTravcash(horses),
+          scrapeAftonbladet(horses),
+          scrapeExpressenHeadlines(),
+          scrapeSulkysport(),
+          scrapeGoogleNewsHeadlinesFor("V64"),
+        ]
+      : [
+          scrapeTravcash(horses),
+          scrapeAftonbladet(horses),
+          scrapeExpressenHeadlines(),
+          scrapeSulkysport(),
+          scrapeGoogleNewsHeadlines(),
+        ];
   const settled = await Promise.allSettled(tasks);
   const mentions: ExternalTipMention[] = [];
   const sources: TipSourceReport[] = [];
@@ -496,4 +522,13 @@ export async function collectExternalV75Tips(
     }
   }
   return { mentions, sources };
+}
+
+export async function collectExternalV75Tips(
+  horses: Array<{ name: string; number: number; leg: number }>
+): Promise<{
+  mentions: ExternalTipMention[];
+  sources: TipSourceReport[];
+}> {
+  return collectExternalAtgTips("V75", horses);
 }

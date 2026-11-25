@@ -579,9 +579,10 @@ type ProductKind =
   | "europatipset"
   | "maltipset"
   | "oddset"
-  | "v75";
+  | "v75"
+  | "v64";
 
-const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "v75">> = [
+const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "v75" | "v64">> = [
   "topptipset",
   "powerplay",
   "stryktipset",
@@ -618,6 +619,8 @@ function productLabel(p: ProductKind): string {
       return "Oddset";
     case "v75":
       return "V75";
+    case "v64":
+      return "V64";
   }
 }
 
@@ -681,7 +684,7 @@ function V75HorseRow({ h }: { h: V75HorseTip }) {
             ? ` · vinnare ${String(h.winOdds).replace(".", ",")}`
             : ""}
           {h.v75Pct != null
-            ? ` · V75 ${String(h.v75Pct).replace(".", ",")}%`
+            ? ` · streck ${String(h.v75Pct).replace(".", ",")}%`
             : ""}
           {h.winRatePct != null
             ? ` · seger% ${String(h.winRatePct).replace(".", ",")}`
@@ -719,10 +722,12 @@ function V75LegCard({
   leg,
   open,
   onToggle,
+  productLabel = "V75",
 }: {
   leg: V75LegAnalysis;
   open: boolean;
   onToggle: () => void;
+  productLabel?: string;
 }) {
   const shown = leg.horses.filter(
     (h) =>
@@ -757,7 +762,9 @@ function V75LegCard({
       >
         <span className="history-game-toggle-main">
           <span className="history-game-toggle-title">
-            <span className="match-num v75-toggle-num">V75-{leg.leg}</span>{" "}
+            <span className="match-num v75-toggle-num">
+              {productLabel}-{leg.leg}
+            </span>{" "}
             {shortName}
           </span>
           <span className="reason">
@@ -799,6 +806,7 @@ function V75LegCard({
 }
 
 function V75View({ tip }: { tip: V75DayTip }) {
+  const product = tip.product || "V75";
   const [openLegs, setOpenLegs] = useState<Record<number, boolean>>({});
   const isOpen = (leg: number) => openLegs[leg] === true;
   const toggleLeg = (leg: number) =>
@@ -816,7 +824,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
     <div className="rise">
       <section className="panel">
         <h2>
-          V75 · {tip.playDateLabel}
+          {product} · {tip.playDateLabel}
           {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
         </h2>
         <p className="panel-lead">
@@ -833,7 +841,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
           {" · "}
           radpris {String(tip.rowPriceKr).replace(".", ",")} kr
         </p>
-        <div className="tip-strip" aria-label="V75 tipprad">
+        <div className="tip-strip" aria-label={`${product} tipprad`}>
           <strong>
             Tipprad · {fmtKr(tip.tipCostKr)} kr
             <span style={{ fontWeight: 500, opacity: 0.85 }}>
@@ -862,7 +870,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
         </ul>
         <p className="panel-lead">
           <a href={tip.atgUrl} target="_blank" rel="noreferrer" className="oddset-link">
-            Öppna V75 på ATG
+            Öppna {product} på ATG
           </a>
         </p>
       </section>
@@ -880,14 +888,14 @@ function V75View({ tip }: { tip: V75DayTip }) {
             <>
               <h3>Dubbelkuskar (2 lopp) · högst odds</h3>
               <p className="panel-lead">
-                Kuskar i exakt två V75-avdelningar brukar ofta vinna ett lopp –
-                ofta med den dyraste hästen.
+                Kuskar i exakt två {product}-avdelningar brukar ofta vinna ett
+                lopp – ofta med den dyraste hästen.
               </p>
               <ul className="alert-list table-alerts">
                 {tip.dualDriverSignals.map((s) => (
                   <li key={`${s.driver}-${s.focusLeg}-${s.focusStartNumber}`}>
-                    <strong>{s.driver}</strong>: fokusera V75-{s.focusLeg} #
-                    {s.focusStartNumber} {s.focusHorse}
+                    <strong>{s.driver}</strong>: fokusera {product}-
+                    {s.focusLeg} #{s.focusStartNumber} {s.focusHorse}
                     {s.focusOdds != null
                       ? ` @ ${String(s.focusOdds).replace(".", ",")}`
                       : ""}{" "}
@@ -896,7 +904,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
                       {s.mounts
                         .map(
                           (m) =>
-                            `V75-${m.leg} #${m.startNumber} ${m.horseName}${
+                            `${product}-${m.leg} #${m.startNumber} ${m.horseName}${
                               m.winOdds != null
                                 ? ` @ ${String(m.winOdds).replace(".", ",")}`
                                 : ""
@@ -916,7 +924,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
                 <ul className="alert-list table-alerts">
                   {tip.classDropHorses.map((m) => (
                     <li key={`cd-${m.leg}-${m.startNumber}`}>
-                      V75-{m.leg} #{m.startNumber} {m.name}: {m.note}
+                      {product}-{m.leg} #{m.startNumber} {m.name}: {m.note}
                     </li>
                   ))}
                 </ul>
@@ -928,7 +936,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
                 <ul className="alert-list table-alerts">
                   {tip.highWinRateHorses.map((m) => (
                     <li key={`wr-${m.leg}-${m.startNumber}`}>
-                      V75-{m.leg} #{m.startNumber} {m.name}:{" "}
+                      {product}-{m.leg} #{m.startNumber} {m.name}:{" "}
                       {String(m.winRatePct).replace(".", ",")}% (+
                       {String(m.edgePct).replace(".", ",")}%-enh.)
                     </li>
@@ -943,7 +951,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
               <ul className="alert-list learning-alerts">
                 {tip.lowOddsReviews.map((m) => (
                   <li key={`lo-${m.leg}-${m.startNumber}`}>
-                    V75-{m.leg} #{m.startNumber} {m.name} @{" "}
+                    {product}-{m.leg} #{m.startNumber} {m.name} @{" "}
                     {String(m.winOdds).replace(".", ",")}
                     {m.supported === true
                       ? " · stödd"
@@ -963,7 +971,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
                 <ul className="alert-list learning-alerts">
                   {tip.misleadingFavorites.map((m) => (
                     <li key={`${m.leg}-${m.startNumber}`}>
-                      V75-{m.leg} #{m.startNumber} {m.name}: {m.note}
+                      {product}-{m.leg} #{m.startNumber} {m.name}: {m.note}
                     </li>
                   ))}
                 </ul>
@@ -975,7 +983,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
                 <ul className="alert-list table-alerts">
                   {tip.valueHorses.map((v) => (
                     <li key={`${v.leg}-${v.startNumber}`}>
-                      V75-{v.leg} #{v.startNumber} {v.name} (+
+                      {product}-{v.leg} #{v.startNumber} {v.name} (+
                       {String(v.edgePct).replace(".", ",")}%)
                     </li>
                   ))}
@@ -991,7 +999,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
                   .slice(0, 10)
                   .map(
                     (h) =>
-                      `V75-${h.leg} #${h.startNumber} ${h.name}`
+                      `${product}-${h.leg} #${h.startNumber} ${h.name}`
                   )
                   .join(" · ")}
               </p>
@@ -1003,8 +1011,8 @@ function V75View({ tip }: { tip: V75DayTip }) {
       <section className="panel panel-systems">
         <h2>Avdelningar</h2>
         <p className="panel-lead">
-          Jämför ATG-odds med V75-streck och tips från flera sajter. Klicka på
-          ett lopp för att öppna/stänga – samma som i resultat.
+          Jämför ATG-odds med {product}-streck och tips från flera sajter.
+          Klicka på ett lopp för att öppna/stänga – samma som i resultat.
         </p>
         <div className="v75-leg-toolbar">
           <button type="button" className="system-btn" onClick={expandAll}>
@@ -1021,6 +1029,7 @@ function V75View({ tip }: { tip: V75DayTip }) {
               leg={leg}
               open={isOpen(leg.leg)}
               onToggle={() => toggleLeg(leg.leg)}
+              productLabel={product}
             />
           ))}
         </div>
@@ -3437,17 +3446,19 @@ export default function App() {
           setRefreshing(true);
         }
 
-        if (product === "v75") {
+        if (product === "v75" || product === "v64") {
+          const label = product === "v64" ? "V64" : "V75";
           const res = await fetch(
-            `/api/v75${fresh ? "?fresh=1" : ""}`,
+            `/api/${product}${fresh ? "?fresh=1" : ""}`,
             { cache: "no-store" }
           );
           const json = (await res.json()) as V75DayTip & {
             error?: string;
             fresh?: boolean;
           };
-          if (!res.ok) throw new Error(json.error || "Kunde inte hämta V75");
-          setV75(json);
+          if (!res.ok)
+            throw new Error(json.error || `Kunde inte hämta ${label}`);
+          setV75({ ...json, product: json.product || label });
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else if (product === "oddset") {
           const localTips = loadOddsetLocalTips();
@@ -3785,7 +3796,7 @@ export default function App() {
   }, [data, selectedDraw, product]);
 
   const closeTimes = useMemo(() => {
-    if (product === "v75" && v75) {
+    if ((product === "v75" || product === "v64") && v75) {
       return (v75.legs || [])
         .map((l) => l.startTime)
         .filter((t): t is string => Boolean(t));
@@ -3920,7 +3931,9 @@ export default function App() {
             type="button"
             className="product-btn tips-launch"
             onClick={scrollToAnalysisTips}
-            disabled={product === "oddset" || product === "v75"}
+            disabled={
+              product === "oddset" || product === "v75" || product === "v64"
+            }
             title="Hoppa till 1X2-tips från analys"
           >
             1X2
@@ -3959,6 +3972,13 @@ export default function App() {
             onClick={() => setProduct("v75")}
           >
             V75
+          </button>
+          <button
+            type="button"
+            className={`product-btn ${product === "v64" ? "active" : ""}`}
+            onClick={() => setProduct("v64")}
+          >
+            V64
           </button>
           {authUser?.isOwner && (
             <a
@@ -4014,10 +4034,12 @@ export default function App() {
               {authUser.isOwner ? " · huvudkonto" : ""}
             </span>
           )}{" "}
-          {product === "v75"
+          {product === "v75" || product === "v64"
             ? v75
-              ? `Uppdaterad ${fmtTime(v75.generatedAt)} · V75 ${v75.playDate}`
-              : "Hämtar V75…"
+              ? `Uppdaterad ${fmtTime(v75.generatedAt)} · ${
+                  v75.product || (product === "v64" ? "V64" : "V75")
+                } ${v75.playDate}`
+              : `Hämtar ${product === "v64" ? "V64" : "V75"}…`
             : product === "oddset"
               ? oddset
                 ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
@@ -4063,8 +4085,10 @@ export default function App() {
 
       {loading && (
         <div className="loading">
-          {product === "v75"
-            ? "Hämtar V75 från ATG och jämför tips/odds…"
+          {product === "v75" || product === "v64"
+            ? `Hämtar ${
+                product === "v64" ? "V64" : "V75"
+              } från ATG och jämför tips/odds…`
             : product === "oddset"
               ? "Analyserar öppna Oddset-matcher…"
               : `Läser in öppna ${productLabel(product)}-omgångar…`}
@@ -4076,14 +4100,16 @@ export default function App() {
         <OddsetView tip={oddset} />
       )}
 
-      {!loading && !error && product === "v75" && v75 && (
-        <V75View tip={v75} />
-      )}
+      {!loading &&
+        !error &&
+        (product === "v75" || product === "v64") &&
+        v75 && <V75View tip={v75} />}
 
       {data &&
         data.product === product &&
         product !== "oddset" &&
-        product !== "v75" && (
+        product !== "v75" &&
+        product !== "v64" && (
         <>
           <nav className="draw-tabs" aria-label="Speltillfällen">
             {data.draws.map((d, idx) => {

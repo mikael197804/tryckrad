@@ -2,6 +2,9 @@ import { upstreamFetchInit } from "./fetch-mode";
 
 const ATG_BASE = "https://www.atg.se/services/racinginfo/v1/api";
 
+/** ATG märkningsspel vi analyserar (samma tipplogik). */
+export type AtgPoolProduct = "V75" | "V64";
+
 export type AtgGameSummary = {
   id: string;
   status: string;
@@ -64,6 +67,7 @@ export type AtgStart = {
     vinnare?: { odds?: number };
     plats?: { minOdds?: number; maxOdds?: number };
     V75?: { betDistribution?: number; trend?: number };
+    V64?: { betDistribution?: number; trend?: number };
   };
 };
 
@@ -96,6 +100,12 @@ export type AtgGame = {
       status?: string;
       addOns?: string[];
     };
+    V64?: {
+      turnover?: number;
+      jackpotAmount?: number;
+      status?: string;
+      addOns?: string[];
+    };
   };
 };
 
@@ -104,7 +114,7 @@ async function atgFetch<T>(path: string): Promise<T> {
     ...upstreamFetchInit({
       headers: {
         Accept: "application/json",
-        "User-Agent": "MikaelsTips/1.0 (V75)",
+        "User-Agent": "MikaelsTips/1.0 (ATG)",
       },
     }),
   });
@@ -120,18 +130,32 @@ export function atgOddsToDecimal(raw: number | null | undefined): number | null 
   return Math.round((raw / 100) * 100) / 100;
 }
 
-/** V75 betDistribution lagras ×100 (5607 → 56,07 %). */
+/** V75/V64 betDistribution lagras ×100 (5607 → 56,07 %). */
 export function atgDistToPct(raw: number | null | undefined): number | null {
   if (raw == null || !Number.isFinite(raw) || raw < 0) return null;
   return Math.round((raw / 100) * 100) / 100;
+}
+
+export function atgPoolDistRaw(
+  start: AtgStart,
+  product: AtgPoolProduct
+): number | null {
+  const pools = start.pools;
+  if (!pools) return null;
+  const raw =
+    product === "V64"
+      ? pools.V64?.betDistribution
+      : pools.V75?.betDistribution;
+  return raw ?? null;
 }
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Hitta närmaste V75 (öppen/kommande) inom ±dagar. */
-export async function findUpcomingV75(
+/** Hitta närmaste V75/V64 (öppen/kommande) inom ±dagar. */
+export async function findUpcomingAtgPool(
+  product: AtgPoolProduct,
   lookAheadDays = 10,
   lookBackDays = 1
 ): Promise<{ date: string; summary: AtgGameSummary } | null> {
@@ -153,7 +177,7 @@ export async function findUpcomingV75(
       const cal = await atgFetch<{
         games?: Record<string, AtgGameSummary[]>;
       }>(`/calendar/day/${date}`);
-      const list = cal.games?.V75 || [];
+      const list = cal.games?.[product] || [];
       for (const g of list) {
         const status = String(g.status || "").toLowerCase();
         const rank =
@@ -184,8 +208,28 @@ export async function findUpcomingV75(
   return { date: best.date, summary: best.summary };
 }
 
-export async function fetchV75Game(gameId: string): Promise<AtgGame> {
+/** @deprecated Använd findUpcomingAtgPool("V75") */
+export async function findUpcomingV75(
+  lookAheadDays = 10,
+  lookBackDays = 1
+): Promise<{ date: string; summary: AtgGameSummary } | null> {
+  return findUpcomingAtgPool("V75", lookAheadDays, lookBackDays);
+}
+
+export async function findUpcomingV64(
+  lookAheadDays = 10,
+  lookBackDays = 1
+): Promise<{ date: string; summary: AtgGameSummary } | null> {
+  return findUpcomingAtgPool("V64", lookAheadDays, lookBackDays);
+}
+
+export async function fetchAtgGame(gameId: string): Promise<AtgGame> {
   return atgFetch<AtgGame>(`/games/${gameId}`);
+}
+
+/** @deprecated Använd fetchAtgGame */
+export async function fetchV75Game(gameId: string): Promise<AtgGame> {
+  return fetchAtgGame(gameId);
 }
 
 /** Tidigare start från /races/{id}/start/{n} – firstPrize i öre. */
