@@ -11,6 +11,7 @@ export type HistoryProduct =
   | "maltipset"
   | "v75"
   | "v64"
+  | "tvilling"
   | "esports_battle";
 
 export type HistoryPickStatus = "pending" | "live" | "won" | "lost";
@@ -24,7 +25,7 @@ export type HistoryPick = {
   description: string;
   home: string;
   away: string;
-  market: "1x2" | "over_1_5" | "over_2_5" | "mal" | "atg_win";
+  market: "1x2" | "over_1_5" | "over_2_5" | "mal" | "atg_win" | "atg_twin";
   /** T.ex. ["1","X"], ["over_1_5"], ["mal"] eller startnr ["2","4"]. */
   pick: string[];
   kickoff: string | null;
@@ -84,6 +85,9 @@ export function systemWinThreshold(
   if (product === "v64") {
     return Math.max(1, total - 2);
   }
+  if (product === "tvilling") {
+    return Math.max(1, Math.ceil(total * 0.6));
+  }
   if (total >= 7 && total <= 9) {
     return Math.max(1, total - 1);
   }
@@ -110,7 +114,7 @@ export const TIP_HISTORY_RETENTION_HOURS = 8;
 
 type SvenskaSpelHistoryProduct = Exclude<
   HistoryProduct,
-  "oddset" | "esports_battle" | "v75" | "v64"
+  "oddset" | "esports_battle" | "v75" | "v64" | "tvilling"
 >;
 
 const PRODUCT_SLUG: Record<SvenskaSpelHistoryProduct, string> = {
@@ -448,6 +452,45 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
   };
 }
 
+
+async function settleTvillingHistoryPick(p: HistoryPick): Promise<HistoryPick> {
+  if (p.status === "won" || p.status === "lost") {
+    return {
+      ...p,
+      settledAt: p.settledAt || p.kickoff || p.tippedAt || new Date().toISOString(),
+    };
+  }
+  if (!p.raceId) {
+    return { ...p, resultNote: p.resultNote || "Väntar på ATG-resultat…" };
+  }
+  try {
+    const { settleTvillingRacePick } = await import("./tvilling");
+    const pickNumbers = p.pick
+      .map((x) => Number(x))
+      .filter((n) => Number.isFinite(n));
+    const res = await settleTvillingRacePick({
+      raceId: p.raceId,
+      pickNumbers,
+    });
+    if (res.status === "won" || res.status === "lost") {
+      return {
+        ...p,
+        status: res.status,
+        actual: res.actual,
+        settledAt: new Date().toISOString(),
+        resultNote: res.note,
+      };
+    }
+    return {
+      ...p,
+      status: res.status === "live" ? "live" : "pending",
+      resultNote: res.note,
+    };
+  } catch {
+    return { ...p, resultNote: p.resultNote || "Väntar på ATG-resultat…" };
+  }
+}
+
 async function settleAtgLegPick(p: HistoryPick): Promise<HistoryPick> {
   if (p.status === "won" || p.status === "lost") {
     return {
@@ -526,6 +569,10 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
     }
     if (p.product === "v75" || p.product === "v64") {
       out.push(await settleAtgLegPick(p));
+      continue;
+    }
+    if (p.product === "tvilling") {
+      out.push(await settleTvillingHistoryPick(p));
       continue;
     }
     const alreadySettled = p.status === "won" || p.status === "lost";
@@ -774,7 +821,8 @@ async function attachPayouts(
         g.product === "oddset" ||
         g.product === "esports_battle" ||
         g.product === "v75" ||
-        g.product === "v64"
+        g.product === "v64" ||
+        g.product === "tvilling"
       ) {
         return g;
       }
@@ -865,6 +913,8 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "V75";
     case "v64":
       return "V64";
+    case "tvilling":
+      return "Tvilling";
     case "esports_battle":
       return "Esports Battle";
   }
