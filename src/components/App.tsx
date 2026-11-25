@@ -68,9 +68,9 @@ function isStrykFamily(p: string): boolean {
   return p === "stryktipset" || p === "europatipset";
 }
 
-const ODDSET_LS_KEY = "mikaels-oddset-tips-8h";
+const ODDSET_LS_KEY = "mikaels-oddset-tips-4h";
 const ODDSET_LEARN_LS_KEY = "mikaels-oddset-lessons";
-const HISTORY_LS_KEY = "mikaels-tips-history-8h";
+const HISTORY_LS_KEY = "mikaels-tips-history-4h";
 const ESPORTS_BATTLE_LS_KEY = "mikaels-esports-battle-3h";
 const ODDSET_RETENTION_MS = TIP_HISTORY_RETENTION_MS;
 const ODDSET_LEARN_RETENTION_MS = 21 * 24 * 60 * 60 * 1000;
@@ -115,6 +115,7 @@ function loadOddsetLocalTips(): OddsetTrackedTip[] {
   try {
     const raw =
       window.localStorage.getItem(ODDSET_LS_KEY) ||
+      window.localStorage.getItem("mikaels-oddset-tips-8h") ||
       window.localStorage.getItem("mikaels-oddset-tips-24h");
     if (!raw) return [];
     const parsed = JSON.parse(raw) as OddsetTrackedTip[];
@@ -200,6 +201,7 @@ function loadLocalHistoryPicks(): HistoryPick[] {
   try {
     const raw =
       window.localStorage.getItem(HISTORY_LS_KEY) ||
+      window.localStorage.getItem("mikaels-tips-history-8h") ||
       window.localStorage.getItem("mikaels-tips-history-24h");
     if (!raw) return [];
     const parsed = JSON.parse(raw) as HistoryPick[];
@@ -463,7 +465,7 @@ function drawToHistoryPicks(
   let systems = (draw.systems || []).filter(
     (s) => s.costKr >= 48 && s.costKr <= 720
   );
-  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 8 h
+  // Powerplay + Topptipset: se till att 192 kr alltid sparas i resultat 4 h
   if (product === "powerplay" || product === "topptipset") {
     const has192 = systems.some((s) => s.costKr === 192);
     if (!has192) {
@@ -2817,7 +2819,7 @@ function HistoryView({
         {!library && (
           <p className="panel-lead">
             Välj ett bibliotek per spelform. Bara matcher som startat eller är
-            klara (8 h), inga framtida som “väntar”. 192 kr-system live via
+            klara (4 h), inga framtida som “väntar”. 192 kr-system live via
             Flashscore. Esports Battle uppdateras automatiskt.
           </p>
         )}
@@ -4329,7 +4331,7 @@ export default function App() {
             type="button"
             className="product-btn history-launch"
             onClick={openHistory}
-            title="Gamla resultat – tips med rätt/fel i 8 timmar efter färdigt spel"
+            title="Gamla resultat – tips med rätt/fel i 4 timmar efter färdigt spel"
           >
             <span className="btn-label-full">Gamla resultat</span>
             <span className="btn-label-short">Resultat</span>
@@ -4429,7 +4431,7 @@ export default function App() {
           </h1>
           <p className="brand-tag">
             Alla spel uppdateras 12 min före spelstopp. Tryck på Gamla resultat
-            för rätt/fel – syns 8 h efter start/klart (inga framtida matcher).
+            för rätt/fel – syns 4 h efter start/klart (inga framtida matcher).
             Powerplay/Topptipset lär av missar. Stryk/Mål: lagnyheter ca 15 min
             före avspark.
           </p>

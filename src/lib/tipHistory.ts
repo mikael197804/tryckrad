@@ -36,7 +36,7 @@ export type HistoryPick = {
   status: HistoryPickStatus;
   actual: string | null;
   resultNote: string | null;
-  /** När spelet settlades (färdigt) – resultat visas 8 h efter detta. */
+  /** När spelet settlades (färdigt) – resultat visas 4 h efter detta. */
   settledAt?: string | null;
   /** Systemkostnad 48–720 kr (null för Oddset). */
   costKr?: number | null;
@@ -105,8 +105,8 @@ export type TipHistoryResponse = {
   };
 };
 
-export const TIP_HISTORY_RETENTION_MS = 8 * 60 * 60 * 1000;
-export const TIP_HISTORY_RETENTION_HOURS = 8;
+export const TIP_HISTORY_RETENTION_MS = 4 * 60 * 60 * 1000;
+export const TIP_HISTORY_RETENTION_HOURS = 4;
 
 type SvenskaSpelHistoryProduct = Exclude<
   HistoryProduct,
@@ -122,7 +122,7 @@ const PRODUCT_SLUG: Record<SvenskaSpelHistoryProduct, string> = {
 };
 
 /**
- * Behåll tips 8 h efter att spelet är färdigt / startat.
+ * Behåll tips 4 h efter att spelet är färdigt / startat.
  * Framtida matcher (kickoff > nu) hör inte hemma i resultat.
  */
 export function historyRetentionAnchorMs(p: HistoryPick): number {
@@ -822,7 +822,7 @@ async function attachPayouts(
   );
 }
 
-/** Settla och summera klientens sparade tips (8 h). */
+/** Settla och summera klientens sparade tips (4 h). */
 export async function buildTipHistory(
   clientPicks: HistoryPick[]
 ): Promise<TipHistoryResponse> {
@@ -851,7 +851,7 @@ export async function buildTipHistory(
   picks = await settleDrawPicks(settledOddset);
   picks = prune(picks).map(correctOneXTwoStatus);
 
-  // Skriv tillbaka settlade 192 kr till servern så resultat syns 8 h
+  // Skriv tillbaka settlade 192 kr till servern så resultat syns 4 h
   try {
     const { rememberDaily192Settled } = await import("./pp192History");
     await rememberDaily192Settled(
