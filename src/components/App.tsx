@@ -58,6 +58,8 @@ function productHistoryLabel(p: HistoryProduct): string {
       return "V75";
     case "v64":
       return "V64";
+    case "tvilling":
+      return "Tvilling";
     case "esports_battle":
       return "Esports Battle";
   }
@@ -568,7 +570,7 @@ function drawToHistoryPicks(
   return out;
 }
 
-/** V75/V64 tipprad + tvilling → resultatbibliotek (en rad per avdelning). */
+/** V75/V64 tipprad + tvilling → resultatbibliotek (egna kolumner). */
 function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
   const product = tip.product === "V64" ? "v64" : "v75";
   const label = product === "v64" ? "V64" : "V75";
@@ -597,8 +599,14 @@ function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
   ]
     .filter(Boolean)
     .join(" · ");
-  const twinGameKey = `${gameKey}:twin`;
-  const twinGameLabel = `${gameLabel} · tvilling`;
+  const twinGameKey = `tvilling:${product}:${tip.playDate}:${tip.gameId || "tip"}`;
+  const twinGameLabel = [
+    `Tvilling · ${label}`,
+    tip.playDateLabel || tip.playDate,
+    tracks || null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const out: HistoryPick[] = [];
   for (const leg of tip.legs) {
@@ -633,8 +641,8 @@ function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
     const twin = leg.twinNumbers;
     if (twin && twin.length === 2) {
       out.push({
-        id: `${product}:${tip.gameId || tip.playDate}:twin:${leg.leg}`,
-        product,
+        id: `tvilling:${product}:${tip.gameId || tip.playDate}:leg:${leg.leg}`,
+        product: "tvilling",
         gameKey: twinGameKey,
         gameLabel: twinGameLabel,
         tippedAt,
@@ -717,9 +725,12 @@ type ProductKind =
   | "maltipset"
   | "oddset"
   | "v75"
-  | "v64";
+  | "v64"
+  | "tvilling";
 
-const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "v75" | "v64">> = [
+const DRAW_PRODUCTS: Array<
+  Exclude<ProductKind, "oddset" | "v75" | "v64" | "tvilling">
+> = [
   "topptipset",
   "powerplay",
   "stryktipset",
@@ -738,6 +749,7 @@ const HISTORY_PRODUCT_COLUMNS: Array<{
   { id: "maltipset", label: "Måltipset" },
   { id: "v75", label: "V75" },
   { id: "v64", label: "V64" },
+  { id: "tvilling", label: "Tvilling" },
   { id: "oddset", label: "Oddset" },
   { id: "esports_battle", label: "Esports Battle" },
 ];
@@ -760,6 +772,8 @@ function productLabel(p: ProductKind): string {
       return "V75";
     case "v64":
       return "V64";
+    case "tvilling":
+      return "Tvilling";
   }
 }
 
@@ -950,6 +964,119 @@ function V75LegCard({
         </div>
       )}
     </article>
+  );
+}
+
+/** Egen kolumn/vy: bara ATG-tvillingtips från V75/V64-analysen. */
+function TwinView({ tip }: { tip: V75DayTip }) {
+  const product = tip.product || "V75";
+  const twins = tip.twinTips || [];
+  return (
+    <div className="rise">
+      <section className="panel">
+        <h2>
+          Tvilling · {product} · {tip.playDateLabel}
+          {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
+        </h2>
+        <p className="panel-lead">
+          Egen kolumn för ATG-tvilling (1–2 i valfri ordning) per avdelning.
+          Bygger på samma analys som {product}, inkl. kusk 2:an.
+        </p>
+        <p className="panel-lead">
+          <a
+            href={tip.atgUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="oddset-link"
+          >
+            Öppna {product} på ATG
+          </a>
+        </p>
+      </section>
+
+      <section className="panel">
+        <h2>Tvillingtips</h2>
+        {twins.length === 0 ? (
+          <p className="panel-lead">Inga tvillingtips klara ännu.</p>
+        ) : (
+          <>
+            <div className="tip-strip" aria-label="Tvillingtips">
+              <div className="tip-strip-picks">
+                {twins.map((t) => (
+                  <span key={`twin-col-${t.leg}`} className="tip-strip-pick">
+                    <em>
+                      {product}-{t.leg}
+                    </em>
+                    {t.label}
+                    {t.includesDriverSecond ? (
+                      <span style={{ opacity: 0.75, marginLeft: "0.25rem" }}>
+                        (kusk 2:an)
+                      </span>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <ul
+              className="alert-list table-alerts"
+              style={{ marginTop: "0.75rem" }}
+            >
+              {twins.map((t) => (
+                <li key={`twin-col-note-${t.leg}`}>
+                  <strong>
+                    {product}-{t.leg}
+                  </strong>
+                  : #{t.numbers[0]} {t.horseNames[0]} · #{t.numbers[1]}{" "}
+                  {t.horseNames[1]}
+                  {t.note ? (
+                    <div className="reason" style={{ marginTop: "0.15rem" }}>
+                      {t.note}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
+      <section className="panel panel-systems">
+        <h2>Avdelningar · tvilling</h2>
+        <div className="match-cards v75-leg-list">
+          {tip.legs.map((leg) => (
+            <article key={leg.leg} className="match-card v75-leg-card">
+              <div className="history-game-toggle-main" style={{ padding: "0.75rem" }}>
+                <div className="history-game-toggle-title">
+                  <span className="match-num v75-toggle-num">
+                    {product}-{leg.leg}
+                  </span>{" "}
+                  {leg.raceName}
+                </div>
+                <div className="reason">
+                  {leg.trackName}
+                  {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
+                </div>
+                <div style={{ marginTop: "0.45rem" }}>
+                  <span className="pick-cell on">
+                    T {leg.twinLabel || "–"}
+                  </span>
+                  {leg.twinIncludesDriverSecond ? (
+                    <span className="v75-home-tag" style={{ marginLeft: "0.4rem" }}>
+                      kusk 2:an
+                    </span>
+                  ) : null}
+                </div>
+                {leg.twinNote ? (
+                  <div className="reason" style={{ marginTop: "0.35rem" }}>
+                    {leg.twinNote}
+                  </div>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2451,7 +2578,7 @@ function HistoryGameCard({
                   : p.market === "mal"
                     ? "Målmatch"
                     : p.market === "atg_twin"
-                      ? `Tvilling ${p.product === "v64" ? "V64" : "V75"}-${p.eventNumber}: ${p.pick.join("-")}`
+                      ? `Tvilling ${p.eventNumber != null ? `${p.eventNumber}: ` : ""}${p.pick.join("-")}`
                       : p.market === "atg_win"
                         ? `${p.product === "v64" ? "V64" : "V75"}-${p.eventNumber}: ${p.pick.join(",")}`
                         : p.pick.join("")}
@@ -3719,7 +3846,7 @@ export default function App() {
       setOddset(null);
       setData(null);
       setV75(null);
-    } else if (next === "v75" || next === "v64") {
+    } else if (next === "v75" || next === "v64" || next === "tvilling") {
       setV75(null);
       setData(null);
       setOddset(null);
@@ -3804,10 +3931,26 @@ export default function App() {
           setRefreshing(true);
         }
 
-        if (forProduct === "v75" || forProduct === "v64") {
-          const label = forProduct === "v64" ? "V64" : "V75";
+        if (
+          forProduct === "v75" ||
+          forProduct === "v64" ||
+          forProduct === "tvilling"
+        ) {
+          // Tvilling-kolumnen använder V75-analysen (samma motor, egen vy)
+          const apiProduct =
+            forProduct === "tvilling"
+              ? "v75"
+              : forProduct === "v64"
+                ? "v64"
+                : "v75";
+          const label =
+            forProduct === "tvilling"
+              ? "Tvilling"
+              : forProduct === "v64"
+                ? "V64"
+                : "V75";
           const res = await fetch(
-            `/api/${forProduct}${fresh ? "?fresh=1" : ""}`,
+            `/api/${apiProduct}${fresh ? "?fresh=1" : ""}`,
             { cache: "no-store" }
           );
           if (!isCurrent()) return;
@@ -4187,8 +4330,12 @@ export default function App() {
   }, [data, selectedDraw, product]);
 
   const closeTimes = useMemo(() => {
-    if ((product === "v75" || product === "v64") && v75) {
-      const want = product === "v64" ? "V64" : "V75";
+    if (
+      (product === "v75" || product === "v64" || product === "tvilling") &&
+      v75
+    ) {
+      const want =
+        product === "v64" ? "V64" : "V75"; // tvilling laddar V75
       if (v75.product && v75.product !== want) return [];
       return (v75.legs || [])
         .map((l) => l.startTime)
@@ -4206,17 +4353,24 @@ export default function App() {
 
   const v75Matches =
     !!v75 &&
-    (product === "v75" || product === "v64") &&
-    (!v75.product || v75.product === (product === "v64" ? "V64" : "V75"));
+    (product === "v75" || product === "v64" || product === "tvilling") &&
+    (product === "tvilling"
+      ? !v75.product || v75.product === "V75"
+      : !v75.product ||
+        v75.product === (product === "v64" ? "V64" : "V75"));
   const drawsMatch = !!data && data.product === product;
   const contentPending =
     !error &&
     (loading ||
       (product === "oddset" && !oddset) ||
-      ((product === "v75" || product === "v64") && !v75Matches) ||
+      ((product === "v75" ||
+        product === "v64" ||
+        product === "tvilling") &&
+        !v75Matches) ||
       (product !== "oddset" &&
         product !== "v75" &&
         product !== "v64" &&
+        product !== "tvilling" &&
         !drawsMatch));
 
   // Schemalägg uppdatering 12 min före spelstopp (alla produkter)
@@ -4341,7 +4495,10 @@ export default function App() {
             className="product-btn tips-launch"
             onClick={scrollToAnalysisTips}
             disabled={
-              product === "oddset" || product === "v75" || product === "v64"
+              product === "oddset" ||
+              product === "v75" ||
+              product === "v64" ||
+              product === "tvilling"
             }
             title="Hoppa till 1X2-tips från analys"
           >
@@ -4388,6 +4545,15 @@ export default function App() {
             onClick={() => switchProduct("v64")}
           >
             V64
+          </button>
+          <button
+            type="button"
+            className={`product-btn ${product === "tvilling" ? "active" : ""}`}
+            onClick={() => switchProduct("tvilling")}
+            title="ATG-tvilling – egen kolumn"
+          >
+            <span className="btn-label-full">Tvilling</span>
+            <span className="btn-label-short">Tvil</span>
           </button>
           {authUser?.isOwner && (
             <a
@@ -4443,12 +4609,20 @@ export default function App() {
               {authUser.isOwner ? " · huvudkonto" : ""}
             </span>
           )}{" "}
-          {product === "v75" || product === "v64"
+          {product === "v75" || product === "v64" || product === "tvilling"
             ? v75
               ? `Uppdaterad ${fmtTime(v75.generatedAt)} · ${
-                  v75.product || (product === "v64" ? "V64" : "V75")
+                  product === "tvilling"
+                    ? "Tvilling"
+                    : v75.product || (product === "v64" ? "V64" : "V75")
                 } ${v75.playDate}`
-              : `Hämtar ${product === "v64" ? "V64" : "V75"}…`
+              : `Hämtar ${
+                  product === "tvilling"
+                    ? "Tvilling"
+                    : product === "v64"
+                      ? "V64"
+                      : "V75"
+                }…`
             : product === "oddset"
               ? oddset
                 ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
@@ -4471,7 +4645,10 @@ export default function App() {
             product === "stryktipset" ||
             product === "europatipset" ||
             product === "maltipset" ||
-            product === "oddset"
+            product === "oddset" ||
+            product === "v75" ||
+            product === "v64" ||
+            product === "tvilling"
               ? product
               : null
           }
@@ -4494,9 +4671,13 @@ export default function App() {
 
       {contentPending && (
         <div className="loading">
-          {product === "v75" || product === "v64"
+          {product === "v75" || product === "v64" || product === "tvilling"
             ? `Hämtar ${
-                product === "v64" ? "V64" : "V75"
+                product === "tvilling"
+                  ? "Tvilling"
+                  : product === "v64"
+                    ? "V64"
+                    : "V75"
               } från ATG och jämför tips/odds…`
             : product === "oddset"
               ? "Analyserar öppna Oddset-matcher…"
@@ -4511,6 +4692,12 @@ export default function App() {
 
       {!contentPending &&
         !error &&
+        product === "tvilling" &&
+        v75Matches &&
+        v75 && <TwinView tip={v75} />}
+
+      {!contentPending &&
+        !error &&
         (product === "v75" || product === "v64") &&
         v75Matches &&
         v75 && <V75View tip={v75} />}
@@ -4520,7 +4707,8 @@ export default function App() {
         drawsMatch &&
         product !== "oddset" &&
         product !== "v75" &&
-        product !== "v64" && (
+        product !== "v64" &&
+        product !== "tvilling" && (
         <>
           <nav className="draw-tabs" aria-label="Speltillfällen">
             {data.draws.map((d, idx) => {
