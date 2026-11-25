@@ -16,12 +16,12 @@ import {
 import type {
   EsportsBattleDay,
   EsportsBattleMatch,
-} from "../lib/esportsBattle";
+} from "../lib/esportsBattleShared";
 import {
   ESPORTS_BATTLE_RETENTION_HOURS,
   ESPORTS_BATTLE_RETENTION_MS,
   mergeEsportsBattleMatches,
-} from "../lib/esportsBattle";
+} from "../lib/esportsBattleShared";
 import type {
   HistoryPick,
   HistoryProduct,

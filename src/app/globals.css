@@ -88,6 +88,10 @@ select {
   flex-wrap: wrap;
   gap: 0.35rem;
   padding-bottom: 0.1rem;
+  /* Många knappar (Stryk/Europa/…) – tillåt scroll så inget göms */
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .top-menu-fixed .product-btn {
