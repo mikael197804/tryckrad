@@ -4,6 +4,10 @@ import type {
   Outcome,
   SystemPick,
 } from "./types";
+import {
+  isMidUnderdogOdds,
+  isOvertrustedHomeFavourite,
+} from "./valueOdds";
 
 const MIN_COST = 48;
 const MAX_COST = 720;
@@ -97,14 +101,37 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
     ] as [Outcome, number][]
   ).sort((a, b) => b[1] - a[1])[0][0];
 
-  if (oddsTop && modelTop === oddsTop && modelTop === folkTop) {
+  const overtrustedHome = isOvertrustedHomeFavourite({
+    league: m.league,
+    homeOdds: m.odds.one,
+    awayOdds: m.odds.two,
+    folkHomePct: m.svenskaFolket.one,
+  });
+
+  // Spetsa inte kort hemmafavorit i HockeyEttan m.fl. – där faller 1 oftare
+  if (
+    oddsTop &&
+    modelTop === oddsTop &&
+    modelTop === folkTop &&
+    !(overtrustedHome && modelTop === "1")
+  ) {
     if (modelTop === "1") s1 += 0.11;
     if (modelTop === "X") sX += 0.11;
     if (modelTop === "2") s2 += 0.11;
-  } else if (oddsTop && modelTop === oddsTop) {
+  } else if (
+    oddsTop &&
+    modelTop === oddsTop &&
+    !(overtrustedHome && modelTop === "1")
+  ) {
     if (modelTop === "1") s1 += 0.055;
     if (modelTop === "X") sX += 0.055;
     if (modelTop === "2") s2 += 0.055;
+  }
+
+  if (overtrustedHome) {
+    s1 = Math.max(0.01, s1 - 0.07);
+    s2 += 0.06;
+    sX += 0.02;
   }
 
   // Osäkerhetssignaler → mer X / plattare
@@ -138,19 +165,51 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
     { outcomes: ["X", "2"], p: sX + s2 },
   ];
   halves.sort((a, b) => b.p - a.p);
-  const bestHalf = halves[0].outcomes;
-  const bestHalfP = halves[0].p;
+  let bestHalf = halves[0].outcomes;
+  let bestHalfP = halves[0].p;
+
+  // Övertröstat hemma i lägre liga: halv ska vara 12 (inte 1X)
+  if (overtrustedHome) {
+    const twelve = halves.find(
+      (h) => h.outcomes.includes("1") && h.outcomes.includes("2")
+    );
+    if (twelve) {
+      bestHalf = twelve.outcomes;
+      bestHalfP = twelve.p;
+    }
+  } else if (
+    m.odds.one != null &&
+    m.odds.two != null &&
+    m.odds.one <= 2.0 &&
+    isMidUnderdogOdds(m.odds.two) &&
+    m.pick?.includes("2") &&
+    m.pick?.includes("1")
+  ) {
+    const twelve = halves.find(
+      (h) => h.outcomes.includes("1") && h.outcomes.includes("2")
+    );
+    if (twelve && twelve.p + 0.02 >= bestHalfP) {
+      bestHalf = twelve.outcomes;
+      bestHalfP = twelve.p;
+    }
+  }
 
   // Behöver gardering om enkel är svag eller halv ger stor lyft
-  const hedgeNeed =
+  let hedgeNeed =
     1 - bestSingleP + Math.max(0, bestHalfP - bestSingleP) * 0.85;
+  if (overtrustedHome) {
+    // Tvinga upp prioritet för halv – får inte bli enkel 1
+    hedgeNeed = Math.max(hedgeNeed, 0.72);
+  }
 
   return {
     p1: s1,
     pX: sX,
     p2: s2,
     bestSingle,
-    bestSingleP,
+    bestSingleP: overtrustedHome
+      ? Math.min(bestSingleP, 0.54)
+      : bestSingleP,
     bestHalf,
     bestHalfP,
     hedgeNeed,
@@ -410,6 +469,17 @@ function makePicks(
       } else {
         reason = `halv ${outcomes.join("")} (~${Math.round(pr.bestHalfP * 100)}%) – ${m.pickReason}`;
       }
+    } else if (
+      isOvertrustedHomeFavourite({
+        league: m.league,
+        homeOdds: m.odds.one,
+        awayOdds: m.odds.two,
+        folkHomePct: m.svenskaFolket.one,
+      })
+    ) {
+      // Aldrig enkel 1 i HockeyEttan-typ när hemma är övertröstat – tvinga 12
+      outcomes = pr.bestHalf.includes("2") ? pr.bestHalf : (["1", "2"] as Outcome[]);
+      reason = `halv ${outcomes.join("")} (övertröstat hemma i ${m.league}) – ${m.pickReason}`;
     } else {
       outcomes = [pr.bestSingle];
       reason = `enkel ${pr.bestSingle} (~${Math.round(pr.bestSingleP * 100)}%) – ${m.pickReason}`;

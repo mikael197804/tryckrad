@@ -59,6 +59,51 @@ export function isMidUnderdogOdds(o: number | null | undefined): boolean {
   );
 }
 
+/**
+ * Lägre hockeynivåer där korta hemmafavoriter med högt folkstreck
+ * oftare faller (t.ex. HockeyEttan Mjölby–Boro).
+ */
+export function isLowerTierHockeyLeague(
+  league: string | null | undefined
+): boolean {
+  const l = String(league || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!l) return false;
+  if (l === "shl" || l === "nhl") return false;
+  if (l.includes("hockeyallsvenskan")) return false;
+  return (
+    l.includes("hockeyettan") ||
+    /hockey\s*ettan/.test(l) ||
+    l.includes("division 1") ||
+    l.includes("div. 1") ||
+    l.includes("div 1") ||
+    l.includes("j20") ||
+    l.includes("j18")
+  );
+}
+
+/**
+ * Övertröstad hemmafavorit i volatil liga: kort odds + högt folk
+ * och bortasidan i mittfält-underdog-bandet (t.ex. 1,68 / 4,35 / 3,70).
+ */
+export function isOvertrustedHomeFavourite(args: {
+  league?: string | null;
+  homeOdds: number | null | undefined;
+  awayOdds: number | null | undefined;
+  folkHomePct: number | null | undefined;
+}): boolean {
+  if (!isLowerTierHockeyLeague(args.league)) return false;
+  const home = args.homeOdds;
+  const away = args.awayOdds;
+  const folk = args.folkHomePct ?? 0;
+  if (home == null || away == null) return false;
+  if (home > 1.9 || home <= 1.05) return false;
+  if (!isMidUnderdogOdds(away) && !(away >= 3.0 && away <= 6.0)) return false;
+  return folk >= 55;
+}
+
 export type OutcomeValue = {
   outcome: Outcome;
   odds: number | null;

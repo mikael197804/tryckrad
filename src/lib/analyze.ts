@@ -41,6 +41,7 @@ import { resolveMultiBookOdds } from "./multiBookOdds";
 import {
   analyzeValueOdds,
   applyValueOddsToScores,
+  isOvertrustedHomeFavourite,
   overMarketValue,
 } from "./valueOdds";
 
@@ -266,7 +267,15 @@ function scoreOutcomes(
   oddsEntries.sort((a, b) => a.v - b.v);
   const oddsFav = oddsEntries[0]?.o;
   const folkFav = favouriteFromDist(dist);
-  if (oddsFav && oddsFav === folkFav) {
+  const leagueName = event.match?.league?.name || "";
+  const overtrustedHome = isOvertrustedHomeFavourite({
+    league: leagueName,
+    homeOdds: odds.one,
+    awayOdds: odds.two,
+    folkHomePct: dist.one,
+  });
+
+  if (oddsFav && oddsFav === folkFav && !overtrustedHome) {
     if (oddsFav === "1") score1 += 0.055;
     if (oddsFav === "X") scoreX += 0.055;
     if (oddsFav === "2") score2 += 0.055;
@@ -279,6 +288,14 @@ function scoreOutcomes(
     }
   }
 
+  // HockeyEttan m.fl.: korta hemmafavoriter med högt folk faller oftare
+  // (Mjölby–Boro @ 1,68 / 67% folk → bortaseger). Tona ner 1, lyft 2.
+  if (overtrustedHome) {
+    score1 = Math.max(0.01, score1 - 0.09);
+    score2 = score2 + 0.08;
+    scoreX = scoreX + 0.025;
+  }
+
   const sum = Math.max(score1 + scoreX + score2, 0.01);
   return {
     score1: score1 / sum,
@@ -286,6 +303,7 @@ function scoreOutcomes(
     score2: score2 / sum,
     odds,
     dist,
+    overtrustedHome,
   };
 }
 
@@ -297,7 +315,8 @@ function buildPick(
   awayTable: TableContext,
   homeRest: RestSignal,
   awayRest: RestSignal,
-  valueOdds?: ValueOddsInfo | null
+  valueOdds?: ValueOddsInfo | null,
+  opts?: { overtrustedHome?: boolean; league?: string }
 ): { pick: Outcome[]; reason: string; valueOutcomes: Outcome[] } {
   const ranked = (
     [
@@ -379,6 +398,22 @@ function buildPick(
       reason: reasons.join(". "),
       valueOutcomes: ["2"],
     };
+  }
+
+  // HockeyEttan m.fl.: övertröstat hemma – tvinga bortatäckning (inte enkel 1)
+  if (opts?.overtrustedHome) {
+    reasons.push(
+      `lägre liga (${opts.league || "HockeyEttan"}): kort hemmafavorit med högt folkstreck – täck bortasegern (kolla form, inte bara oddsen)`
+    );
+    if (!pick.includes("2")) {
+      if (pick.length <= 1) pick = [...pick, "2"];
+      else {
+        // Byt ut X mot 2 om vi redan har halv – bortasidan är risken
+        pick = pick.includes("1") ? ["1", "2"] : [...pick.filter((o) => o !== "X"), "2"];
+      }
+    }
+    // Aldrig enkel 1 i detta läge
+    if (pick.length === 1 && pick[0] === "1") pick = ["1", "2"];
   }
 
   // Administrera tipset utifrån överodds-granskning
@@ -696,6 +731,18 @@ export async function analyzeDraw(
       },
       valueRaw
     );
+    // Behåll bortalyft efter värdeodds om hemma fortfarande är övertröstat
+    if (scored.overtrustedHome && adjusted.score1 > adjusted.score2 + 0.12) {
+      let s1 = Math.max(0.01, adjusted.score1 - 0.05);
+      let s2 = adjusted.score2 + 0.045;
+      let sX = adjusted.scoreX + 0.01;
+      const sSum = Math.max(s1 + sX + s2, 0.01);
+      adjusted = {
+        score1: s1 / sSum,
+        scoreX: sX / sSum,
+        score2: s2 / sSum,
+      };
+    }
     const learnAdj = learningAdjustForMatch({
       memory: learning,
       home,
@@ -771,7 +818,8 @@ export async function analyzeDraw(
       awayTable,
       homeRest,
       awayRest,
-      valueOdds
+      valueOdds,
+      { overtrustedHome: scored.overtrustedHome, league }
     );
     const pickReason = learningNotes.length
       ? `${reason}. ${learningNotes[0]}`
@@ -860,7 +908,16 @@ export async function analyzeDraw(
           draft.awayTable,
           draft.homeRest,
           draft.awayRest,
-          draft.valueOdds
+          draft.valueOdds,
+          {
+            overtrustedHome: isOvertrustedHomeFavourite({
+              league: draft.league,
+              homeOdds: draft.odds.one,
+              awayOdds: draft.odds.two,
+              folkHomePct: draft.svenskaFolket.one,
+            }),
+            league: draft.league,
+          }
         );
         pick = rebuilt.pick;
         pickReason = `${rebuilt.reason}. ${
