@@ -24,8 +24,8 @@ export type HistoryPick = {
   description: string;
   home: string;
   away: string;
-  market: "1x2" | "over_1_5" | "over_2_5" | "mal" | "atg_win";
-  /** T.ex. ["1","X"], ["over_1_5"], ["mal"] eller startnr ["2","4"]. */
+  market: "1x2" | "over_1_5" | "over_2_5" | "mal" | "atg_win" | "atg_twin";
+  /** T.ex. ["1","X"], ["over_1_5"], ["mal"], startnr ["2","4"] eller tvilling ["3","7"]. */
   pick: string[];
   kickoff: string | null;
   drawNumber: number | null;
@@ -448,6 +448,15 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
   };
 }
 
+function atgPlaceOf(
+  placeRaw: number | string | null | undefined
+): number | null {
+  if (placeRaw == null) return null;
+  const place =
+    typeof placeRaw === "number" ? placeRaw : Number(placeRaw);
+  return Number.isFinite(place) ? place : null;
+}
+
 async function settleAtgLegPick(p: HistoryPick): Promise<HistoryPick> {
   if (p.status === "won" || p.status === "lost") {
     return {
@@ -468,22 +477,24 @@ async function settleAtgLegPick(p: HistoryPick): Promise<HistoryPick> {
     const starts = race.starts || [];
     let winnerNum: number | null = null;
     let winnerName = "";
+    let secondNum: number | null = null;
+    let secondName = "";
     for (const s of starts) {
       if (s.scratched) continue;
-      const placeRaw = s.result?.place;
-      const place =
-        typeof placeRaw === "number"
-          ? placeRaw
-          : placeRaw != null
-            ? Number(placeRaw)
-            : null;
+      const place = atgPlaceOf(s.result?.place);
       if (place === 1) {
         winnerNum = s.number;
         winnerName = s.horse?.name || `#${s.number}`;
-        break;
+      } else if (place === 2) {
+        secondNum = s.number;
+        secondName = s.horse?.name || `#${s.number}`;
       }
     }
-    if (!finished || winnerNum == null) {
+    if (
+      !finished ||
+      winnerNum == null ||
+      (p.market === "atg_twin" && secondNum == null)
+    ) {
       const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
       const live =
         Number.isFinite(kick) && kick <= Date.now() ? "live" : "pending";
@@ -496,8 +507,26 @@ async function settleAtgLegPick(p: HistoryPick): Promise<HistoryPick> {
             : "Väntar på ATG-resultat…",
       };
     }
-    const hit = p.pick.includes(String(winnerNum));
+
     const settledAt = new Date().toISOString();
+
+    if (p.market === "atg_twin") {
+      const pickSet = new Set(p.pick.map(String));
+      const hit =
+        pickSet.has(String(winnerNum)) && pickSet.has(String(secondNum));
+      const actual = `#${winnerNum} ${winnerName} · #${secondNum} ${secondName}`;
+      return {
+        ...p,
+        status: hit ? "won" : "lost",
+        actual,
+        settledAt,
+        resultNote: hit
+          ? `Rätt tvilling · 1–2: ${actual}`
+          : `Fel tvilling · 1–2: ${actual} (tipset ${p.pick.join("-")})`,
+      };
+    }
+
+    const hit = p.pick.includes(String(winnerNum));
     return {
       ...p,
       status: hit ? "won" : "lost",

@@ -566,7 +566,7 @@ function drawToHistoryPicks(
   return out;
 }
 
-/** V75/V64 tipprad → resultatbibliotek (en rad per avdelning). */
+/** V75/V64 tipprad + tvilling → resultatbibliotek (en rad per avdelning). */
 function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
   const product = tip.product === "V64" ? "v64" : "v75";
   const label = product === "v64" ? "V64" : "V75";
@@ -595,36 +595,65 @@ function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
   ]
     .filter(Boolean)
     .join(" · ");
+  const twinGameKey = `${gameKey}:twin`;
+  const twinGameLabel = `${gameLabel} · tvilling`;
 
   const out: HistoryPick[] = [];
   for (const leg of tip.legs) {
     const nums = (leg.pickNumbers || []).filter((n) => Number.isFinite(n));
-    if (!nums.length) continue;
     const kick = leg.startTime ? Date.parse(leg.startTime) : NaN;
     if (Number.isFinite(kick) && kick > Date.now()) continue;
-    out.push({
-      id: `${product}:${tip.gameId || tip.playDate}:leg:${leg.leg}`,
-      product,
-      gameKey,
-      gameLabel,
-      tippedAt,
-      description:
-        leg.raceName ||
-        `${label}-${leg.leg}${leg.trackName ? ` · ${leg.trackName}` : ""}`,
-      home: leg.trackName || label,
-      away: leg.pickLabel || nums.join(","),
-      market: "atg_win",
-      pick: nums.map(String),
-      kickoff: leg.startTime || tip.startTime || null,
-      drawNumber: null,
-      eventNumber: leg.leg,
-      eventId: null,
-      raceId: leg.raceId || null,
-      status: "pending",
-      actual: null,
-      resultNote: null,
-      costKr,
-    });
+    if (nums.length) {
+      out.push({
+        id: `${product}:${tip.gameId || tip.playDate}:leg:${leg.leg}`,
+        product,
+        gameKey,
+        gameLabel,
+        tippedAt,
+        description:
+          leg.raceName ||
+          `${label}-${leg.leg}${leg.trackName ? ` · ${leg.trackName}` : ""}`,
+        home: leg.trackName || label,
+        away: leg.pickLabel || nums.join(","),
+        market: "atg_win",
+        pick: nums.map(String),
+        kickoff: leg.startTime || tip.startTime || null,
+        drawNumber: null,
+        eventNumber: leg.leg,
+        eventId: null,
+        raceId: leg.raceId || null,
+        status: "pending",
+        actual: null,
+        resultNote: null,
+        costKr,
+      });
+    }
+    const twin = leg.twinNumbers;
+    if (twin && twin.length === 2) {
+      out.push({
+        id: `${product}:${tip.gameId || tip.playDate}:twin:${leg.leg}`,
+        product,
+        gameKey: twinGameKey,
+        gameLabel: twinGameLabel,
+        tippedAt,
+        description: `Tvilling ${label}-${leg.leg}${
+          leg.trackName ? ` · ${leg.trackName}` : ""
+        }${leg.twinIncludesDriverSecond ? " · kusk 2:an" : ""}`,
+        home: leg.trackName || label,
+        away: leg.twinLabel || twin.join("-"),
+        market: "atg_twin",
+        pick: twin.map(String),
+        kickoff: leg.startTime || tip.startTime || null,
+        drawNumber: null,
+        eventNumber: leg.leg,
+        eventId: null,
+        raceId: leg.raceId || null,
+        status: "pending",
+        actual: null,
+        resultNote: null,
+        costKr: null,
+      });
+    }
   }
   return out;
 }
@@ -784,6 +813,9 @@ function V75HorseRow({ h }: { h: V75HorseTip }) {
           {h.dualDriverLongshot && (
             <span className="v75-home-tag">dubbelkusk</span>
           )}
+          {h.dualDriverSecond && (
+            <span className="v75-home-tag">kusk 2:an</span>
+          )}
         </div>
         <div className="reason">
           {h.driver ? `kusk ${h.driver}` : ""}
@@ -845,6 +877,7 @@ function V75LegCard({
       h.highWinRate ||
       h.lowOddsReview?.isLowOdds ||
       h.dualDriverLongshot ||
+      h.dualDriverSecond ||
       (h.valueEdgePct != null && h.valueEdgePct >= 6) ||
       (h.tipMentions.length > 0 && h.tipConsensus !== "none")
   );
@@ -884,6 +917,11 @@ function V75LegCard({
         </span>
         <span className="history-game-toggle-meta">
           <span className="pick-cell on">{leg.pickLabel || "–"}</span>
+          {leg.twinLabel ? (
+            <span className="pick-cell on" title="Tvilling">
+              T {leg.twinLabel}
+            </span>
+          ) : null}
           <span className="history-game-chevron" aria-hidden="true">
             {open ? "▾" : "▸"}
           </span>
@@ -1023,10 +1061,11 @@ function V75View({ tip }: { tip: V75DayTip }) {
           )}
           {tip.dualDriverSignals.length > 0 && (
             <>
-              <h3>Dubbelkuskar (2 lopp) · högst odds</h3>
+              <h3>Dubbelkuskar (2 lopp) · högst odds + kusk 2:an</h3>
               <p className="panel-lead">
                 Kuskar i exakt två {product}-avdelningar brukar ofta vinna ett
-                lopp – ofta med den dyraste hästen.
+                lopp – ofta med den dyraste hästen. Kusk 2:an (andra starten)
+                räknas också in i tipp och tvilling.
               </p>
               <ul className="alert-list table-alerts">
                 {tip.dualDriverSignals.map((s) => (
@@ -1036,7 +1075,11 @@ function V75View({ tip }: { tip: V75DayTip }) {
                     {s.focusOdds != null
                       ? ` @ ${String(s.focusOdds).replace(".", ",")}`
                       : ""}{" "}
-                    (högst odds av två)
+                    (högst odds) · kusk 2:an {product}-{s.secondLeg} #
+                    {s.secondStartNumber} {s.secondHorse}
+                    {s.secondOdds != null
+                      ? ` @ ${String(s.secondOdds).replace(".", ",")}`
+                      : ""}
                     <div className="reason" style={{ marginTop: "0.2rem" }}>
                       {s.mounts
                         .map(
@@ -1045,7 +1088,9 @@ function V75View({ tip }: { tip: V75DayTip }) {
                               m.winOdds != null
                                 ? ` @ ${String(m.winOdds).replace(".", ",")}`
                                 : ""
-                            }${m.isHighestOdds ? " ★" : ""}`
+                            }${m.isHighestOdds ? " ★" : ""}${
+                              m.isSecondMount ? " · 2:an" : ""
+                            }`
                         )
                         .join(" · ")}
                     </div>
@@ -1054,6 +1099,49 @@ function V75View({ tip }: { tip: V75DayTip }) {
               </ul>
             </>
           )}
+        </section>
+      )}
+
+      {(tip.twinTips?.length || 0) > 0 && (
+        <section className="panel">
+          <h2>Tvilling · per avdelning</h2>
+          <p className="panel-lead">
+            ATG-tvilling: två hästar till 1–2 i valfri ordning. Prioriterar
+            tippraden och räknar in kusk 2:an när dubbelkusk finns.
+          </p>
+          <div className="tip-strip" aria-label={`${product} tvillingtips`}>
+            <div className="tip-strip-picks">
+              {tip.twinTips.map((t) => (
+                <span key={`twin-${t.leg}`} className="tip-strip-pick">
+                  <em>
+                    {product}-{t.leg}
+                  </em>
+                  {t.label}
+                  {t.includesDriverSecond ? (
+                    <span style={{ opacity: 0.75, marginLeft: "0.25rem" }}>
+                      (kusk 2:an)
+                    </span>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+          </div>
+          <ul className="alert-list table-alerts" style={{ marginTop: "0.75rem" }}>
+            {tip.twinTips.map((t) => (
+              <li key={`twin-note-${t.leg}`}>
+                <strong>
+                  {product}-{t.leg}
+                </strong>
+                : #{t.numbers[0]} {t.horseNames[0]} · #{t.numbers[1]}{" "}
+                {t.horseNames[1]}
+                {t.note ? (
+                  <div className="reason" style={{ marginTop: "0.15rem" }}>
+                    {t.note}
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
@@ -2338,6 +2426,19 @@ function HistoryGameCard({
                       #{n}
                     </span>
                   ))}
+                {p.market === "atg_twin" && (
+                  <span
+                    className={`history-mark on ${
+                      displayStatus === "won"
+                        ? "hit"
+                        : displayStatus === "lost"
+                          ? "miss"
+                          : ""
+                    }`}
+                  >
+                    T {p.pick.join("-")}
+                  </span>
+                )}
               </div>
               <div className="reason">
                 Tipset:{" "}
@@ -2347,9 +2448,11 @@ function HistoryGameCard({
                     : "Över 1,5"
                   : p.market === "mal"
                     ? "Målmatch"
-                    : p.market === "atg_win"
-                      ? `${p.product === "v64" ? "V64" : "V75"}-${p.eventNumber}: ${p.pick.join(",")}`
-                      : p.pick.join("")}
+                    : p.market === "atg_twin"
+                      ? `Tvilling ${p.product === "v64" ? "V64" : "V75"}-${p.eventNumber}: ${p.pick.join("-")}`
+                      : p.market === "atg_win"
+                        ? `${p.product === "v64" ? "V64" : "V75"}-${p.eventNumber}: ${p.pick.join(",")}`
+                        : p.pick.join("")}
                 {p.actual
                   ? ` · resultat ${p.actual}${
                       result1x2 ? ` (1X2 ${result1x2})` : ""

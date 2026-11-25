@@ -45,6 +45,8 @@ export type V75DualDriverMount = {
   horseName: string;
   winOdds: number | null;
   isHighestOdds: boolean;
+  /** Andra starten (kusk 2:an) – den som inte är högst odds. */
+  isSecondMount: boolean;
 };
 
 export type V75DualDriverSignal = {
@@ -56,6 +58,11 @@ export type V75DualDriverSignal = {
   focusStartNumber: number;
   focusHorse: string;
   focusOdds: number | null;
+  /** Kusk 2:an – andra starten (lägre/andra odds). */
+  secondLeg: number;
+  secondStartNumber: number;
+  secondHorse: string;
+  secondOdds: number | null;
   note: string;
 };
 
@@ -129,12 +136,26 @@ export type V75HorseTip = {
    */
   dualDriverLongshot: boolean;
   dualDriverNote: string | null;
+  /** Kusk 2:an – kusken andra start (inte högst odds). */
+  dualDriverSecond: boolean;
+  dualDriverSecondNote: string | null;
   misleading: string | null;
   tipMentions: ExternalTipMention[];
   tipConsensus: "hot" | "value" | "fade" | "split" | "none";
   score: number;
   role: "spik" | "gardering" | "skräll" | "skip";
   reason: string;
+};
+
+export type V75TwinTip = {
+  leg: number;
+  raceId: string;
+  numbers: [number, number];
+  label: string;
+  horseNames: [string, string];
+  note: string;
+  /** true om tvillingen inkluderar kusk 2:an från dubbelkusk. */
+  includesDriverSecond: boolean;
 };
 
 export type V75LegAnalysis = {
@@ -149,6 +170,11 @@ export type V75LegAnalysis = {
   horses: V75HorseTip[];
   pickNumbers: number[];
   pickLabel: string;
+  /** ATG-tvilling: två hästar till 1–2 i valfri ordning. */
+  twinNumbers: [number, number] | null;
+  twinLabel: string | null;
+  twinNote: string | null;
+  twinIncludesDriverSecond: boolean;
   openness: "spikläge" | "halvöppet" | "vidöppet";
   alerts: string[];
   summary: string;
@@ -226,6 +252,8 @@ export type V75DayTip = {
   dualDriverSignals: V75DualDriverSignal[];
   /** Kuskanalys före tipprad: lågodds → högodds om ej seger. */
   driverStrategies: V75DriverStrategy[];
+  /** Tvillingtips per avdelning (1–2 i valfri ordning). */
+  twinTips: V75TwinTip[];
   /** Lopp på samma bana före spelformeln (förelopp). */
   preRaces: V75PreRace[];
   preRacesDone: boolean;
@@ -728,6 +756,8 @@ function analyzeHorse(
     formNote: form,
     dualDriverLongshot: false,
     dualDriverNote: null,
+    dualDriverSecond: false,
+    dualDriverSecondNote: null,
     misleading,
     tipMentions: horseMentions.slice(0, 4),
     tipConsensus: consensus,
@@ -749,8 +779,9 @@ function oddsBand(odds: number | null): "low" | "mid" | "high" {
 }
 
 /**
- * Kuskar i exakt två avdelningar: flagga hästen med högst vinnarodds.
- * Mönster: de brukar vinna ett av loppen, ofta med den dyraste hästen.
+ * Kuskar i exakt två avdelningar: flagga högst odds + räkna in kusk 2:an.
+ * Mönster: de brukar vinna ett av loppen, ofta med den dyraste hästen –
+ * men andra starten (kusk 2:an) ska också med i tipp/tvilling.
  * applyBoosts=false = bara signaler (förhandsfas före förelopp).
  */
 function applyDualDriverSignals(
@@ -808,8 +839,10 @@ function applyDualDriverSignals(
       `${a.horse.winOdds != null ? ` @ ${String(a.horse.winOdds).replace(".", ",")}` : ""})` +
       ` och ${product}-${b.leg} (#${b.horse.startNumber} ${b.horse.name}` +
       `${b.horse.winOdds != null ? ` @ ${String(b.horse.winOdds).replace(".", ",")}` : ""})` +
-      ` – fokus på högsta odds: #${focus.horse.startNumber} ${focus.horse.name}` +
-      (focusOdds != null ? ` @ ${String(focusOdds).replace(".", ",")}` : "");
+      ` – fokus högst odds #${focus.horse.startNumber} ${focus.horse.name}` +
+      (focusOdds != null ? ` @ ${String(focusOdds).replace(".", ",")}` : "") +
+      ` · räkna in kusk 2:an #${other.horse.startNumber} ${other.horse.name}` +
+      (otherOdds != null ? ` @ ${String(otherOdds).replace(".", ",")}` : "");
 
     if (applyBoosts) {
       focus.horse.dualDriverLongshot = true;
@@ -828,17 +861,36 @@ function applyDualDriverSignals(
         focus.horse.reason = `${tag} · ${focus.horse.reason}`;
       }
 
-      other.horse.score += 1.5;
-      if (other.horse.role === "skip" && (otherOdds ?? 99) <= 8) {
-        other.horse.role = "gardering";
+      // Kusk 2:an – andra starten ska alltid räknas in
+      other.horse.dualDriverSecond = true;
+      other.horse.dualDriverSecondNote =
+        `Kusk 2:an · ${row.driver}s andra start (${product}-${other.leg})` +
+        (otherOdds != null ? ` @ ${String(otherOdds).replace(".", ",")}` : "");
+      other.horse.score += 3.8;
+      if (other.horse.modelWinPct != null) {
+        other.horse.modelWinPct = Math.min(
+          58,
+          Math.round((other.horse.modelWinPct + 2.2) * 10) / 10
+        );
+      }
+      if (other.horse.role === "skip") {
+        other.horse.role = (otherOdds ?? 99) <= 10 ? "gardering" : "skräll";
+      } else if (other.horse.role === "gardering" && (otherOdds ?? 99) >= 10) {
+        other.horse.role = "skräll";
+      }
+      const secondTag = `kusk 2:an (${row.driver}s andra start)`;
+      if (!other.horse.reason.includes("kusk 2")) {
+        other.horse.reason = `${secondTag} · ${other.horse.reason}`;
       }
 
       for (const leg of legs) {
         if (leg.leg !== focus.leg && leg.leg !== other.leg) continue;
         const alert =
           leg.leg === focus.leg
-            ? `Dubbelkusk ${row.driver}: högst odds #${focus.horse.startNumber} ${focus.horse.name}`
-            : `Dubbelkusk ${row.driver}: även ${product}-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name} (högst odds)`;
+            ? `Dubbelkusk ${row.driver}: högst odds #${focus.horse.startNumber} ${focus.horse.name}` +
+              ` · kusk 2:an ${product}-${other.leg} #${other.horse.startNumber} ${other.horse.name}`
+            : `Dubbelkusk ${row.driver}: kusk 2:an #${other.horse.startNumber} ${other.horse.name}` +
+              ` · även högst odds ${product}-${focus.leg} #${focus.horse.startNumber} ${focus.horse.name}`;
         if (!leg.alerts.some((x) => x.includes(`Dubbelkusk ${row.driver}`))) {
           leg.alerts.unshift(alert);
         }
@@ -854,11 +906,16 @@ function applyDualDriverSignals(
         horseName: m.horse.name,
         winOdds: m.horse.winOdds,
         isHighestOdds: m === focus,
+        isSecondMount: m === other,
       })),
       focusLeg: focus.leg,
       focusStartNumber: focus.horse.startNumber,
       focusHorse: focus.horse.name,
       focusOdds,
+      secondLeg: other.leg,
+      secondStartNumber: other.horse.startNumber,
+      secondHorse: other.horse.name,
+      secondOdds: otherOdds,
       note,
     });
   }
@@ -1382,6 +1439,8 @@ function analyzeLeg(
     );
   }
 
+  const twin = buildTwinForLeg(leg, race.id, horses, pickNumbers);
+
   return {
     leg,
     raceId: race.id,
@@ -1394,9 +1453,88 @@ function analyzeLeg(
     horses,
     pickNumbers,
     pickLabel: pickNumbers.join(","),
+    twinNumbers: twin?.numbers ?? null,
+    twinLabel: twin?.label ?? null,
+    twinNote: twin?.note ?? null,
+    twinIncludesDriverSecond: twin?.includesDriverSecond ?? false,
     openness: open,
     alerts,
     summary: summaryParts.join(" · "),
+  };
+}
+
+/**
+ * ATG-tvilling: två hästar till 1–2 i valfri ordning.
+ * Prioriterar tippradens topp + kusk 2:an / dubbelkusk när de finns.
+ */
+function buildTwinForLeg(
+  leg: number,
+  raceId: string,
+  horses: V75HorseTip[],
+  pickNumbers: number[]
+): V75TwinTip | null {
+  if (horses.length < 2) return null;
+
+  const byNum = new Map(horses.map((h) => [h.startNumber, h]));
+  const ranked = [...horses].sort((a, b) => b.score - a.score);
+
+  const preferred: V75HorseTip[] = [];
+  const seen = new Set<number>();
+  const push = (h: V75HorseTip | undefined) => {
+    if (!h || seen.has(h.startNumber)) return;
+    seen.add(h.startNumber);
+    preferred.push(h);
+  };
+
+  // 1) Tippradens streck (i score-ordning)
+  const pickRanked = pickNumbers
+    .map((n) => byNum.get(n))
+    .filter((h): h is V75HorseTip => !!h)
+    .sort((a, b) => b.score - a.score);
+  for (const h of pickRanked) push(h);
+
+  // 2) Dubbelkusk högst odds + kusk 2:an
+  for (const h of ranked) {
+    if (h.dualDriverLongshot || h.dualDriverSecond) push(h);
+  }
+
+  // 3) Fyll med högst score
+  for (const h of ranked) push(h);
+
+  const a = preferred[0];
+  const b = preferred[1];
+  if (!a || !b) return null;
+
+  const nums: [number, number] =
+    a.startNumber <= b.startNumber
+      ? [a.startNumber, b.startNumber]
+      : [b.startNumber, a.startNumber];
+  const names: [string, string] =
+    a.startNumber <= b.startNumber ? [a.name, b.name] : [b.name, a.name];
+  const includesDriverSecond = !!(a.dualDriverSecond || b.dualDriverSecond);
+  const includesLongshot = !!(a.dualDriverLongshot || b.dualDriverLongshot);
+
+  const bits: string[] = [];
+  if (includesLongshot && includesDriverSecond) {
+    bits.push("dubbelkusk + kusk 2:an");
+  } else if (includesDriverSecond) {
+    bits.push("inkluderar kusk 2:an");
+  } else if (includesLongshot) {
+    bits.push("inkluderar dubbelkusk");
+  }
+  if (a.role === "spik" || b.role === "spik") bits.push("spik i paret");
+  bits.push(
+    `score ${a.startNumber}:${a.score.toFixed(1)} / ${b.startNumber}:${b.score.toFixed(1)}`
+  );
+
+  return {
+    leg,
+    raceId,
+    numbers: nums,
+    label: `${nums[0]}-${nums[1]}`,
+    horseNames: names,
+    note: bits.join(" · "),
+    includesDriverSecond,
   };
 }
 
@@ -1446,6 +1584,7 @@ function fitLegsToBudget(
         h.classDrop?.dropped ||
         h.highWinRate ||
         h.dualDriverLongshot ||
+        h.dualDriverSecond ||
         (h.lowOddsReview?.supported === true && (h.winOdds ?? 99) <= 3.5)
     );
     // Se till att must ingår tidigt i ordningen
@@ -1610,12 +1749,19 @@ function fitLegsToBudget(
       }
       if (h.role === "skip") h.role = "gardering";
     }
+    const twin = buildTwinForLeg(
+      leg.leg,
+      leg.raceId,
+      leg.horses,
+      pickNumbers
+    );
     const open = opennessFromPicks(pickNumbers.length, leg.horses.length);
     const top = [...leg.horses].sort((a, b) => b.score - a.score)[0];
     const summaryParts = [
       `${open === "spikläge" ? "Spikläge" : open === "halvöppet" ? "Halvöppet" : "Vidöppet"}`,
       `streck ${pickNumbers.join(",") || "–"}`,
     ];
+    if (twin) summaryParts.push(`tvilling ${twin.label}`);
     if (top?.winOdds != null) {
       summaryParts.push(
         `topp ${top.name} @ ${top.winOdds.toFixed(2).replace(".", ",")}`
@@ -1625,6 +1771,10 @@ function fitLegsToBudget(
       ...leg,
       pickNumbers,
       pickLabel: pickNumbers.join(","),
+      twinNumbers: twin?.numbers ?? null,
+      twinLabel: twin?.label ?? null,
+      twinNote: twin?.note ?? null,
+      twinIncludesDriverSecond: twin?.includesDriverSecond ?? false,
       openness: open,
       summary: summaryParts.join(" · "),
     };
@@ -1824,6 +1974,29 @@ export async function buildAtgPoolDayTip(
     .join("-");
   const tipsStreckLabel = tipsStreck ? `TS ${tipsStreck}` : "TS –";
 
+  const twinTips: V75TwinTip[] = legs
+    .map((l) =>
+      l.twinNumbers && l.twinLabel
+        ? {
+            leg: l.leg,
+            raceId: l.raceId,
+            numbers: l.twinNumbers,
+            label: l.twinLabel,
+            horseNames: (() => {
+              const a = l.horses.find((h) => h.startNumber === l.twinNumbers![0]);
+              const b = l.horses.find((h) => h.startNumber === l.twinNumbers![1]);
+              return [a?.name || `#${l.twinNumbers![0]}`, b?.name || `#${l.twinNumbers![1]}`] as [
+                string,
+                string,
+              ];
+            })(),
+            note: l.twinNote || "",
+            includesDriverSecond: l.twinIncludesDriverSecond,
+          }
+        : null
+    )
+    .filter((t): t is V75TwinTip => !!t);
+
   const pool = product === "V64" ? game.pools?.V64 : game.pools?.V75;
   const jackpot =
     pool?.jackpotAmount ?? found.summary.jackpotAmount ?? null;
@@ -1860,6 +2033,7 @@ export async function buildAtgPoolDayTip(
     lowOddsReviews,
     dualDriverSignals,
     driverStrategies,
+    twinTips,
     preRaces,
     preRacesDone,
     tipsActivated,
@@ -1875,7 +2049,8 @@ export async function buildAtgPoolDayTip(
       "TS = tipsstreck (antal hästar per avdelning). Kuskanalys ligger före tippraden: lågodds först, högodds om kusken inte vinner med favoriten.",
       "Nergraderad = hästen kommer från lopp med tydligt högre förstapris än dagens.",
       "Högre seger% = klart över fältets median (karriärstatistik).",
-      `Dubbelkusk = kusk i exakt två ${product}-lopp; fokus på hästen med högst vinnarodds (brukar ofta ta en seger).`,
+      `Dubbelkusk = kusk i exakt två ${product}-lopp; fokus högst odds + räkna in kusk 2:an (andra starten).`,
+      "Tvilling = två hästar till 1–2 i valfri ordning per avdelning; prioriterar tipprad + dubbelkusk/kusk 2:an.",
       "Lågoddsare (@ ≤5,5) granskas mot seger%, form och klassdroppe – stödd eller svag.",
       `Överodds = modellchans högre än ${product}-procenten. Missvisande favorit = högt streck utan stöd.`,
       "Externa tips: Travcash, Aftonbladet, Expressen, Sulkysport, Google News.",
