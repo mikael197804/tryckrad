@@ -4,6 +4,7 @@ import {
   verifySessionToken,
 } from "./lib/auth/session";
 import { isOwnerSession } from "./lib/auth/owner";
+import { isSwedenAllowed, requestCountry } from "./lib/geo";
 
 export const config = {
   matcher: [
@@ -19,8 +20,56 @@ function isPublicPath(pathname: string): boolean {
   return false;
 }
 
+function swedenOnlyBlocked(req: NextRequest): NextResponse {
+  const country = requestCountry(req) || "okänt";
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      {
+        error: "Sidan är endast tillgänglig från Sverige.",
+        code: "sweden_only",
+        country,
+      },
+      { status: 403 }
+    );
+  }
+  const html = `<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Endast Sverige · Mikael’s tips</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;
+      font-family:Georgia,"Times New Roman",serif;background:#0f1410;color:#e8efe6}
+    main{max-width:28rem;padding:2rem;text-align:center}
+    h1{font-size:1.6rem;margin:0 0 .75rem}
+    p{margin:0;line-height:1.5;opacity:.88}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Endast Sverige</h1>
+    <p>Den här webbsidan är låst till Sverige och kan inte öppnas från ditt land (${country}).</p>
+  </main>
+</body>
+</html>`;
+  return new NextResponse(html, {
+    status: 403,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "x-geo-country": country,
+    },
+  });
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // Lås hela sajten till Sverige (Vercel edge geo)
+  if (!isSwedenAllowed(req)) {
+    return swedenOnlyBlocked(req);
+  }
 
   // Statiska ljud-/videofiler får aldrig skickas till login
   if (
