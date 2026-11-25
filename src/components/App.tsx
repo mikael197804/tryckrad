@@ -54,6 +54,10 @@ function productHistoryLabel(p: HistoryProduct): string {
       return "Måltipset";
     case "oddset":
       return "Oddset";
+    case "v75":
+      return "V75";
+    case "v64":
+      return "V64";
     case "esports_battle":
       return "Esports Battle";
   }
@@ -329,13 +333,15 @@ function buildHistoryViewModel(
     const l = list.filter((x) => x.status === "lost").length;
     const settled = w + l;
     const product = list[0].product;
-    // Powerplay/Topptipset: endast 8 rätt = grönt (ingen utdelning annars)
+    // PP/Topp: 8 rätt. V75≈5/7, V64≈4/6. Övriga: en miss ok på 8.
     const winThreshold =
       product === "powerplay" || product === "topptipset"
         ? list.length
-        : list.length >= 7 && list.length <= 9
-          ? Math.max(1, list.length - 1)
-          : list.length;
+        : product === "v75" || product === "v64"
+          ? Math.max(1, list.length - 2)
+          : list.length >= 7 && list.length <= 9
+            ? Math.max(1, list.length - 1)
+            : list.length;
     const systemResult: "won" | "lost" | "pending" =
       settled === list.length && list.length > 0
         ? w >= winThreshold
@@ -560,6 +566,69 @@ function drawToHistoryPicks(
   return out;
 }
 
+/** V75/V64 tipprad → resultatbibliotek (en rad per avdelning). */
+function atgTipToHistoryPicks(tip: V75DayTip): HistoryPick[] {
+  const product = tip.product === "V64" ? "v64" : "v75";
+  const label = product === "v64" ? "V64" : "V75";
+  // Endast när omgången startat / tips aktiverats – inga framtida förhands
+  const firstStart = tip.legs
+    .map((l) => (l.startTime ? Date.parse(l.startTime) : NaN))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b)[0];
+  const started =
+    tip.tipsActivated === true ||
+    (firstStart != null && firstStart <= Date.now());
+  if (!started) return [];
+  if (!tip.legs?.length) return [];
+
+  const tippedAt = tip.generatedAt || new Date().toISOString();
+  const costKr = tip.tipCostKr ?? null;
+  const tracks = tip.trackNames?.length
+    ? tip.trackNames.join("/")
+    : "";
+  const gameKey = `${product}:${tip.playDate}:${tip.gameId || "tip"}`;
+  const gameLabel = [
+    `${label} · ${tip.playDateLabel || tip.playDate}`,
+    tracks || null,
+    tip.tipsStreckLabel || null,
+    costKr != null ? `${Math.round(costKr)} kr` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const out: HistoryPick[] = [];
+  for (const leg of tip.legs) {
+    const nums = (leg.pickNumbers || []).filter((n) => Number.isFinite(n));
+    if (!nums.length) continue;
+    const kick = leg.startTime ? Date.parse(leg.startTime) : NaN;
+    if (Number.isFinite(kick) && kick > Date.now()) continue;
+    out.push({
+      id: `${product}:${tip.gameId || tip.playDate}:leg:${leg.leg}`,
+      product,
+      gameKey,
+      gameLabel,
+      tippedAt,
+      description:
+        leg.raceName ||
+        `${label}-${leg.leg}${leg.trackName ? ` · ${leg.trackName}` : ""}`,
+      home: leg.trackName || label,
+      away: leg.pickLabel || nums.join(","),
+      market: "atg_win",
+      pick: nums.map(String),
+      kickoff: leg.startTime || tip.startTime || null,
+      drawNumber: null,
+      eventNumber: leg.leg,
+      eventId: null,
+      raceId: leg.raceId || null,
+      status: "pending",
+      actual: null,
+      resultNote: null,
+      costKr,
+    });
+  }
+  return out;
+}
+
 function outcomeRank(o: OddsetTrackedTip["outcome"] | undefined): number {
   if (o === "won" || o === "lost") return 3;
   if (o === "live") return 2;
@@ -636,6 +705,8 @@ const HISTORY_PRODUCT_COLUMNS: Array<{
   { id: "stryktipset", label: "Stryktipset" },
   { id: "europatipset", label: "Europatipset" },
   { id: "maltipset", label: "Måltipset" },
+  { id: "v75", label: "V75" },
+  { id: "v64", label: "V64" },
   { id: "oddset", label: "Oddset" },
   { id: "esports_battle", label: "Esports Battle" },
 ];
@@ -2252,6 +2323,21 @@ function HistoryGameCard({
                     M
                   </span>
                 )}
+                {p.market === "atg_win" &&
+                  p.pick.map((n) => (
+                    <span
+                      key={n}
+                      className={`history-mark on ${
+                        displayStatus === "won"
+                          ? "hit"
+                          : displayStatus === "lost"
+                            ? "miss"
+                            : ""
+                      }`}
+                    >
+                      #{n}
+                    </span>
+                  ))}
               </div>
               <div className="reason">
                 Tipset:{" "}
@@ -2261,7 +2347,9 @@ function HistoryGameCard({
                     : "Över 1,5"
                   : p.market === "mal"
                     ? "Målmatch"
-                    : p.pick.join("")}
+                    : p.market === "atg_win"
+                      ? `${p.product === "v64" ? "V64" : "V75"}-${p.eventNumber}: ${p.pick.join(",")}`
+                      : p.pick.join("")}
                 {p.actual
                   ? ` · resultat ${p.actual}${
                       result1x2 ? ` (1X2 ${result1x2})` : ""
@@ -3625,7 +3713,15 @@ export default function App() {
           if (!isCurrent()) return;
           if (!res.ok)
             throw new Error(json.error || `Kunde inte hämta ${label}`);
-          setV75({ ...json, product: json.product || label });
+          const tip = { ...json, product: json.product || label };
+          setV75(tip);
+          const atgPicks = atgTipToHistoryPicks(tip);
+          if (atgPicks.length) {
+            saveLocalHistoryPicks([
+              ...loadLocalHistoryPicks(),
+              ...atgPicks,
+            ]);
+          }
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
         } else if (forProduct === "oddset") {
           const localTips = loadOddsetLocalTips();
@@ -3752,7 +3848,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [product, oddset, loadProduct]);
 
-  /** Tipprader från tippvyn – Powerplay #4826, Oddset m.m. */
+  /** Tipprader från tippvyn – Powerplay #4826, Oddset, V75/V64 m.m. */
   const historySeedPicks = useMemo(() => {
     const out: HistoryPick[] = [];
     if (data?.draws?.length) {
@@ -3777,8 +3873,11 @@ export default function App() {
         )
       );
     }
+    if (v75) {
+      out.push(...atgTipToHistoryPicks(v75));
+    }
     return out;
-  }, [data, oddset]);
+  }, [data, oddset, v75]);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -3794,10 +3893,12 @@ export default function App() {
         mergeOddsetTracked(loadOddsetLocalTips(), oddset?.tracked),
         oddset?.generatedAt || new Date().toISOString()
       );
+      const fromAtg = v75 ? atgTipToHistoryPicks(v75) : [];
       const local = mergeHistoryPickLists(
         loadLocalHistoryPicks(),
         fromDraws,
         fromOddset,
+        fromAtg,
         historySeedPicks
       );
       if (local.length) saveLocalHistoryPicks(local);
@@ -3818,6 +3919,7 @@ export default function App() {
         json.picks || [],
         fromDraws,
         fromOddset,
+        fromAtg,
         historySeedPicks
       );
       saveLocalHistoryPicks(merged);
@@ -3877,7 +3979,7 @@ export default function App() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [data, oddset, historySeedPicks]);
+  }, [data, oddset, v75, historySeedPicks]);
 
   const openHistory = useCallback(() => {
     setShowHistory(true);
@@ -3933,9 +4035,11 @@ export default function App() {
           }
         }
 
-        const [ppRes, toppRes] = await Promise.all([
+        const [ppRes, toppRes, v75Res, v64Res] = await Promise.all([
           fetch("/api/draws?product=powerplay", { cache: "no-store" }),
           fetch("/api/draws?product=topptipset", { cache: "no-store" }),
+          fetch("/api/v75", { cache: "no-store" }),
+          fetch("/api/v64", { cache: "no-store" }),
         ]);
         const extra: HistoryPick[] = [];
         for (const res of [ppRes, toppRes]) {
@@ -3947,6 +4051,15 @@ export default function App() {
           const at = json.generatedAt || tippedAt;
           for (const d of json.draws || []) {
             extra.push(...drawToHistoryPicks(d, at));
+          }
+        }
+        for (const res of [v75Res, v64Res]) {
+          if (!res.ok) continue;
+          try {
+            const json = (await res.json()) as V75DayTip;
+            extra.push(...atgTipToHistoryPicks(json));
+          } catch {
+            /* ignore */
           }
         }
         if (extra.length) {

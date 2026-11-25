@@ -9,6 +9,8 @@ export type HistoryProduct =
   | "stryktipset"
   | "europatipset"
   | "maltipset"
+  | "v75"
+  | "v64"
   | "esports_battle";
 
 export type HistoryPickStatus = "pending" | "live" | "won" | "lost";
@@ -22,13 +24,15 @@ export type HistoryPick = {
   description: string;
   home: string;
   away: string;
-  market: "1x2" | "over_1_5" | "over_2_5" | "mal";
-  /** T.ex. ["1","X"], ["over_1_5"] eller ["mal"]. */
+  market: "1x2" | "over_1_5" | "over_2_5" | "mal" | "atg_win";
+  /** T.ex. ["1","X"], ["over_1_5"], ["mal"] eller startnr ["2","4"]. */
   pick: string[];
   kickoff: string | null;
   drawNumber: number | null;
   eventNumber: number | null;
   eventId: number | null;
+  /** ATG race-id för V75/V64-avdelning. */
+  raceId?: string | null;
   status: HistoryPickStatus;
   actual: string | null;
   resultNote: string | null;
@@ -62,13 +66,23 @@ export type HistoryGameSummary = {
   drawNumber?: number | null;
 };
 
-/** PP/Topp kräver fullträff (8 rätt). Övriga: en miss ok på 8-matcher. */
+/**
+ * PP/Topp kräver fullträff (8 rätt).
+ * V75 ≈ 5 av 7, V64 ≈ 4 av 6 (poolnivå).
+ * Övriga: en miss ok på 8-matcher.
+ */
 export function systemWinThreshold(
   product: HistoryProduct,
   total: number
 ): number {
   if (product === "powerplay" || product === "topptipset") {
     return total;
+  }
+  if (product === "v75") {
+    return Math.max(1, total - 2);
+  }
+  if (product === "v64") {
+    return Math.max(1, total - 2);
   }
   if (total >= 7 && total <= 9) {
     return Math.max(1, total - 1);
@@ -94,10 +108,12 @@ export type TipHistoryResponse = {
 export const TIP_HISTORY_RETENTION_MS = 8 * 60 * 60 * 1000;
 export const TIP_HISTORY_RETENTION_HOURS = 8;
 
-const PRODUCT_SLUG: Record<
-  Exclude<HistoryProduct, "oddset" | "esports_battle">,
-  string
-> = {
+type SvenskaSpelHistoryProduct = Exclude<
+  HistoryProduct,
+  "oddset" | "esports_battle" | "v75" | "v64"
+>;
+
+const PRODUCT_SLUG: Record<SvenskaSpelHistoryProduct, string> = {
   powerplay: "powerplay",
   topptipset: "topptipset",
   stryktipset: "stryktipset",
@@ -228,7 +244,7 @@ async function fetchJson(url: string): Promise<unknown> {
 }
 
 async function fetchDrawResults(
-  product: Exclude<HistoryProduct, "oddset" | "esports_battle">,
+  product: SvenskaSpelHistoryProduct,
   drawNumber: number
 ): Promise<Map<number, { outcome: Outcome; homeGoals: number | null; awayGoals: number | null }>> {
   const slug = PRODUCT_SLUG[product];
@@ -432,6 +448,70 @@ async function settleOddsetPick(pick: HistoryPick): Promise<HistoryPick> {
   };
 }
 
+async function settleAtgLegPick(p: HistoryPick): Promise<HistoryPick> {
+  if (p.status === "won" || p.status === "lost") {
+    return {
+      ...p,
+      settledAt: p.settledAt || p.kickoff || p.tippedAt || new Date().toISOString(),
+    };
+  }
+  if (!p.raceId) {
+    return { ...p, resultNote: p.resultNote || "Väntar på ATG-resultat…" };
+  }
+  try {
+    const { fetchRace, isAtgRaceFinished } = await import("./atg");
+    const race = await fetchRace(p.raceId);
+    if (!race) {
+      return { ...p, resultNote: p.resultNote || "Väntar på ATG-resultat…" };
+    }
+    const finished = isAtgRaceFinished(race.status);
+    const starts = race.starts || [];
+    let winnerNum: number | null = null;
+    let winnerName = "";
+    for (const s of starts) {
+      if (s.scratched) continue;
+      const placeRaw = s.result?.place;
+      const place =
+        typeof placeRaw === "number"
+          ? placeRaw
+          : placeRaw != null
+            ? Number(placeRaw)
+            : null;
+      if (place === 1) {
+        winnerNum = s.number;
+        winnerName = s.horse?.name || `#${s.number}`;
+        break;
+      }
+    }
+    if (!finished || winnerNum == null) {
+      const kick = p.kickoff ? Date.parse(p.kickoff) : NaN;
+      const live =
+        Number.isFinite(kick) && kick <= Date.now() ? "live" : "pending";
+      return {
+        ...p,
+        status: live,
+        resultNote:
+          live === "live"
+            ? "Spelas / väntar på ATG-resultat…"
+            : "Väntar på ATG-resultat…",
+      };
+    }
+    const hit = p.pick.includes(String(winnerNum));
+    const settledAt = new Date().toISOString();
+    return {
+      ...p,
+      status: hit ? "won" : "lost",
+      actual: `#${winnerNum} ${winnerName}`,
+      settledAt,
+      resultNote: hit
+        ? `Rätt · vinnare #${winnerNum} ${winnerName} (i tippet)`
+        : `Fel · vinnare #${winnerNum} ${winnerName} (tipset ${p.pick.join(",")})`,
+    };
+  } catch {
+    return { ...p, resultNote: p.resultNote || "Väntar på ATG-resultat…" };
+  }
+}
+
 async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
   const resultsCache = new Map<
     string,
@@ -442,6 +522,10 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
   for (const p of picks) {
     if (p.product === "oddset" || p.product === "esports_battle") {
       out.push(p);
+      continue;
+    }
+    if (p.product === "v75" || p.product === "v64") {
+      out.push(await settleAtgLegPick(p));
       continue;
     }
     const alreadySettled = p.status === "won" || p.status === "lost";
@@ -483,7 +567,7 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
     if (!resultsCache.has(cacheKey)) {
       resultsCache.set(
         cacheKey,
-        await fetchDrawResults(p.product, p.drawNumber)
+        await fetchDrawResults(p.product as SvenskaSpelHistoryProduct, p.drawNumber)
       );
     }
     const results = resultsCache.get(cacheKey)!;
@@ -555,7 +639,7 @@ type PayoutTier = Array<{
 const payoutCache = new Map<string, { at: number; tiers: PayoutTier }>();
 
 async function fetchDrawPayoutTiers(
-  product: Exclude<HistoryProduct, "oddset" | "esports_battle">,
+  product: SvenskaSpelHistoryProduct,
   drawNumber: number
 ): Promise<PayoutTier> {
   const key = `${product}:${drawNumber}`;
@@ -686,10 +770,20 @@ async function attachPayouts(
   return Promise.all(
     games.map(async (g) => {
       if (g.systemResult !== "won") return g;
-      if (g.product === "oddset" || g.product === "esports_battle") return g;
+      if (
+        g.product === "oddset" ||
+        g.product === "esports_battle" ||
+        g.product === "v75" ||
+        g.product === "v64"
+      ) {
+        return g;
+      }
       if (g.drawNumber == null) return g;
       try {
-        const tiers = await fetchDrawPayoutTiers(g.product, g.drawNumber);
+        const tiers = await fetchDrawPayoutTiers(
+          g.product as SvenskaSpelHistoryProduct,
+          g.drawNumber
+        );
         const payoutLabel = formatPayoutLabel(tiers, g.won);
         return { ...g, payoutLabel };
       } catch {
@@ -767,6 +861,10 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "Måltipset";
     case "oddset":
       return "Oddset";
+    case "v75":
+      return "V75";
+    case "v64":
+      return "V64";
     case "esports_battle":
       return "Esports Battle";
   }
