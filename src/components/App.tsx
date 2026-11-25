@@ -13,7 +13,15 @@ import {
   isInPreCloseWindow,
   nextPreCloseRefreshAt,
 } from "../lib/refresh";
-import type { EsportsBattleDay } from "../lib/esportsBattle";
+import type {
+  EsportsBattleDay,
+  EsportsBattleMatch,
+} from "../lib/esportsBattle";
+import {
+  ESPORTS_BATTLE_RETENTION_HOURS,
+  ESPORTS_BATTLE_RETENTION_MS,
+  mergeEsportsBattleMatches,
+} from "../lib/esportsBattle";
 import type {
   HistoryPick,
   HistoryProduct,
@@ -46,9 +54,44 @@ function productHistoryLabel(p: HistoryProduct): string {
 const ODDSET_LS_KEY = "mikaels-oddset-tips-24h";
 const ODDSET_LEARN_LS_KEY = "mikaels-oddset-lessons";
 const HISTORY_LS_KEY = "mikaels-tips-history-24h";
+const ESPORTS_BATTLE_LS_KEY = "mikaels-esports-battle-3h";
 const ODDSET_RETENTION_MS = 24 * 60 * 60 * 1000;
 const ODDSET_LEARN_RETENTION_MS = 21 * 24 * 60 * 60 * 1000;
 const HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+function loadEsportsBattleLocal(): EsportsBattleMatch[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(ESPORTS_BATTLE_LS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { matches?: EsportsBattleMatch[] };
+    const list = Array.isArray(parsed?.matches)
+      ? parsed.matches
+      : Array.isArray(parsed)
+        ? (parsed as EsportsBattleMatch[])
+        : [];
+    return mergeEsportsBattleMatches(list);
+  } catch {
+    return [];
+  }
+}
+
+function saveEsportsBattleLocal(matches: EsportsBattleMatch[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const pruned = mergeEsportsBattleMatches(matches);
+    window.localStorage.setItem(
+      ESPORTS_BATTLE_LS_KEY,
+      JSON.stringify({
+        matches: pruned,
+        savedAt: new Date().toISOString(),
+        retentionHours: ESPORTS_BATTLE_RETENTION_HOURS,
+      })
+    );
+  } catch {
+    /* private mode / quota */
+  }
+}
 
 function loadOddsetLocalTips(): OddsetTrackedTip[] {
   if (typeof window === "undefined") return [];
@@ -2125,6 +2168,7 @@ function EsportsBattleResultsPanel({
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (fresh: boolean) => {
+    const local = loadEsportsBattleLocal();
     try {
       const res = await fetch(
         `/api/esports-battle${fresh ? "?fresh=1" : ""}`,
@@ -2132,9 +2176,43 @@ function EsportsBattleResultsPanel({
       );
       const json = (await res.json()) as EsportsBattleDay & { error?: string };
       if (!res.ok) throw new Error(json.error || "Kunde inte hämta resultat");
-      setDay(json);
+      const merged = mergeEsportsBattleMatches(local, json.matches || []);
+      saveEsportsBattleLocal(merged);
+      setDay({
+        ...json,
+        retentionHours: ESPORTS_BATTLE_RETENTION_HOURS,
+        matches: merged,
+        played: merged.length,
+        latestLabel: merged[0]
+          ? `${merged[0].homePlayer} ${merged[0].homeGoals}-${merged[0].awayGoals} ${merged[0].awayPlayer}`
+          : json.latestLabel,
+      });
       setError(null);
     } catch (e) {
+      if (local.length) {
+        saveEsportsBattleLocal(local);
+        setDay({
+          generatedAt: new Date().toISOString(),
+          source: "Sparat lokalt",
+          sourceUrl: "https://bettrails.com/resultados/esportsbattle?lang=en",
+          playDateLabel: new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Europe/Stockholm",
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+          }).format(new Date()),
+          retentionHours: ESPORTS_BATTLE_RETENTION_HOURS,
+          played: local.length,
+          scheduled: null,
+          goalsPerMatch: null,
+          over65Pct: null,
+          bttsPct: null,
+          latestLabel: local[0]
+            ? `${local[0].homePlayer} ${local[0].homeGoals}-${local[0].awayGoals} ${local[0].awayPlayer}`
+            : null,
+          matches: local,
+        });
+      }
       setError(e instanceof Error ? e.message : "Nätverksfel");
     } finally {
       setLoading(false);
@@ -2146,7 +2224,7 @@ function EsportsBattleResultsPanel({
     void load(true);
   }, [load, refreshToken]);
 
-  // Auto-uppdatera resultat var 90:e sekund
+  // Auto-uppdatera + rensa äldre än 3 h
   useEffect(() => {
     const id = setInterval(() => {
       void load(true);
@@ -2162,57 +2240,85 @@ function EsportsBattleResultsPanel({
   }
   if (!day) return null;
 
+  const hours = day.retentionHours ?? ESPORTS_BATTLE_RETENTION_HOURS;
+
   return (
     <div className="esports-battle-results">
       <p className="panel-lead">
-        Live-resultat · {day.playDateLabel}
-        {day.played != null
-          ? ` · ${day.played}${
-              day.scheduled != null ? `/${day.scheduled}` : ""
-            } spelade`
+        Resultat sparas <strong>{hours} h</strong>, sedan bort ·{" "}
+        {day.playDateLabel}
+        {day.matches.length
+          ? ` · ${day.matches.length} match${day.matches.length === 1 ? "" : "er"}`
           : ""}
         {day.goalsPerMatch != null
           ? ` · ${day.goalsPerMatch.toLocaleString("sv-SE")} mål/match`
           : ""}
-        {day.over65Pct != null ? ` · Ö6,5 ${day.over65Pct} %` : ""}
-        {day.bttsPct != null ? ` · BTTS ${day.bttsPct} %` : ""}
         . Uppdateras automatiskt
         {day.latestLabel ? ` · senaste ${day.latestLabel}` : ""}.
       </p>
       {error && <p className="esports-battle-warn">{error}</p>}
-      <ul className="esports-battle-list">
-        {day.matches.map((m) => (
-          <li key={m.id} className="esports-battle-row">
-            <span className="esports-battle-time">
-              {fmtEsportsClock(m.kickoff)}
-            </span>
-            <span className="esports-battle-match">
-              <span className="esports-battle-side">
-                <strong>{m.homePlayer}</strong>
-                {m.homeTeam ? (
-                  <span className="esports-battle-team">{m.homeTeam}</span>
-                ) : null}
-              </span>
-              <span className="esports-battle-score">
-                {m.homeGoals}–{m.awayGoals}
-              </span>
-              <span className="esports-battle-side away">
-                <strong>{m.awayPlayer}</strong>
-                {m.awayTeam ? (
-                  <span className="esports-battle-team">{m.awayTeam}</span>
-                ) : null}
-              </span>
-            </span>
-            <span className="esports-battle-goals">{m.totalGoals} mål</span>
-          </li>
-        ))}
-      </ul>
+      {day.matches.length === 0 ? (
+        <p className="history-col-empty">
+          Inga Esports Battle-resultat inom senaste {hours} h.
+        </p>
+      ) : (
+        <ul className="esports-battle-list">
+          {day.matches.map((m) => {
+            const ageMs = Date.now() - Date.parse(m.kickoff);
+            const leftMs = ESPORTS_BATTLE_RETENTION_MS - ageMs;
+            const leftMin =
+              Number.isFinite(leftMs) && leftMs > 0
+                ? Math.max(1, Math.round(leftMs / 60_000))
+                : 0;
+            return (
+              <li key={m.id} className="esports-battle-row">
+                <span className="esports-battle-time">
+                  {fmtEsportsClock(m.kickoff)}
+                </span>
+                <span className="esports-battle-match">
+                  <span className="esports-battle-side">
+                    <strong>{m.homePlayer}</strong>
+                    {m.homeTeam ? (
+                      <span className="esports-battle-team">{m.homeTeam}</span>
+                    ) : null}
+                  </span>
+                  <span className="esports-battle-score">
+                    {m.homeGoals}–{m.awayGoals}
+                  </span>
+                  <span className="esports-battle-side away">
+                    <strong>{m.awayPlayer}</strong>
+                    {m.awayTeam ? (
+                      <span className="esports-battle-team">{m.awayTeam}</span>
+                    ) : null}
+                  </span>
+                </span>
+                <span
+                  className="esports-battle-goals"
+                  title={
+                    leftMin > 0
+                      ? `Bort om ca ${leftMin} min`
+                      : "Tas bort snart"
+                  }
+                >
+                  {m.totalGoals} mål
+                  {leftMin > 0 && leftMin <= 60
+                    ? ` · ${leftMin} min kvar`
+                    : leftMin > 60
+                      ? ` · ${Math.round(leftMin / 60)} h kvar`
+                      : ""}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <p className="esports-battle-source">
         Källa: {day.source}
         {" · "}
         <a href={day.sourceUrl} target="_blank" rel="noreferrer">
           öppna
         </a>
+        {` · sparas ${hours} h`}
       </p>
     </div>
   );
@@ -2286,18 +2392,33 @@ function HistoryView({
     return { won, lost, pending, games: libraryGames.length };
   }, [displayHistory, library, libraryGames.length]);
 
-  // Förhandsmeta till bibliotekskortet (antal spelade)
+  // Förhandsmeta till bibliotekskortet (antal inom 3 h)
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
+        const local = loadEsportsBattleLocal();
         const res = await fetch("/api/esports-battle", { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled && local.length) {
+            setEsportsMeta({
+              played: local.length,
+              latest: local[0]
+                ? `${local[0].homePlayer} ${local[0].homeGoals}-${local[0].awayGoals} ${local[0].awayPlayer}`
+                : null,
+            });
+          }
+          return;
+        }
         const json = (await res.json()) as EsportsBattleDay;
+        const merged = mergeEsportsBattleMatches(local, json.matches || []);
+        saveEsportsBattleLocal(merged);
         if (cancelled) return;
         setEsportsMeta({
-          played: json.played ?? json.matches?.length ?? null,
-          latest: json.latestLabel,
+          played: merged.length,
+          latest: merged[0]
+            ? `${merged[0].homePlayer} ${merged[0].homeGoals}-${merged[0].awayGoals} ${merged[0].awayPlayer}`
+            : json.latestLabel,
         });
       } catch {
         /* ignore */
@@ -2403,11 +2524,11 @@ function HistoryView({
                       <span className="history-library-name">{col.label}</span>
                       <span className="history-library-meta">
                         {esportsMeta?.played != null
-                          ? `${esportsMeta.played} resultat idag`
-                          : "Live-resultat"}
+                          ? `${esportsMeta.played} inom 3 h`
+                          : "Senaste 3 h"}
                         {esportsMeta?.latest
-                          ? ` · senaste ${esportsMeta.latest}`
-                          : " · uppdateras auto"}
+                          ? ` · ${esportsMeta.latest}`
+                          : " · auto"}
                       </span>
                       <span className="history-library-open">
                         Öppna bibliotek →
@@ -2462,8 +2583,8 @@ function HistoryView({
               <span className="history-library-name">Esports Battle</span>
               <span className="history-library-meta">
                 {esportsMeta?.played != null
-                  ? `${esportsMeta.played} resultat idag`
-                  : "Live-resultat · uppdateras auto"}
+                  ? `${esportsMeta.played} inom 3 h`
+                  : "Sparas 3 h · sedan bort"}
               </span>
               <span className="history-library-open">Öppna bibliotek →</span>
             </button>
@@ -2474,8 +2595,9 @@ function HistoryView({
           <div className="history-library-view">
             <div className="history-library-toolbar">
               <p className="panel-lead">
-                Bibliotek: <strong>{libraryMeta.label}</strong> · slutresultat
-                uppdateras automatiskt var 90:e sekund.
+                Bibliotek: <strong>{libraryMeta.label}</strong> · sparas{" "}
+                {ESPORTS_BATTLE_RETENTION_HOURS} h efter match, sedan bort ·
+                uppdateras auto.
               </p>
             </div>
             <EsportsBattleResultsPanel refreshToken={esportsRefreshToken} />

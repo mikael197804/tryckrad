@@ -1,7 +1,12 @@
 /**
  * Esports Battle (eSoccer Battle 8 min) – resultat från Bettrails
  * (officiell football.esportsbattle.com blockeras ofta av Cloudflare).
+ *
+ * Resultat sparas 3 timmar efter kickoff, sedan bort.
  */
+
+import { mkdir, readFile, writeFile } from "fs/promises";
+import path from "path";
 
 export type EsportsBattleMatch = {
   id: string;
@@ -13,6 +18,8 @@ export type EsportsBattleMatch = {
   homeGoals: number;
   awayGoals: number;
   totalGoals: number;
+  /** När resultatet först sparades hos oss. */
+  savedAt?: string;
 };
 
 export type EsportsBattleDay = {
@@ -20,6 +27,7 @@ export type EsportsBattleDay = {
   source: string;
   sourceUrl: string;
   playDateLabel: string;
+  retentionHours: number;
   played: number | null;
   scheduled: number | null;
   goalsPerMatch: number | null;
@@ -29,6 +37,9 @@ export type EsportsBattleDay = {
   matches: EsportsBattleMatch[];
 };
 
+export const ESPORTS_BATTLE_RETENTION_MS = 3 * 60 * 60 * 1000;
+export const ESPORTS_BATTLE_RETENTION_HOURS = 3;
+
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -37,9 +48,150 @@ const BETTRAILS_URL =
 const JINXBETS_URL = "https://jinxbets.com/esoccer-battle-results";
 
 const STOCKHOLM = "Europe/Stockholm";
+const STORE_PATH = path.join("/tmp", "mikaels-esports-battle-history.json");
 
 let cache: { at: number; day: EsportsBattleDay } | null = null;
 const CACHE_TTL_MS = 45_000;
+
+type GlobalStore = {
+  matches: EsportsBattleMatch[];
+  loaded: boolean;
+};
+
+function store(): GlobalStore {
+  const g = globalThis as typeof globalThis & {
+    __mikaelsEsportsBattleHistory?: GlobalStore;
+  };
+  if (!g.__mikaelsEsportsBattleHistory) {
+    g.__mikaelsEsportsBattleHistory = { matches: [], loaded: false };
+  }
+  return g.__mikaelsEsportsBattleHistory;
+}
+
+/** Retention efter kickoff (matchtid). */
+export function esportsBattleAnchorMs(m: EsportsBattleMatch): number {
+  const kick = Date.parse(m.kickoff);
+  if (Number.isFinite(kick)) return kick;
+  const saved = m.savedAt ? Date.parse(m.savedAt) : NaN;
+  return Number.isFinite(saved) ? saved : Date.now();
+}
+
+export function pruneEsportsBattleMatches(
+  matches: EsportsBattleMatch[],
+  now = Date.now()
+): EsportsBattleMatch[] {
+  return matches.filter((m) => {
+    const at = esportsBattleAnchorMs(m);
+    return Number.isFinite(at) && now - at <= ESPORTS_BATTLE_RETENTION_MS;
+  });
+}
+
+export function mergeEsportsBattleMatches(
+  ...groups: EsportsBattleMatch[][]
+): EsportsBattleMatch[] {
+  const byId = new Map<string, EsportsBattleMatch>();
+  for (const group of groups) {
+    for (const m of group) {
+      if (!m?.id) continue;
+      const prev = byId.get(m.id);
+      if (!prev) {
+        byId.set(m.id, {
+          ...m,
+          savedAt: m.savedAt || new Date().toISOString(),
+        });
+        continue;
+      }
+      byId.set(m.id, {
+        ...prev,
+        ...m,
+        savedAt: prev.savedAt || m.savedAt || new Date().toISOString(),
+        homeGoals: m.homeGoals ?? prev.homeGoals,
+        awayGoals: m.awayGoals ?? prev.awayGoals,
+        totalGoals:
+          (m.homeGoals ?? prev.homeGoals) + (m.awayGoals ?? prev.awayGoals),
+      });
+    }
+  }
+  return pruneEsportsBattleMatches([...byId.values()]).sort(
+    (a, b) => Date.parse(b.kickoff) - Date.parse(a.kickoff)
+  );
+}
+
+function summarizeFromMatches(
+  matches: EsportsBattleMatch[],
+  meta: Partial<EsportsBattleDay> & { source: string; sourceUrl: string }
+): EsportsBattleDay {
+  const goals = matches.map((m) => m.totalGoals);
+  const gpm =
+    goals.length > 0
+      ? Math.round((100 * goals.reduce((s, n) => s + n, 0)) / goals.length) /
+        100
+      : null;
+  const over65 =
+    goals.length > 0
+      ? Math.round((100 * goals.filter((g) => g > 6.5).length) / goals.length)
+      : null;
+  const btts =
+    matches.length > 0
+      ? Math.round(
+          (100 *
+            matches.filter((m) => m.homeGoals > 0 && m.awayGoals > 0).length) /
+            matches.length
+        )
+      : null;
+  const latest = matches[0]
+    ? `${matches[0].homePlayer} ${matches[0].homeGoals}-${matches[0].awayGoals} ${matches[0].awayPlayer}`
+    : null;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: meta.source,
+    sourceUrl: meta.sourceUrl,
+    playDateLabel: stockholmDateLabel(),
+    retentionHours: ESPORTS_BATTLE_RETENTION_HOURS,
+    played: meta.played ?? matches.length,
+    scheduled: meta.scheduled ?? null,
+    goalsPerMatch: meta.goalsPerMatch ?? gpm,
+    over65Pct: meta.over65Pct ?? over65,
+    bttsPct: meta.bttsPct ?? btts,
+    latestLabel: meta.latestLabel ?? latest,
+    matches,
+  };
+}
+
+async function ensureLoaded(): Promise<void> {
+  const s = store();
+  if (s.loaded) return;
+  s.loaded = true;
+  try {
+    const raw = await readFile(STORE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as { matches?: EsportsBattleMatch[] };
+    if (Array.isArray(parsed.matches)) {
+      s.matches = pruneEsportsBattleMatches(parsed.matches);
+    }
+  } catch {
+    /* ingen fil ännu */
+  }
+}
+
+async function persist(): Promise<void> {
+  const s = store();
+  s.matches = pruneEsportsBattleMatches(s.matches);
+  try {
+    await mkdir(path.dirname(STORE_PATH), { recursive: true });
+    await writeFile(
+      STORE_PATH,
+      JSON.stringify({
+        matches: s.matches,
+        savedAt: new Date().toISOString(),
+        retentionHours: ESPORTS_BATTLE_RETENTION_HOURS,
+      }),
+      "utf8"
+    );
+  } catch {
+    /* /tmp kan faila – minnet räcker för warm instances */
+  }
+}
 
 function stockholmYmd(d = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -92,44 +244,56 @@ function stripTags(s: string): string {
     .trim();
 }
 
-function parseBettrailsHtml(html: string): EsportsBattleDay | null {
+type ScrapedDay = {
+  source: string;
+  sourceUrl: string;
+  played: number | null;
+  scheduled: number | null;
+  goalsPerMatch: number | null;
+  over65Pct: number | null;
+  bttsPct: number | null;
+  latestLabel: string | null;
+  matches: EsportsBattleMatch[];
+};
+
+function parseBettrailsHtml(html: string): ScrapedDay | null {
   const matches: EsportsBattleMatch[] = [];
-  const rowRe =
-    /<tr[^>]*data-vk="([^"]+)"[^>]*>([\s\S]*?)<\/tr>/gi;
+  const rowRe = /<tr[^>]*data-vk="([^"]+)"[^>]*>([\s\S]*?)<\/tr>/gi;
   let row: RegExpExecArray | null;
+  const nowIso = new Date().toISOString();
   while ((row = rowRe.exec(html))) {
     const vk = row[1];
     const body = row[2];
     const homePlayer =
-      body.match(/<div class="home"[\s\S]*?<span class="pl">([^<]*)<\/span>/i)?.[1]?.trim() ||
-      "";
+      body.match(
+        /<div class="home"[\s\S]*?<span class="pl">([^<]*)<\/span>/i
+      )?.[1]?.trim() || "";
     const homeTeam =
-      body.match(/<div class="home"[\s\S]*?<span class="tm">([^<]*)<\/span>/i)?.[1]?.trim() ||
-      "";
+      body.match(
+        /<div class="home"[\s\S]*?<span class="tm">([^<]*)<\/span>/i
+      )?.[1]?.trim() || "";
     const awayPlayer =
-      body.match(/<div class="away"[\s\S]*?<span class="pl">([^<]*)<\/span>/i)?.[1]?.trim() ||
-      "";
+      body.match(
+        /<div class="away"[\s\S]*?<span class="pl">([^<]*)<\/span>/i
+      )?.[1]?.trim() || "";
     const awayTeam =
-      body.match(/<div class="away"[\s\S]*?<span class="tm">([^<]*)<\/span>/i)?.[1]?.trim() ||
-      "";
+      body.match(
+        /<div class="away"[\s\S]*?<span class="tm">([^<]*)<\/span>/i
+      )?.[1]?.trim() || "";
     const scoreCell =
       body.match(/<td class="score"[^>]*>([\s\S]*?)<\/td>/i)?.[1] || "";
     const nums = [...scoreCell.matchAll(/>(\d+)</g)].map((x) => Number(x[1]));
     if (nums.length < 2) continue;
     const homeGoals = nums[0];
     const awayGoals = nums[1];
-    const dateCell =
-      body.match(/<td(?![^>]*class="(?:score|c)")[^>]*>([\s\S]*?)<\/td>/i)?.[1] ||
-      "";
-    // Prefer last td text (Date column)
     const tds = [...body.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) =>
       stripTags(m[1])
     );
-    const dateText = tds[tds.length - 1] || stripTags(dateCell) || vk;
+    const dateText = tds[tds.length - 1] || vk;
     const kickoff =
       parseBettrailsKickoff(dateText) ||
       parseBettrailsKickoff(vk.replace("@", " · ")) ||
-      new Date().toISOString();
+      nowIso;
     if (!homePlayer && !awayPlayer) continue;
     matches.push({
       id: `eb:${vk}`,
@@ -141,13 +305,16 @@ function parseBettrailsHtml(html: string): EsportsBattleDay | null {
       homeGoals,
       awayGoals,
       totalGoals: homeGoals + awayGoals,
+      savedAt: nowIso,
     });
   }
 
   if (!matches.length) return null;
 
   const plain = stripTags(
-    html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ")
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
   );
   const playedM = plain.match(/(\d+)\s+of\s+(\d+)\s+played/i);
   const gpmM = plain.match(/Goals per match\s+([\d.]+)/i);
@@ -156,10 +323,8 @@ function parseBettrailsHtml(html: string): EsportsBattleDay | null {
   const latestM = plain.match(/Latest result:\s*([^.]+)/i);
 
   return {
-    generatedAt: new Date().toISOString(),
     source: "Bettrails",
     sourceUrl: BETTRAILS_URL,
-    playDateLabel: stockholmDateLabel(),
     played: playedM ? Number(playedM[1]) : matches.length,
     scheduled: playedM ? Number(playedM[2]) : null,
     goalsPerMatch: gpmM ? Number(gpmM[1]) : null,
@@ -170,10 +335,11 @@ function parseBettrailsHtml(html: string): EsportsBattleDay | null {
   };
 }
 
-function parseJinxbetsHtml(html: string): EsportsBattleDay | null {
+function parseJinxbetsHtml(html: string): ScrapedDay | null {
   const matches: EsportsBattleMatch[] = [];
   const today = stockholmYmd();
   const [y, mo, d] = today.split("-").map(Number);
+  const nowIso = new Date().toISOString();
   const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
   for (const row of rows) {
     const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
@@ -208,31 +374,19 @@ function parseJinxbetsHtml(html: string): EsportsBattleDay | null {
       homeGoals: hg,
       awayGoals: ag,
       totalGoals: hg + ag,
+      savedAt: nowIso,
     });
   }
   if (!matches.length) return null;
   return {
-    generatedAt: new Date().toISOString(),
     source: "Jinxbets",
     sourceUrl: JINXBETS_URL,
-    playDateLabel: stockholmDateLabel(),
     played: matches.length,
     scheduled: null,
-    goalsPerMatch:
-      Math.round(
-        (100 * matches.reduce((s, m) => s + m.totalGoals, 0)) / matches.length
-      ) / 100,
-    over65Pct: Math.round(
-      (100 * matches.filter((m) => m.totalGoals > 6.5).length) / matches.length
-    ),
-    bttsPct: Math.round(
-      (100 *
-        matches.filter((m) => m.homeGoals > 0 && m.awayGoals > 0).length) /
-        matches.length
-    ),
-    latestLabel: matches[0]
-      ? `${matches[0].homePlayer} ${matches[0].homeGoals}-${matches[0].awayGoals} ${matches[0].awayPlayer}`
-      : null,
+    goalsPerMatch: null,
+    over65Pct: null,
+    bttsPct: null,
+    latestLabel: null,
     matches,
   };
 }
@@ -262,20 +416,38 @@ export async function buildEsportsBattleDay(
     return cache.day;
   }
 
+  await ensureLoaded();
+  const s = store();
+
   const betHtml = await fetchHtml(BETTRAILS_URL);
-  let day = betHtml ? parseBettrailsHtml(betHtml) : null;
-  if (!day) {
+  let scraped = betHtml ? parseBettrailsHtml(betHtml) : null;
+  if (!scraped) {
     const jinxHtml = await fetchHtml(JINXBETS_URL);
-    day = jinxHtml ? parseJinxbetsHtml(jinxHtml) : null;
+    scraped = jinxHtml ? parseJinxbetsHtml(jinxHtml) : null;
   }
-  if (!day) {
+
+  if (scraped?.matches?.length) {
+    s.matches = mergeEsportsBattleMatches(s.matches, scraped.matches);
+    await persist();
+  } else {
+    s.matches = pruneEsportsBattleMatches(s.matches);
+  }
+
+  if (!s.matches.length && !scraped) {
     throw new Error("Kunde inte hämta Esports Battle-resultat");
   }
 
-  // Nyast först
-  day.matches.sort(
-    (a, b) => Date.parse(b.kickoff) - Date.parse(a.kickoff)
-  );
+  // `played` = antal sparade inom 3 h (inte hela dagens Bettrails-total)
+  const day = summarizeFromMatches(s.matches, {
+    source: scraped?.source || "Esports Battle",
+    sourceUrl: scraped?.sourceUrl || BETTRAILS_URL,
+    played: s.matches.length,
+    scheduled: null,
+    goalsPerMatch: null,
+    over65Pct: null,
+    bttsPct: null,
+    latestLabel: null,
+  });
 
   cache = { at: Date.now(), day };
   return day;
