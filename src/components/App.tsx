@@ -27,12 +27,12 @@ import type {
   HistoryPick,
   HistoryProduct,
   TipHistoryResponse,
-} from "../lib/tipHistory";
+} from "../lib/tipHistoryShared";
 import {
   isFutureHistoryPick,
   TIP_HISTORY_RETENTION_HOURS,
   TIP_HISTORY_RETENTION_MS,
-} from "../lib/tipHistory";
+} from "../lib/tipHistoryShared";
 import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
 import type {
   V75DayTip,
@@ -4854,7 +4854,7 @@ export default function App() {
             onClick={() => switchProduct("tvilling")}
           >
             <span className="btn-label-full">Tvilling</span>
-            <span className="btn-label-short">Twin</span>
+            <span className="btn-label-short">Tvil</span>
           </button>
           {authUser?.isOwner && (
             <a

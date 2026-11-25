@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import { DAILY_SYSTEM_COST_KR } from "./systems";
 import type { DrawBundle } from "./types";
-import type { HistoryPick, HistoryProduct } from "./tipHistory";
+import type { HistoryPick, HistoryProduct } from "./tipHistoryShared";
 
 /**
  * Dagligt 192 kr-system för Powerplay och Topptipset –
