@@ -659,15 +659,21 @@ function buildSystemForCost(
 }
 
 export type GenerateSystemsOptions = {
-  /** Stryktipset: 6 systemspel inkl. R 4-4-144. */
-  product?: "powerplay" | "topptipset" | "stryktipset" | "maltipset" | string;
+  /** Stryk/Europa: 6 systemspel inkl. R 4-4-144. */
+  product?:
+    | "powerplay"
+    | "topptipset"
+    | "stryktipset"
+    | "europatipset"
+    | "maltipset"
+    | string;
 };
 
 /**
  * Bygg system 48–720 kr. För 48 kr (Powerplay/Topptipset) maximeras
  * uppskattad träffsannolikhet via djupare p-modell och optimal gardering.
  * 192 kr tvingas alltid med (dagligt PP/Topp-resultat 24 h).
- * Stryktipset: 6 systemspel inkl. R 4-4-144 (ersätter matematiskt 144 kr).
+ * Stryk/Europa: 6 systemspel inkl. R 4-4-144 (ersätter matematiskt 144 kr).
  */
 export function generateSystems(
   matches: MatchAnalysis[],
@@ -676,12 +682,14 @@ export function generateSystems(
   if (matches.length === 0) return [];
 
   const isStryk =
-    opts.product === "stryktipset" || matches.length === 13;
-  // Stryk: 5 M-system + R 4-4-144 = 6 spel
+    opts.product === "stryktipset" ||
+    opts.product === "europatipset" ||
+    matches.length === 13;
+  // Stryk/Europa: 5 M-system + R 4-4-144 = 6 spel
   const maxMathSystems = isStryk ? 5 : 5;
 
   // 48 först – säkerhetsfokus för PP/Topp; 192 alltid (dagligt resultat)
-  // Stryk: hoppa M-144 (ersätts av R 4-4-144)
+  // Stryk/Europa: hoppa M-144 (ersätts av R 4-4-144)
   const preferred = isStryk
     ? [48, 96, 72, 192, 288, 432]
     : [48, 96, 72, 144, 192, 288, 432, 576];
@@ -714,7 +722,7 @@ export function generateSystems(
     }
   }
 
-  // Stryktipset: R 4-4-144 som sjätte systemspel
+  // Stryk/Europa: R 4-4-144 som sjätte systemspel
   if (isStryk) {
     const r44 = buildRSystem44144(matches);
     if (r44) {

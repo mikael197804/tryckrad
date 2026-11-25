@@ -7,6 +7,7 @@ export type HistoryProduct =
   | "powerplay"
   | "topptipset"
   | "stryktipset"
+  | "europatipset"
   | "maltipset"
   | "esports_battle";
 
@@ -100,6 +101,7 @@ const PRODUCT_SLUG: Record<
   powerplay: "powerplay",
   topptipset: "topptipset",
   stryktipset: "stryktipset",
+  europatipset: "europatipset",
   maltipset: "maltipset",
 };
 
@@ -748,6 +750,8 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "Topptipset";
     case "stryktipset":
       return "Stryktipset";
+    case "europatipset":
+      return "Europatipset";
     case "maltipset":
       return "Måltipset";
     case "oddset":

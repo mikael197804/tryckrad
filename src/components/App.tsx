@@ -42,6 +42,8 @@ function productHistoryLabel(p: HistoryProduct): string {
       return "Topptipset";
     case "stryktipset":
       return "Stryktipset";
+    case "europatipset":
+      return "Europatipset";
     case "maltipset":
       return "Måltipset";
     case "oddset":
@@ -49,6 +51,11 @@ function productHistoryLabel(p: HistoryProduct): string {
     case "esports_battle":
       return "Esports Battle";
   }
+}
+
+/** Stryk + Europa: samma system (R 4-4-144) och sen laganalys. */
+function isStrykFamily(p: string): boolean {
+  return p === "stryktipset" || p === "europatipset";
 }
 
 const ODDSET_LS_KEY = "mikaels-oddset-tips-24h";
@@ -409,6 +416,7 @@ function drawToHistoryPicks(
     product !== "powerplay" &&
     product !== "topptipset" &&
     product !== "stryktipset" &&
+    product !== "europatipset" &&
     product !== "maltipset"
   ) {
     return [];
@@ -568,6 +576,7 @@ type ProductKind =
   | "powerplay"
   | "topptipset"
   | "stryktipset"
+  | "europatipset"
   | "maltipset"
   | "oddset"
   | "v75";
@@ -576,6 +585,7 @@ const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "v75">> = [
   "topptipset",
   "powerplay",
   "stryktipset",
+  "europatipset",
   "maltipset",
 ];
 
@@ -586,6 +596,7 @@ const HISTORY_PRODUCT_COLUMNS: Array<{
   { id: "powerplay", label: "Powerplay" },
   { id: "topptipset", label: "Topptipset" },
   { id: "stryktipset", label: "Stryktipset" },
+  { id: "europatipset", label: "Europatipset" },
   { id: "maltipset", label: "Måltipset" },
   { id: "oddset", label: "Oddset" },
   { id: "esports_battle", label: "Esports Battle" },
@@ -595,6 +606,8 @@ function productLabel(p: ProductKind): string {
   switch (p) {
     case "stryktipset":
       return "Stryktipset";
+    case "europatipset":
+      return "Europatipset";
     case "maltipset":
       return "Måltipset";
     case "topptipset":
@@ -3927,7 +3940,9 @@ export default function App() {
                     ? "PP"
                     : p === "stryktipset"
                       ? "Stryk"
-                      : "Mål"}
+                      : p === "europatipset"
+                        ? "Europa"
+                        : "Mål"}
               </span>
             </button>
           ))}
@@ -4023,6 +4038,7 @@ export default function App() {
             product === "powerplay" ||
             product === "topptipset" ||
             product === "stryktipset" ||
+            product === "europatipset" ||
             product === "maltipset" ||
             product === "oddset"
               ? product
@@ -4214,7 +4230,7 @@ export default function App() {
                     </ul>
                   </>
                 )}
-                {(product === "stryktipset" || product === "maltipset") &&
+                {(isStrykFamily(product) || product === "maltipset") &&
                   (draw.lineupAlerts?.length ?? 0) > 0 && (
                   <>
                     <h2 style={{ fontSize: "1.05rem" }}>
@@ -4227,7 +4243,7 @@ export default function App() {
                     </ul>
                   </>
                 )}
-                {(product === "stryktipset" || product === "maltipset") &&
+                {(isStrykFamily(product) || product === "maltipset") &&
                   (draw.lineupAlerts?.length ?? 0) === 0 && (
                   <p className="panel-lead" style={{ marginTop: "0.75rem" }}>
                     Sen analys aktiveras automatiskt ca 15 minuter före varje
@@ -4277,14 +4293,14 @@ export default function App() {
                   <h2>
                     {product === "maltipset"
                       ? "M-system (8 målrikaste)"
-                      : product === "stryktipset"
+                      : isStrykFamily(product)
                         ? "Systemspel (6) · R 4-4-144"
                         : "System 48–720 kr"}
                   </h2>
                   <p className="panel-lead">
                     {product === "powerplay" || product === "topptipset"
                       ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad chans till 8 rätt (utdelning) – inte garanti. "
-                      : product === "stryktipset"
+                      : isStrykFamily(product)
                         ? "Sex systemspel: matematiska kuponger plus reducerat R 4-4-144 (4 hel · 4 halv · 5 spik, garanti 12 rätt om tecknen sitter). "
                         : ""}
                     Kupongen speglar {productLabel(product)}-raden på Svenska
@@ -4330,7 +4346,7 @@ export default function App() {
                       : `Baserat på odds, svenska folket, tabelläge, vilomotiv och schema${
                           product === "powerplay"
                             ? ", plus förväntat antal mål"
-                            : product === "stryktipset"
+                            : isStrykFamily(product)
                               ? ", plus sen laganalys 15 min före avspark"
                               : ""
                         }. Garderingar läggs där osäkerhet, trygg tabell eller trötthet är högst.`}
@@ -4417,7 +4433,7 @@ export default function App() {
                           </div>
                         )}
                         {!m.lineup?.windowActive &&
-                          (product === "stryktipset" ||
+                          (isStrykFamily(product) ||
                             product === "maltipset") &&
                           (m.lineup?.items?.length ?? 0) > 0 && (
                           <div className="lineup-block">
@@ -4481,7 +4497,7 @@ export default function App() {
                               />
                             </>
                           )}
-                          {(product === "stryktipset" ||
+                          {(isStrykFamily(product) ||
                             product === "maltipset") &&
                             m.lineup && (
                             <>
@@ -4588,7 +4604,7 @@ export default function App() {
                                     />
                                   </>
                                 )}
-                                {(product === "stryktipset" ||
+                                {(isStrykFamily(product) ||
                                   product === "maltipset") &&
                                   m.lineup && (
                                   <>
@@ -4612,7 +4628,7 @@ export default function App() {
                                   goalRank={m.goalRank}
                                 />
                               )}
-                              {(product === "stryktipset" ||
+                              {(isStrykFamily(product) ||
                                 product === "maltipset") &&
                                 m.lineup &&
                                 (m.lineup.windowActive ||

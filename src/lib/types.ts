@@ -210,7 +210,12 @@ export type MatchAnalysis = {
 export type DrawBundle = {
   drawNumber: number;
   productName: string;
-  productKind: "powerplay" | "topptipset" | "stryktipset" | "maltipset";
+  productKind:
+    | "powerplay"
+    | "topptipset"
+    | "stryktipset"
+    | "europatipset"
+    | "maltipset";
   closeDescription: string;
   closeTime: string;
   openTime: string;

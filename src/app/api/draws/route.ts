@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
       "powerplay",
       "topptipset",
       "stryktipset",
+      "europatipset",
       "maltipset",
     ];
     const product: ProductKind = allowed.includes(raw as ProductKind)

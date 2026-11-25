@@ -150,6 +150,7 @@ export async function fetchArticlesForMatches(
     | "powerplay"
     | "topptipset"
     | "stryktipset"
+    | "europatipset"
     | "maltipset" = "powerplay"
 ): Promise<Article[]> {
   const teamQuery = [
@@ -161,14 +162,17 @@ export async function fetchArticlesForMatches(
   const footballProduct =
     product === "topptipset" ||
     product === "stryktipset" ||
+    product === "europatipset" ||
     product === "maltipset";
 
   const productNewsQuery =
     product === "stryktipset"
       ? "Stryktipset tips Svenska Spel"
-      : product === "maltipset"
-        ? "Måltipset tips Svenska Spel"
-        : "Topptipset tips Svenska Spel";
+      : product === "europatipset"
+        ? "Europatipset tips Svenska Spel"
+        : product === "maltipset"
+          ? "Måltipset tips Svenska Spel"
+          : "Topptipset tips Svenska Spel";
 
   const feeds: { url: string; source: string }[] =
     footballProduct
@@ -257,9 +261,9 @@ export async function fetchArticlesForMatches(
     if (teams.length === 0) {
       const general =
         (footballProduct
-          ? /stryktipset|måltipset|maltipset|topptipset|premier|champions|championship|allsvenskan|tips|match/i.test(
+          ? /stryktipset|europatipset|måltipset|maltipset|topptipset|premier|champions|championship|allsvenskan|tips|match/i.test(
               item.title
-            ) || /stryk|måltips|topptipset|tips/i.test(item.snippet)
+            ) || /stryk|europa|måltips|topptipset|tips/i.test(item.snippet)
           : /powerplay|shl|hockeyallsvenskan|nhl|tips|match/i.test(
               item.title
             ) || /powerplay|shl|tips/i.test(item.snippet));

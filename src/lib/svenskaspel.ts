@@ -7,7 +7,13 @@ export type ProductKind =
   | "powerplay"
   | "topptipset"
   | "stryktipset"
+  | "europatipset"
   | "maltipset";
+
+/** Stryk/Europa: 13 matcher, samma system (inkl. R 4-4-144). */
+export function isStrykFamilyProduct(product: string): boolean {
+  return product === "stryktipset" || product === "europatipset";
+}
 
 export type RawDraw = {
   drawNumber: number;
@@ -339,6 +345,13 @@ export async function fetchStryktipsetDraws(): Promise<RawDraw[]> {
   );
 }
 
+export async function fetchEuropatipsetDraws(): Promise<RawDraw[]> {
+  return (await fetchOpenListDraws("europatipset")).sort(
+    (a, b) =>
+      new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
+  );
+}
+
 export async function fetchMaltipsetDraws(): Promise<RawDraw[]> {
   return (await fetchOpenListDraws("maltipset")).sort(
     (a, b) =>
@@ -351,6 +364,7 @@ export async function fetchDrawsForProduct(
 ): Promise<RawDraw[]> {
   if (product === "topptipset") return fetchTopptipsetDraws();
   if (product === "stryktipset") return fetchStryktipsetDraws();
+  if (product === "europatipset") return fetchEuropatipsetDraws();
   if (product === "maltipset") return fetchMaltipsetDraws();
   return fetchPowerplayDraws();
 }
@@ -359,6 +373,7 @@ export function isFootballProduct(product: ProductKind): boolean {
   return (
     product === "topptipset" ||
     product === "stryktipset" ||
+    product === "europatipset" ||
     product === "maltipset"
   );
 }
