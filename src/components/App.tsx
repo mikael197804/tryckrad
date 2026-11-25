@@ -969,53 +969,25 @@ function V75LegCard({
   );
 }
 
-/** Egen kolumn: tips + resultat för ATG-tvilling (V75/V64). */
+/** Egen kolumn: tvillingtips. Rätt/fel ligger i resultatbiblioteket. */
 function TwinView({
   tips,
-  results,
   onOpenResults,
 }: {
   tips: V75DayTip[];
-  results: HistoryPick[];
   onOpenResults: () => void;
 }) {
-  const resultByRace = useMemo(() => {
-    const map = new Map<string, HistoryPick>();
-    for (const p of results) {
-      if (p.market !== "atg_twin") continue;
-      const key =
-        p.raceId ||
-        `${p.gameKey || ""}:${p.eventNumber ?? ""}:${p.pick.join("-")}`;
-      const prev = map.get(key);
-      if (!prev || outcomeRank(p.status) >= outcomeRank(prev.status)) {
-        map.set(key, p);
-      }
-    }
-    return map;
-  }, [results]);
-
-  const settled = results.filter(
-    (p) => p.market === "atg_twin" && (p.status === "won" || p.status === "lost")
-  );
-  const won = settled.filter((p) => p.status === "won").length;
-  const lost = settled.filter((p) => p.status === "lost").length;
-  const waiting = results.filter(
-    (p) =>
-      p.market === "atg_twin" &&
-      (p.status === "pending" || p.status === "live")
-  ).length;
-
   return (
     <div className="rise">
       <section className="panel">
-        <h2>Tvilling · tips och resultat</h2>
+        <h2>Tvilling · tips</h2>
         <p className="panel-lead">
-          Egen kolumn för ATG-tvilling (1–2 i valfri ordning). Tips per
-          avdelning inkl. kusk 2:an, och rätt/fel när loppet är klart (4 h).
+          ATG-tvilling (1–2 i valfri ordning) per avdelning, inkl. kusk 2:an.
+          Rätt och fel syns under Gamla resultat → Tvilling (4 h).
         </p>
         <div className="history-actions" style={{ marginTop: "0.5rem" }}>
           <button type="button" className="history-btn" onClick={onOpenResults}>
-            Öppna resultatbibliotek
+            Bibliotek · rätt/fel
           </button>
           {tips.map((tip) => (
             <a
@@ -1041,10 +1013,15 @@ function TwinView({
             const product = tip.product || "V75";
             const twins = tip.twinTips || [];
             return (
-              <div key={`tip-block-${product}-${tip.playDate}`} style={{ marginBottom: "1rem" }}>
+              <div
+                key={`tip-block-${product}-${tip.playDate}`}
+                style={{ marginBottom: "1rem" }}
+              >
                 <p className="panel-lead">
                   {product} · {tip.playDateLabel}
-                  {tip.trackNames.length ? ` · ${tip.trackNames.join("/")}` : ""}
+                  {tip.trackNames.length
+                    ? ` · ${tip.trackNames.join("/")}`
+                    : ""}
                 </p>
                 {twins.length === 0 ? (
                   <p className="panel-lead">Inga tvillingtips för {product}.</p>
@@ -1066,7 +1043,10 @@ function TwinView({
                             {t.label}
                             {t.includesDriverSecond ? (
                               <span
-                                style={{ opacity: 0.75, marginLeft: "0.25rem" }}
+                                style={{
+                                  opacity: 0.75,
+                                  marginLeft: "0.25rem",
+                                }}
                               >
                                 (kusk 2:an)
                               </span>
@@ -1105,154 +1085,51 @@ function TwinView({
         )}
       </section>
 
-      <section className="panel">
-        <h2>Resultat</h2>
-        <p className="panel-lead">
-          {settled.length || waiting
-            ? `${won} rätt · ${lost} fel${
-                waiting ? ` · ${waiting} väntar` : ""
-              }`
-            : "Inga avräknade tvillingtips ännu – syns här när avdelningen startat."}
-        </p>
-        {results.filter((p) => p.market === "atg_twin").length > 0 ? (
-          <ul className="history-pick-list" style={{ marginTop: "0.5rem" }}>
-            {[...results]
-              .filter((p) => p.market === "atg_twin")
-              .sort((a, b) => {
-                const ak = a.kickoff ? Date.parse(a.kickoff) : 0;
-                const bk = b.kickoff ? Date.parse(b.kickoff) : 0;
-                return bk - ak || (a.eventNumber ?? 0) - (b.eventNumber ?? 0);
-              })
-              .map((p) => (
-                <li key={p.id} className={`history-pick ${p.status}`}>
-                  <div>
-                    <strong>{p.description}</strong>
-                    {p.kickoff && (
-                      <div className="history-pick-date">
-                        {fmtTime(p.kickoff)}
-                      </div>
-                    )}
-                    <div className="reason">
-                      Tipset: T {p.pick.join("-")}
-                      {p.actual ? ` · resultat ${p.actual}` : ""}
-                    </div>
-                    {p.resultNote && (
-                      <div className="oddset-result-note">{p.resultNote}</div>
-                    )}
-                  </div>
-                  <span
-                    className={`oddset-result-badge ${
-                      p.status === "won"
-                        ? "won"
-                        : p.status === "lost"
-                          ? "lost"
-                          : p.status === "live"
-                            ? "live"
-                            : ""
-                    }`}
-                  >
-                    {p.status === "won"
-                      ? "Rätt"
-                      : p.status === "lost"
-                        ? "Fel"
-                        : p.status === "live"
-                          ? "Live"
-                          : "Väntar"}
-                  </span>
-                </li>
-              ))}
-          </ul>
-        ) : null}
-      </section>
-
       <section className="panel panel-systems">
-        <h2>Avdelningar · tips + resultat</h2>
+        <h2>Avdelningar</h2>
         <div className="match-cards v75-leg-list">
           {tips.flatMap((tip) => {
             const product = tip.product || "V75";
-            return tip.legs.map((leg) => {
-              const byRace = leg.raceId
-                ? resultByRace.get(leg.raceId)
-                : undefined;
-              const byLeg = [...resultByRace.values()].find(
-                (p) =>
-                  p.eventNumber === leg.leg &&
-                  (p.description || "").includes(`${product}-${leg.leg}`)
-              );
-              const res = byRace || byLeg;
-              return (
-                <article
-                  key={`${product}-${leg.leg}-${leg.raceId || tip.playDate}`}
-                  className="match-card v75-leg-card"
+            return tip.legs.map((leg) => (
+              <article
+                key={`${product}-${leg.leg}-${leg.raceId || tip.playDate}`}
+                className="match-card v75-leg-card"
+              >
+                <div
+                  className="history-game-toggle-main"
+                  style={{ padding: "0.75rem" }}
                 >
-                  <div
-                    className="history-game-toggle-main"
-                    style={{ padding: "0.75rem" }}
-                  >
-                    <div className="history-game-toggle-title">
-                      <span className="match-num v75-toggle-num">
-                        {product}-{leg.leg}
-                      </span>{" "}
-                      {leg.raceName}
-                    </div>
-                    <div className="reason">
-                      {leg.trackName}
-                      {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: "0.45rem",
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "0.4rem",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span className="pick-cell on">
-                        T {leg.twinLabel || "–"}
-                      </span>
-                      {leg.twinIncludesDriverSecond ? (
-                        <span className="v75-home-tag">kusk 2:an</span>
-                      ) : null}
-                      {res ? (
-                        <span
-                          className={`oddset-result-badge ${
-                            res.status === "won"
-                              ? "won"
-                              : res.status === "lost"
-                                ? "lost"
-                                : res.status === "live"
-                                  ? "live"
-                                  : ""
-                          }`}
-                        >
-                          {res.status === "won"
-                            ? "Rätt"
-                            : res.status === "lost"
-                              ? "Fel"
-                              : res.status === "live"
-                                ? "Live"
-                                : "Väntar"}
-                        </span>
-                      ) : null}
-                    </div>
-                    {leg.twinNote ? (
-                      <div className="reason" style={{ marginTop: "0.35rem" }}>
-                        {leg.twinNote}
-                      </div>
-                    ) : null}
-                    {res?.resultNote ? (
-                      <div
-                        className="oddset-result-note"
-                        style={{ marginTop: "0.35rem" }}
+                  <div className="history-game-toggle-title">
+                    <span className="match-num v75-toggle-num">
+                      {product}-{leg.leg}
+                    </span>{" "}
+                    {leg.raceName}
+                  </div>
+                  <div className="reason">
+                    {leg.trackName}
+                    {leg.startTime ? ` · ${fmtTime(leg.startTime)}` : ""}
+                  </div>
+                  <div style={{ marginTop: "0.45rem" }}>
+                    <span className="pick-cell on">
+                      T {leg.twinLabel || "–"}
+                    </span>
+                    {leg.twinIncludesDriverSecond ? (
+                      <span
+                        className="v75-home-tag"
+                        style={{ marginLeft: "0.4rem" }}
                       >
-                        {res.resultNote}
-                      </div>
+                        kusk 2:an
+                      </span>
                     ) : null}
                   </div>
-                </article>
-              );
-            });
+                  {leg.twinNote ? (
+                    <div className="reason" style={{ marginTop: "0.35rem" }}>
+                      {leg.twinNote}
+                    </div>
+                  ) : null}
+                </div>
+              </article>
+            ));
           })}
         </div>
       </section>
@@ -3301,7 +3178,7 @@ function HistoryView({
                   : library === "topptipset"
                     ? " Öppna Topptipset – 192 kr sparas i det här biblioteket."
                     : library === "tvilling"
-                      ? " Öppna Tvilling i menyn – tips + rätt/fel syns där och här."
+                      ? " Öppna Tvilling i menyn – tipset sparas här med rätt/fel när loppet startat."
                       : ""}
               </p>
             ) : (
@@ -4462,12 +4339,6 @@ export default function App() {
     }
   }, [data, oddset, v75, twinV64, historySeedPicks]);
 
-  // Tvilling-kolumnen: håll resultat (rätt/fel) synkade med tipsen
-  useEffect(() => {
-    if (product !== "tvilling") return;
-    void loadHistory();
-  }, [product, v75, twinV64, loadHistory]);
-
   const openHistory = useCallback(() => {
     setShowHistory(true);
     setHistoryLoading(true);
@@ -4936,9 +4807,6 @@ export default function App() {
         v75 && (
           <TwinView
             tips={[v75, twinV64].filter((t): t is V75DayTip => Boolean(t))}
-            results={(history?.picks || historySeedPicks).filter(
-              (p) => p.product === "tvilling" || p.market === "atg_twin"
-            )}
             onOpenResults={openHistory}
           />
         )}
