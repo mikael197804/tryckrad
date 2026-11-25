@@ -11,6 +11,7 @@ export type HistoryProduct =
   | "maltipset"
   | "v75"
   | "v64"
+  | "tvilling"
   | "esports_battle";
 
 export type HistoryPickStatus = "pending" | "live" | "won" | "lost";
@@ -78,10 +79,7 @@ export function systemWinThreshold(
   if (product === "powerplay" || product === "topptipset") {
     return total;
   }
-  if (product === "v75") {
-    return Math.max(1, total - 2);
-  }
-  if (product === "v64") {
+  if (product === "v75" || product === "v64" || product === "tvilling") {
     return Math.max(1, total - 2);
   }
   if (total >= 7 && total <= 9) {
@@ -110,7 +108,7 @@ export const TIP_HISTORY_RETENTION_HOURS = 4;
 
 type SvenskaSpelHistoryProduct = Exclude<
   HistoryProduct,
-  "oddset" | "esports_battle" | "v75" | "v64"
+  "oddset" | "esports_battle" | "v75" | "v64" | "tvilling"
 >;
 
 const PRODUCT_SLUG: Record<SvenskaSpelHistoryProduct, string> = {
@@ -553,7 +551,11 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       out.push(p);
       continue;
     }
-    if (p.product === "v75" || p.product === "v64") {
+    if (
+      p.product === "v75" ||
+      p.product === "v64" ||
+      p.product === "tvilling"
+    ) {
       out.push(await settleAtgLegPick(p));
       continue;
     }
@@ -803,7 +805,8 @@ async function attachPayouts(
         g.product === "oddset" ||
         g.product === "esports_battle" ||
         g.product === "v75" ||
-        g.product === "v64"
+        g.product === "v64" ||
+        g.product === "tvilling"
       ) {
         return g;
       }
@@ -894,6 +897,8 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "V75";
     case "v64":
       return "V64";
+    case "tvilling":
+      return "Tvilling";
     case "esports_battle":
       return "Esports Battle";
   }
