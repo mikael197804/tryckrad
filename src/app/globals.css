@@ -725,6 +725,117 @@ a.product-btn:hover {
   margin: 0;
 }
 
+.esports-battle-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.esports-battle-warn {
+  margin: 0;
+  color: #ffb4a8;
+  font-size: 0.85rem;
+}
+
+.esports-battle-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: min(62vh, 640px);
+  overflow: auto;
+}
+
+.esports-battle-row {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 200, 255, 0.16);
+  background: rgba(10, 16, 24, 0.55);
+}
+
+.esports-battle-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.esports-battle-match {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.esports-battle-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.esports-battle-side.away {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.esports-battle-side strong {
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.esports-battle-team {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.esports-battle-score {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  color: #e8f7ff;
+  letter-spacing: 0.02em;
+}
+
+.esports-battle-goals {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.esports-battle-source {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.esports-battle-source a {
+  color: #9fd6ff;
+}
+
+@media (max-width: 560px) {
+  .esports-battle-row {
+    grid-template-columns: 2.6rem minmax(0, 1fr);
+  }
+
+  .esports-battle-goals {
+    display: none;
+  }
+}
+
 .history-game-collapsible {
   padding: 0;
   overflow: hidden;

@@ -7,7 +7,8 @@ export type HistoryProduct =
   | "powerplay"
   | "topptipset"
   | "stryktipset"
-  | "maltipset";
+  | "maltipset"
+  | "esports_battle";
 
 export type HistoryPickStatus = "pending" | "live" | "won" | "lost";
 
@@ -93,7 +94,7 @@ export const TIP_HISTORY_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const TIP_HISTORY_RETENTION_HOURS = 24;
 
 const PRODUCT_SLUG: Record<
-  Exclude<HistoryProduct, "oddset">,
+  Exclude<HistoryProduct, "oddset" | "esports_battle">,
   string
 > = {
   powerplay: "powerplay",
@@ -214,7 +215,7 @@ async function fetchJson(url: string): Promise<unknown> {
 }
 
 async function fetchDrawResults(
-  product: Exclude<HistoryProduct, "oddset">,
+  product: Exclude<HistoryProduct, "oddset" | "esports_battle">,
   drawNumber: number
 ): Promise<Map<number, { outcome: Outcome; homeGoals: number | null; awayGoals: number | null }>> {
   const slug = PRODUCT_SLUG[product];
@@ -426,7 +427,7 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
 
   const out: HistoryPick[] = [];
   for (const p of picks) {
-    if (p.product === "oddset") {
+    if (p.product === "oddset" || p.product === "esports_battle") {
       out.push(p);
       continue;
     }
@@ -541,7 +542,7 @@ type PayoutTier = Array<{
 const payoutCache = new Map<string, { at: number; tiers: PayoutTier }>();
 
 async function fetchDrawPayoutTiers(
-  product: Exclude<HistoryProduct, "oddset">,
+  product: Exclude<HistoryProduct, "oddset" | "esports_battle">,
   drawNumber: number
 ): Promise<PayoutTier> {
   const key = `${product}:${drawNumber}`;
@@ -672,7 +673,7 @@ async function attachPayouts(
   return Promise.all(
     games.map(async (g) => {
       if (g.systemResult !== "won") return g;
-      if (g.product === "oddset") return g;
+      if (g.product === "oddset" || g.product === "esports_battle") return g;
       if (g.drawNumber == null) return g;
       try {
         const tiers = await fetchDrawPayoutTiers(g.product, g.drawNumber);
@@ -751,5 +752,7 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "Måltipset";
     case "oddset":
       return "Oddset";
+    case "esports_battle":
+      return "Esports Battle";
   }
 }

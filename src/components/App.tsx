@@ -13,6 +13,7 @@ import {
   isInPreCloseWindow,
   nextPreCloseRefreshAt,
 } from "../lib/refresh";
+import type { EsportsBattleDay } from "../lib/esportsBattle";
 import type {
   HistoryPick,
   HistoryProduct,
@@ -37,6 +38,8 @@ function productHistoryLabel(p: HistoryProduct): string {
       return "Måltipset";
     case "oddset":
       return "Oddset";
+    case "esports_battle":
+      return "Esports Battle";
   }
 }
 
@@ -542,6 +545,7 @@ const HISTORY_PRODUCT_COLUMNS: Array<{
   { id: "stryktipset", label: "Stryktipset" },
   { id: "maltipset", label: "Måltipset" },
   { id: "oddset", label: "Oddset" },
+  { id: "esports_battle", label: "Esports Battle" },
 ];
 
 function productLabel(p: ProductKind): string {
@@ -2098,6 +2102,122 @@ function HistoryGameCard({
   );
 }
 
+function fmtEsportsClock(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Europe/Stockholm",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(iso));
+  } catch {
+    return "";
+  }
+}
+
+function EsportsBattleResultsPanel({
+  refreshToken,
+}: {
+  /** Ökas när användaren trycker Uppdatera. */
+  refreshToken: number;
+}) {
+  const [day, setDay] = useState<EsportsBattleDay | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async (fresh: boolean) => {
+    try {
+      const res = await fetch(
+        `/api/esports-battle${fresh ? "?fresh=1" : ""}`,
+        { cache: "no-store" }
+      );
+      const json = (await res.json()) as EsportsBattleDay & { error?: string };
+      if (!res.ok) throw new Error(json.error || "Kunde inte hämta resultat");
+      setDay(json);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Nätverksfel");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    void load(true);
+  }, [load, refreshToken]);
+
+  // Auto-uppdatera resultat var 90:e sekund
+  useEffect(() => {
+    const id = setInterval(() => {
+      void load(true);
+    }, 90_000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  if (loading && !day) {
+    return <div className="loading">Hämtar Esports Battle…</div>;
+  }
+  if (error && !day) {
+    return <p className="history-col-empty">{error}</p>;
+  }
+  if (!day) return null;
+
+  return (
+    <div className="esports-battle-results">
+      <p className="panel-lead">
+        Live-resultat · {day.playDateLabel}
+        {day.played != null
+          ? ` · ${day.played}${
+              day.scheduled != null ? `/${day.scheduled}` : ""
+            } spelade`
+          : ""}
+        {day.goalsPerMatch != null
+          ? ` · ${day.goalsPerMatch.toLocaleString("sv-SE")} mål/match`
+          : ""}
+        {day.over65Pct != null ? ` · Ö6,5 ${day.over65Pct} %` : ""}
+        {day.bttsPct != null ? ` · BTTS ${day.bttsPct} %` : ""}
+        . Uppdateras automatiskt
+        {day.latestLabel ? ` · senaste ${day.latestLabel}` : ""}.
+      </p>
+      {error && <p className="esports-battle-warn">{error}</p>}
+      <ul className="esports-battle-list">
+        {day.matches.map((m) => (
+          <li key={m.id} className="esports-battle-row">
+            <span className="esports-battle-time">
+              {fmtEsportsClock(m.kickoff)}
+            </span>
+            <span className="esports-battle-match">
+              <span className="esports-battle-side">
+                <strong>{m.homePlayer}</strong>
+                {m.homeTeam ? (
+                  <span className="esports-battle-team">{m.homeTeam}</span>
+                ) : null}
+              </span>
+              <span className="esports-battle-score">
+                {m.homeGoals}–{m.awayGoals}
+              </span>
+              <span className="esports-battle-side away">
+                <strong>{m.awayPlayer}</strong>
+                {m.awayTeam ? (
+                  <span className="esports-battle-team">{m.awayTeam}</span>
+                ) : null}
+              </span>
+            </span>
+            <span className="esports-battle-goals">{m.totalGoals} mål</span>
+          </li>
+        ))}
+      </ul>
+      <p className="esports-battle-source">
+        Källa: {day.source}
+        {" · "}
+        <a href={day.sourceUrl} target="_blank" rel="noreferrer">
+          öppna
+        </a>
+      </p>
+    </div>
+  );
+}
+
 function HistoryView({
   history,
   seedPicks,
@@ -2119,6 +2239,11 @@ function HistoryView({
   const [library, setLibrary] = useState<HistoryProduct | null>(
     initialLibrary ?? null
   );
+  const [esportsRefreshToken, setEsportsRefreshToken] = useState(0);
+  const [esportsMeta, setEsportsMeta] = useState<{
+    played: number | null;
+    latest: string | null;
+  } | null>(null);
 
   const displayHistory = useMemo(() => {
     const seeded = seedPicks || [];
@@ -2130,7 +2255,7 @@ function HistoryView({
 
   const libraryMeta = HISTORY_PRODUCT_COLUMNS.find((c) => c.id === library);
   const libraryGames = useMemo(() => {
-    if (!displayHistory || !library) return [];
+    if (!displayHistory || !library || library === "esports_battle") return [];
     return displayHistory.games
       .filter((g) => g.product === library)
       .sort((a, b) => {
@@ -2151,7 +2276,7 @@ function HistoryView({
   }, [displayHistory, library]);
 
   const libraryStats = useMemo(() => {
-    if (!displayHistory || !library) return null;
+    if (!displayHistory || !library || library === "esports_battle") return null;
     const picks = displayHistory.picks.filter((p) => p.product === library);
     const won = picks.filter((p) => p.status === "won").length;
     const lost = picks.filter((p) => p.status === "lost").length;
@@ -2160,6 +2285,35 @@ function HistoryView({
     ).length;
     return { won, lost, pending, games: libraryGames.length };
   }, [displayHistory, library, libraryGames.length]);
+
+  // Förhandsmeta till bibliotekskortet (antal spelade)
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/esports-battle", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as EsportsBattleDay;
+        if (cancelled) return;
+        setEsportsMeta({
+          played: json.played ?? json.matches?.length ?? null,
+          latest: json.latestLabel,
+        });
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [esportsRefreshToken]);
+
+  const handleRefresh = () => {
+    if (library === "esports_battle") {
+      setEsportsRefreshToken((n) => n + 1);
+    }
+    onRefresh();
+  };
 
   return (
     <div className="history-overlay" role="dialog" aria-modal="true">
@@ -2183,7 +2337,7 @@ function HistoryView({
             <button
               type="button"
               className="history-btn ghost"
-              onClick={onRefresh}
+              onClick={handleRefresh}
             >
               Uppdatera
             </button>
@@ -2197,10 +2351,13 @@ function HistoryView({
           <p className="panel-lead">
             Välj ett bibliotek per spelform. Powerplay som spelas nu (t.ex.
             Örebro–Frölunda) och 192 kr-system syns här – live via Flashscore.
+            Esports Battle uppdateras automatiskt.
           </p>
         )}
 
-        {loading && <div className="loading">Hämtar resultat…</div>}
+        {loading && library !== "esports_battle" && (
+          <div className="loading">Hämtar resultat…</div>
+        )}
 
         {displayHistory && !loading && !library && (
           <>
@@ -2234,6 +2391,30 @@ function HistoryView({
 
             <div className="history-libraries" role="list">
               {HISTORY_PRODUCT_COLUMNS.map((col) => {
+                if (col.id === "esports_battle") {
+                  return (
+                    <button
+                      key={col.id}
+                      type="button"
+                      role="listitem"
+                      className="history-library-card"
+                      onClick={() => setLibrary(col.id)}
+                    >
+                      <span className="history-library-name">{col.label}</span>
+                      <span className="history-library-meta">
+                        {esportsMeta?.played != null
+                          ? `${esportsMeta.played} resultat idag`
+                          : "Live-resultat"}
+                        {esportsMeta?.latest
+                          ? ` · senaste ${esportsMeta.latest}`
+                          : " · uppdateras auto"}
+                      </span>
+                      <span className="history-library-open">
+                        Öppna bibliotek →
+                      </span>
+                    </button>
+                  );
+                }
                 const games = displayHistory.games.filter(
                   (g) => g.product === col.id
                 );
@@ -2270,7 +2451,42 @@ function HistoryView({
           </>
         )}
 
-        {displayHistory && !loading && library && libraryMeta && (
+        {!library && !displayHistory && !loading && (
+          <div className="history-libraries" role="list">
+            <button
+              type="button"
+              role="listitem"
+              className="history-library-card"
+              onClick={() => setLibrary("esports_battle")}
+            >
+              <span className="history-library-name">Esports Battle</span>
+              <span className="history-library-meta">
+                {esportsMeta?.played != null
+                  ? `${esportsMeta.played} resultat idag`
+                  : "Live-resultat · uppdateras auto"}
+              </span>
+              <span className="history-library-open">Öppna bibliotek →</span>
+            </button>
+          </div>
+        )}
+
+        {library === "esports_battle" && libraryMeta && (
+          <div className="history-library-view">
+            <div className="history-library-toolbar">
+              <p className="panel-lead">
+                Bibliotek: <strong>{libraryMeta.label}</strong> · slutresultat
+                uppdateras automatiskt var 90:e sekund.
+              </p>
+            </div>
+            <EsportsBattleResultsPanel refreshToken={esportsRefreshToken} />
+          </div>
+        )}
+
+        {displayHistory &&
+          !loading &&
+          library &&
+          libraryMeta &&
+          library !== "esports_battle" && (
           <div className="history-library-view">
             <div className="history-library-toolbar">
               <p className="panel-lead">
@@ -2291,7 +2507,7 @@ function HistoryView({
                   type="button"
                   className="history-btn"
                   onClick={() => {
-                    onOpenProduct(library);
+                    onOpenProduct(library as ProductKind);
                     onClose();
                   }}
                 >
