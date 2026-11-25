@@ -4218,8 +4218,15 @@ export default function App() {
               const isPlaying =
                 state === "Closed" ||
                 (state !== "Finalized" && hoursLeft <= 0);
+              const isOpenTip =
+                state !== "Closed" && state !== "Finalized";
+              const firstOpenIdx = data.draws.findIndex((x) => {
+                const s = String(x.drawState || "");
+                return s !== "Closed" && s !== "Finalized";
+              });
+              const isNextOpen = isOpenTip && idx === firstOpenIdx;
               const isNextUp =
-                isPlaying || idx === 0 || hoursLeft <= 12;
+                isPlaying || isNextOpen || (isOpenTip && hoursLeft <= 12);
               const firstMatch = d.matches?.[0];
               const firstLabel = firstMatch
                 ? `${firstMatch.home.name}–${firstMatch.away.name}`
@@ -4239,7 +4246,7 @@ export default function App() {
                     {fmtCloseLabel(d.closeTime)}
                     {isPlaying ? (
                       <em className="draw-now-badge">Spelas nu</em>
-                    ) : idx === 0 ? (
+                    ) : isNextOpen ? (
                       <em className="draw-now-badge">Nästa</em>
                     ) : null}
                   </span>

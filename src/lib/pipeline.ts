@@ -118,12 +118,12 @@ export async function buildAllDrawBundles(
   const open = bundles
     .filter((b): b is DrawBundle => b != null && b.matches.length > 0)
     .sort((a, b) => {
-      // Closed (Spelas nu) först, sedan öppna, sist finaliserade
+      // Öppna (nästa tipp) först, sedan Closed (spelas/har spelats), sist finaliserade
       const rank = (d: DrawBundle) => {
         const s = String(d.drawState || "");
-        if (s === "Closed") return 0;
+        if (s === "Closed") return 1;
         if (s === "Finalized") return 2;
-        return 1;
+        return 0; // Open / övrigt tippbart
       };
       const ra = rank(a);
       const rb = rank(b);
