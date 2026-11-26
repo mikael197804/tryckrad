@@ -167,7 +167,7 @@ export function productHistoryLabel(p: HistoryProduct): string {
     case "tvilling":
       return "Tvilling";
     case "hockey_1x2":
-      return "Hockey 1X2";
+      return "Hockey 9";
     case "esports_battle":
       return "Esports Battle";
   }

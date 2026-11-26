@@ -65,7 +65,7 @@ function productHistoryLabel(p: HistoryProduct): string {
     case "tvilling":
       return "Tvilling";
     case "hockey_1x2":
-      return "Hockey 1X2";
+      return "Hockey 9";
     case "esports_battle":
       return "Esports Battle";
   }
@@ -218,8 +218,10 @@ function normalizeHistoryPick(p: HistoryPick): HistoryPick {
       ...p,
       product: "hockey_1x2",
       gameKey: `hockey_1x2:${dayKey}`,
-      gameLabel: p.gameLabel?.replace(/^Oddset · Hockey 1X2/, "Hockey 1X2")
-        || `Hockey 1X2 · ${dayKey}`,
+      gameLabel: p.gameLabel
+        ?.replace(/^Oddset · Hockey 1X2/, "Hockey 9")
+        ?.replace(/^Hockey 1X2/, "Hockey 9")
+        || `Hockey 9 · ${dayKey}`,
     };
   }
   return p;
@@ -454,7 +456,7 @@ function oddsetToHistoryPicks(
           ? `oddset:1x2:${dayKey}`
           : `oddset:over:${dayKey}`,
       gameLabel: isHockey1x2
-        ? `Hockey 1X2 · ${dayLabel}`
+        ? `Hockey 9 · ${dayLabel}`
         : is1x2
           ? `Oddset · 1X2 · ${dayLabel}`
           : `Oddset · Över 1,5 · ${dayLabel}`,
@@ -1220,11 +1222,12 @@ type ProductKind =
   | "europatipset"
   | "maltipset"
   | "oddset"
+  | "hockey9"
   | "v75"
   | "v64"
   | "tvilling";
 
-const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "v75" | "v64" | "tvilling">> = [
+const DRAW_PRODUCTS: Array<Exclude<ProductKind, "oddset" | "hockey9" | "v75" | "v64" | "tvilling">> = [
   "topptipset",
   "powerplay",
   "stryktipset",
@@ -1245,7 +1248,7 @@ const HISTORY_PRODUCT_COLUMNS: Array<{
   { id: "v64", label: "V64" },
   { id: "tvilling", label: "Tvilling" },
   { id: "oddset", label: "Oddset" },
-  { id: "hockey_1x2", label: "Hockey 1X2" },
+  { id: "hockey_1x2", label: "Hockey 9" },
   { id: "esports_battle", label: "Esports Battle" },
 ];
 
@@ -1263,6 +1266,8 @@ function productLabel(p: ProductKind): string {
       return "Powerplay";
     case "oddset":
       return "Oddset";
+    case "hockey9":
+      return "Hockey 9";
     case "v75":
       return "V75";
     case "v64":
@@ -2069,7 +2074,7 @@ function AnalysisTipsCoupon({
   product,
 }: {
   matches: DrawBundle["matches"];
-  product: Exclude<ProductKind, "oddset">;
+  product: Exclude<ProductKind, "oddset" | "hockey9">;
 }) {
   const tips = buildAnalysisTips(matches);
   if (!tips.length) return null;
@@ -2134,7 +2139,7 @@ function CouponView({
   rowPrice = 1,
 }: {
   system: GeneratedSystem;
-  product: Exclude<ProductKind, "oddset">;
+  product: Exclude<ProductKind, "oddset" | "hockey9">;
   rowPrice?: number;
 }) {
   const isMal = system.kind === "mal" || product === "maltipset";
@@ -3488,7 +3493,7 @@ function HistoryView({
                   onClick={() => {
                     onOpenProduct(
                       library === "hockey_1x2"
-                        ? "oddset"
+                        ? "hockey9"
                         : (library as ProductKind)
                     );
                     onClose();
@@ -3507,7 +3512,7 @@ function HistoryView({
                   : library === "topptipset"
                     ? " Öppna Topptipset – 192 kr sparas i det här biblioteket."
                     : library === "hockey_1x2"
-                      ? " Öppna Oddset – Hockey 1X2 sparas här automatiskt."
+                      ? " Öppna Hockey 9 i menyn – tipset sparas här automatiskt."
                       : ""}
               </p>
             ) : (
@@ -3539,26 +3544,18 @@ function HistoryView({
   );
 }
 
-function OddsetView({ tip }: { tip: OddsetDayTip }) {
-  const picks = tip.selected || [];
-  const picks1x2 = tip.selected1x2 || [];
+function Hockey9View({ tip }: { tip: OddsetDayTip }) {
   const picksHockey1x2 = tip.selectedHockey1x2 || [];
-  const picksPerDay = tip.picksPerDay ?? 5;
   const picksHockey = tip.picksHockey1x2 ?? 9;
-  const tracked = tip.tracked || [];
-  const trackedByKey = new Map(tracked.map((t) => [oddsetTrackKey(t), t]));
-  const openKeys = new Set(
-    [...picks, ...picks1x2, ...picksHockey1x2].map((p) => oddsetTrackKey(p))
+  const tracked = (tip.tracked || []).filter(
+    (t) => t.sport === "hockey" || (t.market === "1x2" && /hockey/i.test(t.league || ""))
   );
-  const history = tracked.filter((t) => !openKeys.has(oddsetTrackKey(t)));
+  const trackedByKey = new Map(tracked.map((x) => [oddsetTrackKey(x), x]));
+  const openKeys = new Set(picksHockey1x2.map((p) => oddsetTrackKey(p)));
+  const history = tracked.filter((x) => !openKeys.has(oddsetTrackKey(x)));
   const retention = tip.retentionHours ?? TIP_HISTORY_RETENTION_HOURS;
-  const won = tracked.filter((t) => t.outcome === "won").length;
-  const lost = tracked.filter((t) => t.outcome === "lost").length;
-  const learning = tip.learning;
-  const missLessons = (learning?.lessons || []).filter((l) => !l.hit).slice(0, 6);
-  const hitLessons = (learning?.lessons || []).filter((l) => l.hit).slice(0, 3);
-  const extraOver = (tip.candidates || []).slice(picks.length);
-  const extra1x2 = (tip.candidates1x2 || []).slice(picks1x2.length);
+  const won = tracked.filter((x) => x.outcome === "won").length;
+  const lost = tracked.filter((x) => x.outcome === "lost").length;
   const extraHockey1x2 = (tip.candidatesHockey1x2 || []).slice(
     picksHockey1x2.length
   );
@@ -3566,89 +3563,43 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
   return (
     <div className="rise">
       <section className="panel">
-        <h2>Öppna Oddset nu · {tip.playDateLabel}</h2>
+        <h2>Hockey 9 · {tip.playDateLabel}</h2>
         <p className="panel-lead">
-          {picksPerDay} Över 1,5 + {picksPerDay} fotboll-<strong>1X2</strong> +{" "}
-          {picksHockey} <strong>Hockey · 1X2</strong> – samma analys
-          (utjämnarpress, favorit/underdog). Tipsen ligger kvar{" "}
-          <strong>{retention} timmar</strong> – grönt/rött via Flashscore.
-          Analyserat {tip.analyzedCount} · Ö1,5 {tip.eligibleCount}
-          {tip.eligible1x2Count != null
-            ? ` · 1X2 ${tip.eligible1x2Count}`
-            : ""}
+          <strong>{picksHockey} tips</strong> ishockey · 1X2 (regulation, X
+          efter 60 min) – samma analyslager som Powerplay: tabell,
+          matchbelastning, vila, multi-book/överodds och målanalys. Tipsen
+          ligger kvar <strong>{retention} timmar</strong>.
           {tip.eligibleHockey1x2Count != null
-            ? ` · Hockey 1X2 ${tip.eligibleHockey1x2Count}`
-            : ""}{" "}
-          klarade filtret
+            ? ` Analyserat · ${tip.eligibleHockey1x2Count} klarade filtret`
+            : ""}
           {tracked.length > 0
             ? ` · ${retention}h: ${won} rätt / ${lost} fel`
             : ""}
           .
         </p>
         <ul className="alert-list table-alerts">
-          {tip.rules.map((r) => (
-            <li key={r}>{r}</li>
-          ))}
+          <li>
+            Hockey 9 = nio 1X2-tips på ishockey med Powerplay-analys (inte
+            Oddset Ö1,5/fotboll).
+          </li>
+          <li>
+            Resultat syns i egen kolumn <strong>Hockey 9</strong> under Gamla
+            resultat.
+          </li>
         </ul>
       </section>
 
-      {learning && learning.summary.length > 0 && (
-        <section className="panel">
-          <h2>Lärdomar till nästa tips</h2>
-          <p className="panel-lead">
-            Uppdateras automatiskt när tips avgörs
-            {learning.biasesNote ? ` · ${learning.biasesNote}` : ""}.
-          </p>
-          <ul className="alert-list learning-alerts">
-            {learning.summary.map((a) => (
-              <li key={a}>{a}</li>
-            ))}
-          </ul>
-          {missLessons.length > 0 && (
-            <div className="oddset-lesson-list">
-              <h3>Varför det gick fel</h3>
-              {missLessons.map((l) => (
-                <div key={`miss-${l.eventId}`} className="oddset-lesson miss">
-                  <strong>
-                    {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
-                  </strong>
-                  <div className="reason">{l.whyWrong}</div>
-                  <div className="oddset-next-aspect">→ {l.nextAspect}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {hitLessons.length > 0 && (
-            <div className="oddset-lesson-list">
-              <h3>Vad som fungerade</h3>
-              {hitLessons.map((l) => (
-                <div key={`hit-${l.eventId}`} className="oddset-lesson hit">
-                  <strong>
-                    {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
-                  </strong>
-                  <div className="reason">
-                    {l.whyRight || "Över 1,5 rätt"}
-                  </div>
-                  <div className="oddset-next-aspect">→ {l.nextAspect}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
       <section className="panel panel-systems">
         <h2>
-          Spela dessa · Hockey · 1X2 ({picksHockey1x2.length}/{picksHockey})
+          Spela dessa · Hockey 9 ({picksHockey1x2.length}/{picksHockey})
         </h2>
         <p className="panel-lead">
-          Nio ishockeytips med <strong>samma analyslager som Powerplay</strong>
-          : tabell, matchbelastning, vila, multi-book/överodds, målanalys och
-          admin-1X2 (regulation, X efter 60 min).
+          Tipprad med samma kort som Powerplay (målblock, oddsryck,
+          tabell/vila).
         </p>
         {picksHockey1x2.length > 0 && (
-          <div className="tip-strip" aria-label="Hockey tipprad">
-            <strong>Tipprad · Hockey 1X2</strong>
+          <div className="tip-strip" aria-label="Hockey 9 tipprad">
+            <strong>Tipprad · Hockey 9</strong>
             <div className="tip-strip-picks">
               {picksHockey1x2.map((c, i) => (
                 <span key={oddsetTrackKey(c)} className="tip-strip-pick">
@@ -3741,6 +3692,134 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         )}
       </section>
 
+      {history.length > 0 && (
+        <section className="panel">
+          <h2>Hockey-tips senaste {retention} h ({history.length})</h2>
+          <div className="match-cards">
+            {history.map((c, i) => (
+              <OddsetPickCard
+                key={`hist-${oddsetTrackKey(c)}`}
+                c={c}
+                index={i + 1}
+                tracked={c}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {extraHockey1x2.length > 0 && (
+        <section className="panel">
+          <h2>Fler godkända</h2>
+          <div className="match-cards">
+            {extraHockey1x2.map((c, i) => (
+              <OddsetPickCard
+                key={`h-${oddsetTrackKey(c)}`}
+                c={c}
+                index={picksHockey1x2.length + i + 1}
+                tracked={trackedByKey.get(oddsetTrackKey(c))}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <p className="disclaimer">{tip.disclaimer}</p>
+    </div>
+  );
+}
+
+function OddsetView({ tip }: { tip: OddsetDayTip }) {
+  const picks = tip.selected || [];
+  const picks1x2 = tip.selected1x2 || [];
+  const picksPerDay = tip.picksPerDay ?? 5;
+  const tracked = (tip.tracked || []).filter((t) => t.sport !== "hockey");
+  const trackedByKey = new Map(tracked.map((x) => [oddsetTrackKey(x), x]));
+  const openKeys = new Set(
+    [...picks, ...picks1x2].map((p) => oddsetTrackKey(p))
+  );
+  const history = tracked.filter((x) => !openKeys.has(oddsetTrackKey(x)));
+  const retention = tip.retentionHours ?? TIP_HISTORY_RETENTION_HOURS;
+  const won = tracked.filter((x) => x.outcome === "won").length;
+  const lost = tracked.filter((x) => x.outcome === "lost").length;
+  const learning = tip.learning;
+  const missLessons = (learning?.lessons || []).filter((l) => !l.hit).slice(0, 6);
+  const hitLessons = (learning?.lessons || []).filter((l) => l.hit).slice(0, 3);
+  const extraOver = (tip.candidates || []).slice(picks.length);
+  const extra1x2 = (tip.candidates1x2 || []).slice(picks1x2.length);
+
+  return (
+    <div className="rise">
+      <section className="panel">
+        <h2>Öppna Oddset nu · {tip.playDateLabel}</h2>
+        <p className="panel-lead">
+          {picksPerDay} Över 1,5 + {picksPerDay} fotboll-<strong>1X2</strong>.
+          Ishockey ligger under <strong>Hockey 9</strong>. Tipsen ligger kvar{" "}
+          <strong>{retention} timmar</strong> – grönt/rött via Flashscore.
+          Analyserat {tip.analyzedCount} · Ö1,5 {tip.eligibleCount}
+          {tip.eligible1x2Count != null
+            ? ` · 1X2 ${tip.eligible1x2Count}`
+            : ""}{" "}
+          klarade filtret
+          {tracked.length > 0
+            ? ` · ${retention}h: ${won} rätt / ${lost} fel`
+            : ""}
+          .
+        </p>
+        <ul className="alert-list table-alerts">
+          {tip.rules
+            .filter((r) => !/hockey/i.test(r))
+            .map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+        </ul>
+      </section>
+
+      {learning && learning.summary.length > 0 && (
+        <section className="panel">
+          <h2>Lärdomar till nästa tips</h2>
+          <p className="panel-lead">
+            Uppdateras automatiskt när tips avgörs
+            {learning.biasesNote ? ` · ${learning.biasesNote}` : ""}.
+          </p>
+          <ul className="alert-list learning-alerts">
+            {learning.summary.map((a) => (
+              <li key={a}>{a}</li>
+            ))}
+          </ul>
+          {missLessons.length > 0 && (
+            <div className="oddset-lesson-list">
+              <h3>Varför det gick fel</h3>
+              {missLessons.map((l) => (
+                <div key={`miss-${l.eventId}`} className="oddset-lesson miss">
+                  <strong>
+                    {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
+                  </strong>
+                  <div className="reason">{l.whyWrong}</div>
+                  <div className="oddset-next-aspect">→ {l.nextAspect}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {hitLessons.length > 0 && (
+            <div className="oddset-lesson-list">
+              <h3>Vad som fungerade</h3>
+              {hitLessons.map((l) => (
+                <div key={`hit-${l.eventId}`} className="oddset-lesson hit">
+                  <strong>
+                    {l.home}–{l.away} {l.homeGoals}–{l.awayGoals}
+                  </strong>
+                  <div className="reason">
+                    {l.whyRight || "Över 1,5 rätt"}
+                  </div>
+                  <div className="oddset-next-aspect">→ {l.nextAspect}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="panel panel-systems">
         <h2>Spela dessa · 1X2 fotboll ({picks1x2.length}/{picksPerDay})</h2>
         <p className="panel-lead">
@@ -3806,29 +3885,12 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
         </section>
       )}
 
-      {(extraHockey1x2.length > 0 ||
-        extra1x2.length > 0 ||
-        extraOver.length > 0) && (
+      {(extra1x2.length > 0 || extraOver.length > 0) && (
         <section className="panel">
           <h2>Fler godkända</h2>
           <p className="panel-lead">
             Extra kandidater utöver dagens tips per marknad.
           </p>
-          {extraHockey1x2.length > 0 && (
-            <>
-              <h3>Hockey · 1X2</h3>
-              <div className="match-cards">
-                {extraHockey1x2.map((c, i) => (
-                  <OddsetPickCard
-                    key={`h-${oddsetTrackKey(c)}`}
-                    c={c}
-                    index={picksHockey1x2.length + i + 1}
-                    tracked={trackedByKey.get(oddsetTrackKey(c))}
-                  />
-                ))}
-              </div>
-            </>
-          )}
           {extra1x2.length > 0 && (
             <>
               <h3>1X2 fotboll</h3>
@@ -3866,6 +3928,7 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
     </div>
   );
 }
+
 
 type AuthUser = {
   id: string;
@@ -4361,7 +4424,7 @@ export default function App() {
     setPreCloseNote(null);
     preCloseStartedRef.current = false;
     // Rensa fel produkt så tippet inte “försvinner” / visar fel omgång
-    if (next === "oddset") {
+    if (next === "oddset" || next === "hockey9") {
       setOddset(null);
       setData(null);
       setV75(null);
@@ -4504,7 +4567,7 @@ export default function App() {
             ]);
           }
           if (fresh || json.fresh) setLastFreshAt(json.generatedAt);
-        } else if (forProduct === "oddset") {
+        } else if (forProduct === "oddset" || forProduct === "hockey9") {
           const localTips = loadOddsetLocalTips();
           const localLessons = loadOddsetLocalLessons();
           const res = await fetch(
@@ -4812,7 +4875,7 @@ export default function App() {
                   oddJson.generatedAt || tippedAt
                 ),
               ]);
-              if (oddset || product === "oddset") {
+              if (oddset || product === "oddset" || product === "hockey9") {
                 setOddset({
                   ...(oddJson as OddsetDayTip),
                   tracked: mergedTips,
@@ -4892,7 +4955,13 @@ export default function App() {
         .map((r) => r.startTime)
         .filter((t): t is string => Boolean(t));
     }
-    if (product === "oddset" && oddset) {
+    if ((product === "oddset" || product === "hockey9") && oddset) {
+      if (product === "hockey9") {
+        const list = oddset.selectedHockey1x2?.length
+          ? oddset.selectedHockey1x2
+          : oddset.candidatesHockey1x2 || [];
+        return list.map((c) => c.kickoff).filter(Boolean);
+      }
       const list = oddset.selected?.length
         ? oddset.selected
         : oddset.candidates || [];
@@ -4911,10 +4980,11 @@ export default function App() {
   const contentPending =
     !error &&
     (loading ||
-      (product === "oddset" && !oddset) ||
+      ((product === "oddset" || product === "hockey9") && !oddset) ||
       ((product === "v75" || product === "v64") && !v75Matches) ||
       (product === "tvilling" && !tvillingMatches) ||
       (product !== "oddset" &&
+        product !== "hockey9" &&
         product !== "v75" &&
         product !== "v64" &&
         product !== "tvilling" &&
@@ -5043,6 +5113,7 @@ export default function App() {
             onClick={scrollToAnalysisTips}
             disabled={
               product === "oddset" ||
+              product === "hockey9" ||
               product === "v75" ||
               product === "v64" ||
               product === "tvilling"
@@ -5078,6 +5149,14 @@ export default function App() {
             onClick={() => switchProduct("oddset")}
           >
             Oddset
+          </button>
+          <button
+            type="button"
+            className={`product-btn ${product === "hockey9" ? "active" : ""}`}
+            onClick={() => switchProduct("hockey9")}
+          >
+            <span className="btn-label-full">Hockey 9</span>
+            <span className="btn-label-short">H9</span>
           </button>
           <button
             type="button"
@@ -5165,10 +5244,14 @@ export default function App() {
               ? tvilling
                 ? `Uppdaterad ${fmtTime(tvilling.generatedAt)} · Tvilling ${tvilling.playDate}`
                 : "Hämtar Tvilling…"
-              : product === "oddset"
+              : product === "oddset" || product === "hockey9"
                 ? oddset
-                  ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · spel ${oddset.playDate}`
-                  : "Hämtar Oddset…"
+                  ? `Uppdaterad ${fmtTime(oddset.generatedAt)} · ${
+                      product === "hockey9" ? "Hockey 9" : "Oddset"
+                    } ${oddset.playDate}`
+                  : product === "hockey9"
+                    ? "Hämtar Hockey 9…"
+                    : "Hämtar Oddset…"
                 : data
                   ? `Uppdaterad ${fmtTime(data.generatedAt)} · ${data.draws.length} omgångar`
                   : "Hämtar Svenska Spel…"}
@@ -5189,7 +5272,9 @@ export default function App() {
             product === "maltipset" ||
             product === "oddset"
               ? product
-              : null
+              : product === "hockey9"
+                ? "hockey_1x2"
+                : null
           }
           loading={historyLoading}
           onClose={() => setShowHistory(false)}
@@ -5218,13 +5303,19 @@ export default function App() {
               ? "Hämtar Tvilling från ATG…"
               : product === "oddset"
                 ? "Analyserar öppna Oddset-matcher…"
-                : `Läser in öppna ${productLabel(product)}-omgångar…`}
+                : product === "hockey9"
+                  ? "Analyserar ishockey · Hockey 9…"
+                  : `Läser in öppna ${productLabel(product)}-omgångar…`}
         </div>
       )}
       {error && <div className="status-banner error">{error}</div>}
 
       {!contentPending && !error && product === "oddset" && oddset && (
         <OddsetView tip={oddset} />
+      )}
+
+      {!contentPending && !error && product === "hockey9" && oddset && (
+        <Hockey9View tip={oddset} />
       )}
 
       {!contentPending &&
@@ -5243,6 +5334,7 @@ export default function App() {
         !error &&
         drawsMatch &&
         product !== "oddset" &&
+        product !== "hockey9" &&
         product !== "v75" &&
         product !== "v64" &&
         product !== "tvilling" && (

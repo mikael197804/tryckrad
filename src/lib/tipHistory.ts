@@ -100,8 +100,10 @@ function normalizeHistoryPick(p: HistoryPick): HistoryPick {
       product: "hockey_1x2",
       gameKey: `hockey_1x2:${dayKey}`,
       gameLabel:
-        p.gameLabel?.replace(/^Oddset · Hockey 1X2/, "Hockey 1X2") ||
-        `Hockey 1X2 · ${dayKey}`,
+        p.gameLabel
+          ?.replace(/^Oddset · Hockey 1X2/, "Hockey 9")
+          ?.replace(/^Hockey 1X2/, "Hockey 9") ||
+        `Hockey 9 · ${dayKey}`,
     };
   }
   return p;
