@@ -31,6 +31,7 @@ export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
 export type { EqualizerAssessment } from "./equalizerPressure";
 export type OddsetMarket = "over_1_5" | "over_2_5" | "1x2";
 export type Oddset1x2Pick = "1" | "X" | "2";
+export type OddsetSport = "football" | "hockey";
 
 export type RivalryInfo = {
   level: "none" | "possible" | "likely";
@@ -53,6 +54,8 @@ export type OddsetCandidate = {
   league: string;
   country: string;
   kickoff: string;
+  /** Fotboll (Oddset Ö1,5/1X2) eller ishockey (Hockey · 1X2 × 9). */
+  sport?: OddsetSport;
   market: OddsetMarket;
   line: 1.5 | 2.5 | null;
   /** 1X2-utgång när market === "1x2". */
@@ -89,16 +92,21 @@ export type OddsetDayTip = {
   /** Upp till 5 Över 1,5-tips. */
   selected: OddsetCandidate[];
   candidates: OddsetCandidate[];
-  /** Upp till 5 1X2-tips med samma analysram. */
+  /** Upp till 5 1X2-tips (fotboll) med samma analysram. */
   selected1x2: OddsetCandidate[];
   candidates1x2: OddsetCandidate[];
+  /** Upp till 9 ishockey-1X2 (regulation) – Hockey 9-stil. */
+  selectedHockey1x2: OddsetCandidate[];
+  candidatesHockey1x2: OddsetCandidate[];
   /** Tips som sparats senaste 8 h, med grönt/rött när resultatet är klart. */
   tracked: OddsetTrackedTip[];
   retentionHours: number;
   analyzedCount: number;
   eligibleCount: number;
   eligible1x2Count: number;
+  eligibleHockey1x2Count: number;
   picksPerDay: number;
+  picksHockey1x2: number;
   rules: string[];
   disclaimer: string;
   /** Efteranalys + aspekter till nästa tips (uppdateras automatiskt). */
@@ -111,6 +119,8 @@ export type OddsetDayTip = {
 };
 
 const PICKS_PER_DAY = 5;
+/** Hockey · 1X2: nio matcher (samma upplägg som Hockey 9 / poolspel). */
+const PICKS_HOCKEY_1X2 = 9;
 
 const KAMBI_BASE =
   "https://eu.offering-api.kambicdn.com/offering/v2018/svenskaspel";
@@ -627,7 +637,12 @@ function extractMarkets(
   for (const bo of betOffers) {
     const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
 
-    if (label === "Total Goals" || label === "Antal mål") {
+    const isTotalGoals =
+      label === "Total Goals" ||
+      label === "Antal mål" ||
+      label === "Total Goals - Regular Time" ||
+      label === "Antal mål - Ordinarie tid";
+    if (isTotalGoals) {
       for (const o of bo.outcomes || []) {
         const side = (o.label || "").toLowerCase();
         const line = parseLine(o.line);
@@ -659,14 +674,30 @@ function extractMarkets(
       }
     }
 
-    if (label === "Full Time" || label === "Match Odds" || label === "Matchodds") {
-      for (const o of bo.outcomes || []) {
-        const side = (o.label || "").toLowerCase();
-        const odds = parseOdds(o.odds);
-        if (odds == null) continue;
-        if (side === "1" || side === "home") homeOdds = odds;
-        if (side === "2" || side === "away") awayOdds = odds;
-        if (side === "x" || side === "draw") drawOdds = odds;
+    // Fotboll: Full Time / Match Odds. Ishockey Oddset: Match Odds - Regular Time (X efter 60 min).
+    const isMatch1x2 =
+      label === "Full Time" ||
+      label === "Match Odds" ||
+      label === "Matchodds" ||
+      label === "Match Odds - Regular Time" ||
+      label === "Matchodds - Ordinarie tid" ||
+      /^Match Odds\b/i.test(label);
+    if (isMatch1x2) {
+      // Preferera regulation-linje när både OT och ordinarie finns.
+      const isRegulation =
+        /regular time|ordinarie/i.test(label) ||
+        (!/overtime|inkl/i.test(label) && label !== "Match Odds - Including Overtime");
+      if (!isRegulation && homeOdds != null) {
+        // behåll redan satt regulation
+      } else {
+        for (const o of bo.outcomes || []) {
+          const side = (o.label || "").toLowerCase();
+          const odds = parseOdds(o.odds);
+          if (odds == null) continue;
+          if (side === "1" || side === "home") homeOdds = odds;
+          if (side === "2" || side === "away") awayOdds = odds;
+          if (side === "x" || side === "draw") drawOdds = odds;
+        }
       }
     }
 
@@ -677,6 +708,8 @@ function extractMarkets(
     ) {
       const teamRaw = label
         .replace(/^Total Goals by /i, "")
+        .replace(/ - Regular Time$/i, "")
+        .replace(/ - Including Overtime.*$/i, "")
         .replace(/^Antal mål (av|för) /i, "");
       const teamN = normalizeName(teamRaw);
       const isHome =
@@ -827,6 +860,23 @@ const RIVALRY_PAIRS: Array<[string, string, string]> = [
   ["porto", "sporting", "Lisboa-rivalitet"],
   ["olympiacos", "panathinaikos", "Athensderby"],
   ["celtic", "hearts", "Skotsk rivalitet"],
+  // Ishockey
+  ["frolunda", "hv71", "SHL-rivalitet"],
+  ["frolunda", "farjestad", "SHL-klassiker"],
+  ["djurgarden", "aik", "Stockholmsderby ishockey"],
+  ["brynas", "gavle", "Gävlederby"],
+  ["skelleftea", "lulea", "Norrlandsderby"],
+  ["malmo redhawks", "frolunda", "Västkustmöte"],
+  ["toronto", "montreal", "Original Six"],
+  ["boston", "montreal", "Original Six"],
+  ["detroit", "chicago", "Original Six"],
+  ["rangers", "islanders", "New York-derby"],
+  ["rangers", "devils", "Hudson River"],
+  ["penguins", "flyers", "Pennsylvania-derby"],
+  ["oilers", "flames", "Battle of Alberta"],
+  ["canucks", "oilers", "Pacific-rivalitet"],
+  ["hifk", "jokerit", "Helsinkiderby"],
+  ["tappara", "ilves", "Tammerforsderby"],
 ];
 
 function analyzeRivalry(home: string, away: string, league: string): RivalryInfo {
@@ -935,6 +985,24 @@ function analyzeRedCard(
     totalCardsOverOdds: markets.totalCardsOver?.odds ?? null,
     note: notes.join(" · ") || "ingen tydlig rött-kort-signal",
   };
+}
+
+function hockeyLeagueRank(league: string, country: string): number {
+  if (/^nhl$/i.test(league)) return 0;
+  if (/^shl$/i.test(league)) return 0;
+  if (/hockeyallsvenskan|liiga|khl|extraliga|nla|nlb|del\b/i.test(league))
+    return 1;
+  if (
+    /sverige|sweden|finland|usa|canada|kanada|tjeckien|schweiz|switzerland|tjeckiska/i.test(
+      country
+    ) &&
+    /ahl|hockeyettan|mestis|1\.\s*liga|metal ligaen|ice hockey league|alps/i.test(
+      league
+    )
+  )
+    return 2;
+  if (/sverige|sweden|finland|usa|canada|kanada/i.test(country)) return 2;
+  return 3;
 }
 
 function buildCandidate(
@@ -1081,6 +1149,7 @@ function buildCandidate(
     league,
     country,
     kickoff: event.start,
+    sport: "football",
     market: "over_1_5",
     line: 1.5,
     odds: markets.odds15,
@@ -1106,10 +1175,12 @@ function buildCandidate(
 /**
  * Oddset 1X2 med samma analysram: utjämnarpress, rivalitet, rött kort,
  * mittfält-underdog / säker vinnare 2 @ ca 2,00.
+ * Ishockey: regulation 1X2 (X efter 60 min), utan rött-kort-vikt.
  */
 function build1x2Candidate(
   event: KambiEvent,
-  markets: MatchMarkets
+  markets: MatchMarkets,
+  sport: OddsetSport = "football"
 ): OddsetCandidate | null {
   const home = event.homeName || event.name.split(" - ")[0] || event.name;
   const away =
@@ -1138,7 +1209,17 @@ function build1x2Candidate(
   });
 
   const rivalry = analyzeRivalry(home, away, league);
-  const redCard = analyzeRedCard(markets, rivalry);
+  const redCard =
+    sport === "hockey"
+      ? {
+          level: "low" as const,
+          probabilityPct: null,
+          oddsYes: null,
+          totalCardsLine: null,
+          totalCardsOverOdds: null,
+          note: "rött kort ej relevant i ishockey-1X2",
+        }
+      : analyzeRedCard(markets, rivalry);
 
   const favIsHome = o1 <= o2;
   const fav: Oddset1x2Pick = favIsHome ? "1" : "2";
@@ -1181,11 +1262,15 @@ function build1x2Candidate(
   }
 
   // 3) Tydlig favorit med utjämnarpress (bakunder jagar – matchen “lever”)
+  // Hockey: favoritbandet lite bredare (fler jämna matcher / X-risk).
+  const favMax = sport === "hockey" ? 2.05 : 1.9;
+  const favNeedsEqualizer =
+    sport === "hockey" ? equalizer.level !== "weak" : equalizer.okForOver15;
   if (
     !pick &&
     favOdds >= 1.35 &&
-    favOdds <= 1.9 &&
-    equalizer.okForOver15 &&
+    favOdds <= favMax &&
+    favNeedsEqualizer &&
     equalizer.level !== "weak"
   ) {
     pick = fav;
@@ -1199,20 +1284,46 @@ function build1x2Candidate(
   }
 
   // 4) Kort kryss + svag utjämnarpress / lågmål = X
+  // Hockey regulation: X vanligare – tillåt lite bredare X-band.
+  const xMax = sport === "hockey" ? 3.6 : 3.15;
+  const xMin = sport === "hockey" ? 2.55 : 2.7;
   if (
     !pick &&
-    oX <= 3.15 &&
-    oX >= 2.7 &&
+    oX <= xMax &&
+    oX >= xMin &&
     (equalizer.level === "weak" ||
-      (markets.under25 != null && markets.under25 <= 1.75))
+      (markets.under25 != null && markets.under25 <= 1.75) ||
+      (sport === "hockey" && favOdds >= 1.7 && favOdds <= 2.35))
   ) {
     pick = "X";
-    confidence = 66;
+    confidence = sport === "hockey" ? 68 : 66;
     kind = "kryss / stängt läge";
     reasons.push(
-      `Kryss X @ ${oX
+      sport === "hockey"
+        ? `Kryss X @ ${oX
+            .toFixed(2)
+            .replace(".", ",")} – jämn is / regulation X`
+        : `Kryss X @ ${oX
+            .toFixed(2)
+            .replace(".", ",")} – stängt läge / svag jakt på mål`
+    );
+  }
+
+  // 5) Hockey fallback: tydlig favorit utan stark equalizer-data
+  if (
+    !pick &&
+    sport === "hockey" &&
+    favOdds >= 1.4 &&
+    favOdds <= 1.85 &&
+    oX >= 3.2
+  ) {
+    pick = fav;
+    confidence = 64;
+    kind = "hockey-favorit";
+    reasons.push(
+      `Hockey-favorit ${fav} @ ${favOdds
         .toFixed(2)
-        .replace(".", ",")} – stängt läge / svag jakt på mål`
+        .replace(".", ",")} (regulation 1X2)`
     );
   }
 
@@ -1222,7 +1333,11 @@ function build1x2Candidate(
   const pickOdds = pick === "1" ? o1 : pick === "2" ? o2 : oX;
   if (pickOdds < 1.28 || pickOdds > 5.5) return null;
 
-  reasons.unshift(equalizerReasonLine(equalizer));
+  if (sport === "hockey") {
+    reasons.unshift("Ishockey · 1X2 ordinarie tid (X efter 60 min)");
+  } else {
+    reasons.unshift(equalizerReasonLine(equalizer));
+  }
   reasons.push(`1X2 ${pick} @ ${pickOdds.toFixed(2).replace(".", ",")}`);
   reasons.push(`1 @ ${o1.toFixed(2).replace(".", ",")} · X @ ${oX
     .toFixed(2)
@@ -1231,26 +1346,34 @@ function build1x2Candidate(
     if (!reasons.includes(p)) reasons.push(p);
   }
   if (rivalry.level !== "none") reasons.push(rivalry.note);
-  if (redCard.level !== "low") reasons.push(`rött kort: ${redCard.note}`);
+  if (sport !== "hockey" && redCard.level !== "low") {
+    reasons.push(`rött kort: ${redCard.note}`);
+  }
 
-  let score = confidence * 1.15 + equalizer.score * 3;
+  let score = confidence * 1.15 + equalizer.score * (sport === "hockey" ? 2 : 3);
   if (kind === "säker vinnare") score += 10;
   if (kind === "mittfält-underdog") score += 12;
   if (kind === "favorit + utjämnarpress") score += 6;
+  if (kind === "hockey-favorit") score += 4;
   if (equalizer.level === "strong" && pick !== "X") score += 4;
   if (equalizer.warnings.length) score -= equalizer.warnings.length * 5;
 
-  const topCountry =
-    /england|spanien|spain|italien|italy|tyskland|germany|frankrike|france|nederländerna|netherlands|portugal|sverige|sweden|skottland|scotland/i.test(
-      country
-    );
-  if (
-    topCountry &&
-    /premier league|la liga|serie a|bundesliga|ligue 1|championship|eredivisie|primeira|allsvenskan|liga portugal/i.test(
-      league
-    )
-  ) {
-    score += 5;
+  if (sport === "hockey") {
+    const hr = hockeyLeagueRank(league, country);
+    score += Math.max(0, 8 - hr * 3);
+  } else {
+    const topCountry =
+      /england|spanien|spain|italien|italy|tyskland|germany|frankrike|france|nederländerna|netherlands|portugal|sverige|sweden|skottland|scotland/i.test(
+        country
+      );
+    if (
+      topCountry &&
+      /premier league|la liga|serie a|bundesliga|ligue 1|championship|eredivisie|primeira|allsvenskan|liga portugal/i.test(
+        league
+      )
+    ) {
+      score += 5;
+    }
   }
 
   // xG från målstege som extrakontext (samma data som Ö1,5)
@@ -1265,8 +1388,10 @@ function build1x2Candidate(
   if (lambda != null) {
     reasons.push(`förväntade mål ≈ ${lambda.toFixed(2).replace(".", ",")}`);
   }
-  const over45Note = over45GoalsNotice(lambda, markets.odds45);
-  if (over45Note) reasons.push(over45Note);
+  if (sport !== "hockey") {
+    const over45Note = over45GoalsNotice(lambda, markets.odds45);
+    if (over45Note) reasons.push(over45Note);
+  }
 
   return {
     eventId: event.id,
@@ -1275,6 +1400,7 @@ function build1x2Candidate(
     league,
     country,
     kickoff: event.start,
+    sport,
     market: "1x2",
     line: null,
     pick1x2: pick,
@@ -1413,47 +1539,78 @@ export async function buildOddsetDayTip(opts?: {
     recentTeams.add(t.away);
     if (t.league) recentLeagues.add(t.league);
   }
-  const list = (await kambiFetch(
-    "/listView/football.json?lang=sv_SE&market=SE"
-  )) as { events?: Array<{ event: KambiEvent; betOffers?: KambiBetOffer[] }> };
+  const [footballList, hockeyList] = await Promise.all([
+    kambiFetch("/listView/football.json?lang=sv_SE&market=SE") as Promise<{
+      events?: Array<{ event: KambiEvent; betOffers?: KambiBetOffer[] }>;
+    }>,
+    kambiFetch("/listView/ice_hockey.json?lang=sv_SE&market=SE") as Promise<{
+      events?: Array<{ event: KambiEvent; betOffers?: KambiBetOffer[] }>;
+    }>,
+  ]);
 
   // Öppna spel nu: avspark minst ~12 min framåt, i första hand idag (svensk tid)
   const minStart = now.getTime() + 12 * 60 * 1000;
-  const openEvents: KambiEvent[] = [];
-  for (const wrap of list.events || []) {
-    const ev = wrap.event;
-    if (!ev?.start || !ev.id) continue;
-    const start = new Date(ev.start);
-    if (start.getTime() < minStart) continue;
-    if (!isSeniorMensMatch(ev)) continue;
-    openEvents.push(ev);
-  }
+  const collectOpen = (
+    list: { events?: Array<{ event: KambiEvent }> } | null
+  ): KambiEvent[] => {
+    const openEvents: KambiEvent[] = [];
+    for (const wrap of list?.events || []) {
+      const ev = wrap.event;
+      if (!ev?.start || !ev.id) continue;
+      const start = new Date(ev.start);
+      if (start.getTime() < minStart) continue;
+      if (!isSeniorMensMatch(ev)) continue;
+      openEvents.push(ev);
+    }
+    return openEvents;
+  };
 
-  const todayEvents = openEvents.filter(
-    (ev) => stockholmDateIso(new Date(ev.start)) === today.isoDate
-  );
-  const tomorrowEvents = openEvents.filter(
-    (ev) => stockholmDateIso(new Date(ev.start)) === tomorrow.isoDate
-  );
+  const openFootball = collectOpen(footballList);
+  const openHockey = collectOpen(hockeyList);
 
-  // Prioritera dagens öppna matcher; ta alltid med imorgon som backup-pool
-  let dayEvents = [...todayEvents, ...tomorrowEvents];
+  const splitDay = (openEvents: KambiEvent[]) => {
+    const todayEvents = openEvents.filter(
+      (ev) => stockholmDateIso(new Date(ev.start)) === today.isoDate
+    );
+    const tomorrowEvents = openEvents.filter(
+      (ev) => stockholmDateIso(new Date(ev.start)) === tomorrow.isoDate
+    );
+    return { todayEvents, tomorrowEvents };
+  };
+
+  const fbSplit = splitDay(openFootball);
+  const hkSplit = splitDay(openHockey);
+
+  let dayEvents = [...fbSplit.todayEvents, ...fbSplit.tomorrowEvents];
   let play = today;
   let windowNote = "öppna matcher idag (svensk tid)";
-  if (!todayEvents.length && tomorrowEvents.length) {
+  if (!fbSplit.todayEvents.length && fbSplit.tomorrowEvents.length) {
     play = tomorrow;
     windowNote = "öppna matcher imorgon (inga kvar idag)";
-  } else if (todayEvents.length && tomorrowEvents.length) {
+  } else if (fbSplit.todayEvents.length && fbSplit.tomorrowEvents.length) {
     windowNote = "öppna matcher idag + imorgon";
   } else if (!dayEvents.length) {
     windowNote = "inga öppna fotbollsmatcher just nu";
+  }
+
+  const hockeyDayEvents = [
+    ...hkSplit.todayEvents,
+    ...hkSplit.tomorrowEvents,
+  ];
+  let hockeyWindowNote = "öppna ishockeymatcher idag (svensk tid)";
+  if (!hkSplit.todayEvents.length && hkSplit.tomorrowEvents.length) {
+    hockeyWindowNote = "öppna ishockeymatcher imorgon (inga kvar idag)";
+  } else if (hkSplit.todayEvents.length && hkSplit.tomorrowEvents.length) {
+    hockeyWindowNote = "öppna ishockeymatcher idag + imorgon";
+  } else if (!hockeyDayEvents.length) {
+    hockeyWindowNote = "inga öppna ishockeymatcher just nu";
   }
 
   // Rangordna: dagens matcher före imorgon vid lika liga-kvalitet
   const isToday = (ev: KambiEvent) =>
     stockholmDateIso(new Date(ev.start)) === today.isoDate;
 
-  const leagueRank = (ev: KambiEvent) => {
+  const footballLeagueRank = (ev: KambiEvent) => {
     const league = ev.group || "";
     const country = countryOf(ev);
     const topCountry =
@@ -1479,13 +1636,24 @@ export async function buildOddsetDayTip(opts?: {
   dayEvents.sort(
     (a, b) =>
       Number(isToday(b)) - Number(isToday(a)) ||
-      leagueRank(a) - leagueRank(b) ||
+      footballLeagueRank(a) - footballLeagueRank(b) ||
+      new Date(a.start).getTime() - new Date(b.start).getTime()
+  );
+  hockeyDayEvents.sort(
+    (a, b) =>
+      Number(isToday(b)) - Number(isToday(a)) ||
+      hockeyLeagueRank(a.group || "", countryOf(a)) -
+        hockeyLeagueRank(b.group || "", countryOf(b)) ||
       new Date(a.start).getTime() - new Date(b.start).getTime()
   );
 
   const maxAnalyze = 100;
   const toAnalyze = dayEvents.slice(0, maxAnalyze);
-  const markets = await fetchMarketsForEvents(toAnalyze);
+  const toAnalyzeHockey = hockeyDayEvents.slice(0, maxAnalyze);
+  const [markets, hockeyMarkets] = await Promise.all([
+    fetchMarketsForEvents(toAnalyze),
+    fetchMarketsForEvents(toAnalyzeHockey),
+  ]);
 
   const floorBump = learning.biases.raiseProbFloor;
   const minProb = MIN_OVER15_PROB + floorBump;
@@ -1515,7 +1683,7 @@ export async function buildOddsetDayTip(opts?: {
       }
     }
 
-    const c1 = build1x2Candidate(ev, m);
+    const c1 = build1x2Candidate(ev, m, "football");
     if (c1) {
       const adj = oddsetLearningAdjust({
         memory: learning,
@@ -1531,6 +1699,27 @@ export async function buildOddsetDayTip(opts?: {
       }
       candidates1x2.push(c1);
     }
+  }
+
+  const candidatesHockey1x2: OddsetCandidate[] = [];
+  for (const ev of toAnalyzeHockey) {
+    const m = hockeyMarkets.get(ev.id);
+    if (!m) continue;
+    const c1 = build1x2Candidate(ev, m, "hockey");
+    if (!c1) continue;
+    const adj = oddsetLearningAdjust({
+      memory: learning,
+      candidate: c1,
+      recentEventIds,
+      recentTeams,
+      recentLeagues,
+    });
+    c1.score += adj.scoreDelta * 0.35;
+    if (adj.notes.length) {
+      c1.learningNotes = adj.notes;
+      c1.reason = `${c1.reason}. ${adj.notes[0]}`;
+    }
+    candidatesHockey1x2.push(c1);
   }
 
   const todayIso = today.isoDate;
@@ -1550,10 +1739,19 @@ export async function buildOddsetDayTip(opts?: {
   };
   sortCandidates(candidates);
   sortCandidates(candidates1x2);
+  sortCandidates(candidatesHockey1x2);
   const selected = selectUniquePicks(candidates, PICKS_PER_DAY);
   const selected1x2 = selectUniquePicks(candidates1x2, PICKS_PER_DAY);
+  const selectedHockey1x2 = selectUniquePicks(
+    candidatesHockey1x2,
+    PICKS_HOCKEY_1X2
+  );
 
-  await rememberOddsetTips([...selected, ...selected1x2]);
+  await rememberOddsetTips([
+    ...selected,
+    ...selected1x2,
+    ...selectedHockey1x2,
+  ]);
   const tracked = await settleOddsetTips();
   const learningAfter = await loadOddsetLearning();
 
@@ -1565,12 +1763,16 @@ export async function buildOddsetDayTip(opts?: {
     candidates: candidates.slice(0, 12),
     selected1x2,
     candidates1x2: candidates1x2.slice(0, 12),
+    selectedHockey1x2,
+    candidatesHockey1x2: candidatesHockey1x2.slice(0, 18),
     tracked,
     retentionHours: ODDSET_TIP_RETENTION_HOURS,
-    analyzedCount: toAnalyze.length,
+    analyzedCount: toAnalyze.length + toAnalyzeHockey.length,
     eligibleCount: candidates.length,
     eligible1x2Count: candidates1x2.length,
+    eligibleHockey1x2Count: candidatesHockey1x2.length,
     picksPerDay: PICKS_PER_DAY,
+    picksHockey1x2: PICKS_HOCKEY_1X2,
     learning: {
       updatedAt: learningAfter.updatedAt,
       summary: learningAfter.lastSummary,
@@ -1578,17 +1780,19 @@ export async function buildOddsetDayTip(opts?: {
       lessons: learningAfter.lessons.slice(0, 12),
     },
     rules: [
-      `${PICKS_PER_DAY} unika Oddset Över 1,5 + ${PICKS_PER_DAY} unika 1X2 som går att spela nu.`,
-      `Fönster: ${windowNote}.`,
+      `${PICKS_PER_DAY} unika Oddset Över 1,5 + ${PICKS_PER_DAY} unika fotboll-1X2 + ${PICKS_HOCKEY_1X2} unika Hockey · 1X2 som går att spela nu.`,
+      `Fönster fotboll: ${windowNote}.`,
+      `Fönster ishockey: ${hockeyWindowNote}.`,
       "Bara matcher som inte startat ännu (för nya tips).",
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: Över 1,5 = ≥2 mål; 1X2 = tippad utgång rätt.",
-      "1X2 använder samma analys: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
+      "Fotboll-1X2: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
+      "Hockey · 1X2 (9): regulation efter 60 min (X möjligt) – samma analysram, SHL/NHL/HA prioriteras.",
       "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel.",
       "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
       `Sannolikhetsgolv Ö1,5: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
-      "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext.",
+      "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext (fotboll).",
       "Uppdateras automatiskt 12 min före avspark och när resultat kommer in.",
     ],
     disclaimer:
