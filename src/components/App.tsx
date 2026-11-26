@@ -2563,9 +2563,21 @@ function OddsetPickCard({
   const resultNote = tracked?.resultNote;
   const is1x2 = c.market === "1x2";
   const isHockey = c.sport === "hockey";
+  const cover = c.pickCover?.length
+    ? c.pickCover
+    : is1x2 && c.pick1x2
+      ? [c.pick1x2]
+      : [];
   const pickLabel = is1x2
-    ? `${isHockey ? "Hockey · " : ""}1X2 · ${c.pick1x2 || "?"}`
+    ? `${isHockey ? "Hockey · " : ""}1X2 · ${
+        cover.length ? cover.join("") : c.pick1x2 || "?"
+      }`
     : "Över 1,5 mål";
+  const oddsObj = {
+    one: c.homeOdds ?? null,
+    x: c.drawOdds ?? null,
+    two: c.awayOdds ?? null,
+  };
   return (
     <article className={`match-card ${outcomeClass(outcome)}`}>
       <div className="match-card-top">
@@ -2577,7 +2589,7 @@ function OddsetPickCard({
           <div className="reason">
             {fmtTime(c.kickoff)} · {c.league}
             {c.country ? ` · ${c.country}` : ""}
-            {isHockey ? " · ishockey" : ""}
+            {isHockey ? " · ishockey · Powerplay-analys" : ""}
           </div>
         </div>
         <div className="pick-cells">
@@ -2592,7 +2604,18 @@ function OddsetPickCard({
           ) : outcome === "live" ? (
             <span className="oddset-result-badge live">Live</span>
           ) : is1x2 ? (
-            <span className="pick-cell on">{c.pick1x2}</span>
+            cover.length > 0 ? (
+              (["1", "X", "2"] as const).map((o) => (
+                <span
+                  key={o}
+                  className={`pick-cell${cover.includes(o) ? " on" : ""}`}
+                >
+                  {o}
+                </span>
+              ))
+            ) : (
+              <span className="pick-cell on">{c.pick1x2}</span>
+            )
           ) : (
             <span className="pick-cell on">{c.over25ProbPct.toFixed(0)}%</span>
           )}
@@ -2623,7 +2646,54 @@ function OddsetPickCard({
           {is1x2 && <> · konf. {c.over25ProbPct.toFixed(0)}%</>}
         </span>
       </div>
-      {c.equalizer && <EqualizerBlock equalizer={c.equalizer} />}
+      {isHockey && c.valueOdds ? (
+        <Odds1x2Marked odds={oddsObj} valueOdds={c.valueOdds} />
+      ) : null}
+      {isHockey && c.goals ? (
+        <GoalBlock goals={c.goals} />
+      ) : c.equalizer ? (
+        <EqualizerBlock equalizer={c.equalizer} />
+      ) : null}
+      {isHockey && (
+        <div className="match-card-meta">
+          {c.homeFatigue && (
+            <Fatigue level={c.homeFatigue.level} label={c.home} />
+          )}
+          {c.awayFatigue && (
+            <Fatigue level={c.awayFatigue.level} label={c.away} />
+          )}
+          {c.homeTable && (
+            <TablePill
+              comfort={c.homeTable.comfort}
+              note={c.homeTable.note}
+              label={c.home}
+            />
+          )}
+          {c.awayTable && (
+            <TablePill
+              comfort={c.awayTable.comfort}
+              note={c.awayTable.note}
+              label={c.away}
+            />
+          )}
+          {c.homeRest && (
+            <RestPill
+              level={c.homeRest.level}
+              note={c.homeRest.note}
+              label={c.home}
+            />
+          )}
+          {c.awayRest && (
+            <RestPill
+              level={c.awayRest.level}
+              note={c.awayRest.note}
+              label={c.away}
+            />
+          )}
+          <ValueOddsPill valueOdds={c.valueOdds} />
+        </div>
+      )}
+      {isHockey && c.valueOdds ? <OverOddsExplain valueOdds={c.valueOdds} /> : null}
       <div className="match-card-meta">
         {is1x2 ? (
           <>
@@ -3538,9 +3608,87 @@ function OddsetView({ tip }: { tip: OddsetDayTip }) {
           Spela dessa · Hockey · 1X2 ({picksHockey1x2.length}/{picksHockey})
         </h2>
         <p className="panel-lead">
-          Nio ishockeytips på regulation 1X2 (X efter 60 min) – samma analysram
-          som fotboll-1X2. Prioriterar SHL, NHL och HockeyAllsvenskan.
+          Nio ishockeytips med <strong>samma analyslager som Powerplay</strong>
+          : tabell, matchbelastning, vila, multi-book/överodds, målanalys och
+          admin-1X2 (regulation, X efter 60 min).
         </p>
+        {picksHockey1x2.length > 0 && (
+          <div className="tip-strip" aria-label="Hockey tipprad">
+            <strong>Tipprad · Hockey 1X2</strong>
+            <div className="tip-strip-picks">
+              {picksHockey1x2.map((c, i) => (
+                <span key={oddsetTrackKey(c)} className="tip-strip-pick">
+                  <em>{i + 1}</em>
+                  {(c.pickCover?.length
+                    ? c.pickCover
+                    : c.pick1x2
+                      ? [c.pick1x2]
+                      : []
+                  ).join("") || "–"}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {tip.hockeyAlerts &&
+          (tip.hockeyAlerts.fatigueAlerts.length > 0 ||
+            tip.hockeyAlerts.tableAlerts.length > 0 ||
+            tip.hockeyAlerts.restAlerts.length > 0 ||
+            tip.hockeyAlerts.goalAlerts.length > 0 ||
+            tip.hockeyAlerts.valueAlerts.length > 0) && (
+            <div className="oddset-hockey-alerts">
+              {tip.hockeyAlerts.fatigueAlerts.length > 0 && (
+                <>
+                  <h3>Matchbelastning</h3>
+                  <ul className="alert-list table-alerts">
+                    {tip.hockeyAlerts.fatigueAlerts.slice(0, 8).map((a) => (
+                      <li key={`hf-${a}`}>{a}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {tip.hockeyAlerts.tableAlerts.length > 0 && (
+                <>
+                  <h3>Tabell & poängställning</h3>
+                  <ul className="alert-list table-alerts">
+                    {tip.hockeyAlerts.tableAlerts.slice(0, 8).map((a) => (
+                      <li key={`ht-${a}`}>{a}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {tip.hockeyAlerts.restAlerts.length > 0 && (
+                <>
+                  <h3>Vila</h3>
+                  <ul className="alert-list table-alerts">
+                    {tip.hockeyAlerts.restAlerts.slice(0, 8).map((a) => (
+                      <li key={`hr-${a}`}>{a}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {tip.hockeyAlerts.goalAlerts.length > 0 && (
+                <>
+                  <h3>Mål per match</h3>
+                  <ul className="alert-list table-alerts">
+                    {tip.hockeyAlerts.goalAlerts.slice(0, 8).map((a) => (
+                      <li key={`hg-${a}`}>{a}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {tip.hockeyAlerts.valueAlerts.length > 0 && (
+                <>
+                  <h3>Överodds & 1X2</h3>
+                  <ul className="alert-list table-alerts">
+                    {tip.hockeyAlerts.valueAlerts.slice(0, 8).map((a) => (
+                      <li key={`hv-${a}`}>{a}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
         {picksHockey1x2.length === 0 ? (
           <p className="panel-lead">
             Ingen ishockeymatch klarade 1X2-filtret just nu.

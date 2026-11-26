@@ -234,11 +234,23 @@ function extractMatchOdds(
     outcomes?: Array<{ type?: string; label?: string; odds?: number }>;
   }>
 ): Odds | null {
-  const ml = betOffers.find((bo) => {
+  const candidates = betOffers.filter((bo) => {
     if (bo.betOfferType?.id !== 2) return false;
     const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
     return /Match Odds/i.test(label) && !/Half|Period|Quarter/i.test(label);
   });
+  // Ishockey: preferera regulation (X efter 60 min) framför OT-moneyline
+  const ml =
+    candidates.find((bo) =>
+      /Regular Time|Ordinarie/i.test(
+        bo.criterion?.englishLabel || bo.criterion?.label || ""
+      )
+    ) ||
+    candidates.find((bo) => {
+      const label = bo.criterion?.englishLabel || bo.criterion?.label || "";
+      return !/Overtime|inkl/i.test(label);
+    }) ||
+    candidates[0];
   if (!ml?.outcomes?.length) return null;
   let one: number | null = null;
   let x: number | null = null;

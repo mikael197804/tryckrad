@@ -25,10 +25,24 @@ import {
   type OddsetLesson,
 } from "./oddsetLearning";
 import { overMarketValue } from "./valueOdds";
+import type {
+  FatigueInfo,
+  GoalAnalysis,
+  Outcome,
+  RestSignal,
+  TableContext,
+  ValueOddsInfo,
+} from "./types";
+import {
+  buildHockey1x2LikePowerplay,
+  emptyHockeyAlerts,
+  type HockeyAnalysisAlerts,
+} from "./oddsetHockey";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
 export type { EqualizerAssessment } from "./equalizerPressure";
+export type { HockeyAnalysisAlerts } from "./oddsetHockey";
 export type OddsetMarket = "over_1_5" | "over_2_5" | "1x2";
 export type Oddset1x2Pick = "1" | "X" | "2";
 export type OddsetSport = "football" | "hockey";
@@ -83,6 +97,16 @@ export type OddsetCandidate = {
   url: string;
   /** Lärdomar som påverkat just detta tips. */
   learningNotes?: string[];
+  /** Powerplay-lager (Hockey · 1X2). */
+  pickCover?: Outcome[];
+  valueOdds?: ValueOddsInfo | null;
+  goals?: GoalAnalysis | null;
+  homeFatigue?: FatigueInfo | null;
+  awayFatigue?: FatigueInfo | null;
+  homeTable?: TableContext | null;
+  awayTable?: TableContext | null;
+  homeRest?: RestSignal | null;
+  awayRest?: RestSignal | null;
 };
 
 export type OddsetDayTip = {
@@ -107,6 +131,8 @@ export type OddsetDayTip = {
   eligibleHockey1x2Count: number;
   picksPerDay: number;
   picksHockey1x2: number;
+  /** Powerplay-liknande alertlistor för Hockey · 1X2. */
+  hockeyAlerts?: HockeyAnalysisAlerts;
   rules: string[];
   disclaimer: string;
   /** Efteranalys + aspekter till nästa tips (uppdateras automatiskt). */
@@ -1649,10 +1675,11 @@ export async function buildOddsetDayTip(opts?: {
 
   const maxAnalyze = 100;
   const toAnalyze = dayEvents.slice(0, maxAnalyze);
-  const toAnalyzeHockey = hockeyDayEvents.slice(0, maxAnalyze);
-  const [markets, hockeyMarkets] = await Promise.all([
+  // Powerplay-lager på ishockey är tyngre (multi-book + mål + tabell) – begränsa
+  const toAnalyzeHockey = hockeyDayEvents.slice(0, 55);
+  const [markets, hockeyPp] = await Promise.all([
     fetchMarketsForEvents(toAnalyze),
-    fetchMarketsForEvents(toAnalyzeHockey),
+    buildHockey1x2LikePowerplay(toAnalyzeHockey, { maxAnalyze: 55 }),
   ]);
 
   const floorBump = learning.biases.raiseProbFloor;
@@ -1702,11 +1729,7 @@ export async function buildOddsetDayTip(opts?: {
   }
 
   const candidatesHockey1x2: OddsetCandidate[] = [];
-  for (const ev of toAnalyzeHockey) {
-    const m = hockeyMarkets.get(ev.id);
-    if (!m) continue;
-    const c1 = build1x2Candidate(ev, m, "hockey");
-    if (!c1) continue;
+  for (const c1 of hockeyPp.candidates) {
     const adj = oddsetLearningAdjust({
       memory: learning,
       candidate: c1,
@@ -1746,6 +1769,7 @@ export async function buildOddsetDayTip(opts?: {
     candidatesHockey1x2,
     PICKS_HOCKEY_1X2
   );
+  const hockeyAlerts = hockeyPp.alerts || emptyHockeyAlerts();
 
   await rememberOddsetTips([
     ...selected,
@@ -1767,12 +1791,13 @@ export async function buildOddsetDayTip(opts?: {
     candidatesHockey1x2: candidatesHockey1x2.slice(0, 18),
     tracked,
     retentionHours: ODDSET_TIP_RETENTION_HOURS,
-    analyzedCount: toAnalyze.length + toAnalyzeHockey.length,
+    analyzedCount: toAnalyze.length + hockeyPp.analyzedCount,
     eligibleCount: candidates.length,
     eligible1x2Count: candidates1x2.length,
     eligibleHockey1x2Count: candidatesHockey1x2.length,
     picksPerDay: PICKS_PER_DAY,
     picksHockey1x2: PICKS_HOCKEY_1X2,
+    hockeyAlerts,
     learning: {
       updatedAt: learningAfter.updatedAt,
       summary: learningAfter.lastSummary,
@@ -1787,7 +1812,7 @@ export async function buildOddsetDayTip(opts?: {
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: Över 1,5 = ≥2 mål; 1X2 = tippad utgång rätt.",
       "Fotboll-1X2: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
-      "Hockey · 1X2 (9): regulation efter 60 min (X möjligt) – samma analysram, SHL/NHL/HA prioriteras.",
+      "Hockey · 1X2 (9): samma analyslager som Powerplay – tabell, belastning, vila, multi-book/överodds, målanalys, admin-1X2 (regulation).",
       "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel.",
       "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
