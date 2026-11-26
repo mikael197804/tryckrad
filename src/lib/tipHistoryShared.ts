@@ -12,6 +12,7 @@ export type HistoryProduct =
   | "v75"
   | "v64"
   | "tvilling"
+  | "hockey_1x2"
   | "esports_battle";
 
 export type HistoryPickStatus = "pending" | "live" | "won" | "lost";
@@ -88,6 +89,10 @@ export function systemWinThreshold(
   if (product === "tvilling") {
     return Math.max(1, Math.ceil(total * 0.6));
   }
+  if (product === "hockey_1x2") {
+    // 9 tips – en miss ok (samma som Oddset 7–9)
+    return Math.max(1, total - 1);
+  }
   if (total >= 7 && total <= 9) {
     return Math.max(1, total - 1);
   }
@@ -161,6 +166,8 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "V64";
     case "tvilling":
       return "Tvilling";
+    case "hockey_1x2":
+      return "Hockey 1X2";
     case "esports_battle":
       return "Esports Battle";
   }

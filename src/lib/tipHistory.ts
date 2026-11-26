@@ -33,7 +33,7 @@ export {
 
 type SvenskaSpelHistoryProduct = Exclude<
   HistoryProduct,
-  "oddset" | "esports_battle" | "v75" | "v64" | "tvilling"
+  "oddset" | "hockey_1x2" | "esports_battle" | "v75" | "v64" | "tvilling"
 >;
 
 const PRODUCT_SLUG: Record<SvenskaSpelHistoryProduct, string> = {
@@ -85,10 +85,33 @@ function correctOneXTwoStatus(p: HistoryPick): HistoryPick {
   };
 }
 
+function normalizeHistoryPick(p: HistoryPick): HistoryPick {
+  if (
+    p.product === "oddset" &&
+    (p.gameKey?.startsWith("oddset:hockey1x2:") ||
+      p.gameKey?.startsWith("hockey_1x2:") ||
+      /hockey\s*1x2/i.test(p.gameLabel || ""))
+  ) {
+    const dayKey =
+      p.gameKey?.replace(/^oddset:hockey1x2:/, "").replace(/^hockey_1x2:/, "") ||
+      (p.kickoff || p.tippedAt || "").slice(0, 10);
+    return {
+      ...p,
+      product: "hockey_1x2",
+      gameKey: `hockey_1x2:${dayKey}`,
+      gameLabel:
+        p.gameLabel?.replace(/^Oddset · Hockey 1X2/, "Hockey 1X2") ||
+        `Hockey 1X2 · ${dayKey}`,
+    };
+  }
+  return p;
+}
+
 function mergePicks(groups: HistoryPick[][]): HistoryPick[] {
   const byId = new Map<string, HistoryPick>();
   for (const group of groups) {
-    for (const p of group) {
+    for (const raw of group) {
+      const p = normalizeHistoryPick(raw);
       if (!p?.id) continue;
       const prev = byId.get(p.id);
       if (!prev) {
@@ -453,7 +476,11 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
 
   const out: HistoryPick[] = [];
   for (const p of picks) {
-    if (p.product === "oddset" || p.product === "esports_battle") {
+    if (
+      p.product === "oddset" ||
+      p.product === "hockey_1x2" ||
+      p.product === "esports_battle"
+    ) {
       out.push(p);
       continue;
     }
@@ -709,6 +736,7 @@ async function attachPayouts(
       if (g.systemResult !== "won") return g;
       if (
         g.product === "oddset" ||
+        g.product === "hockey_1x2" ||
         g.product === "esports_battle" ||
         g.product === "v75" ||
         g.product === "v64" ||
@@ -751,7 +779,7 @@ export async function buildTipHistory(
   // Oddset + omgångsspel: Flashscore först (ESPN/SVS som backup)
   const settledOddset: HistoryPick[] = [];
   for (const p of picks) {
-    if (p.product === "oddset") {
+    if (p.product === "oddset" || p.product === "hockey_1x2") {
       settledOddset.push(await settleOddsetPick(p));
     } else {
       settledOddset.push(p);

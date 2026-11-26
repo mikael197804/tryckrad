@@ -64,6 +64,8 @@ function productHistoryLabel(p: HistoryProduct): string {
       return "V64";
     case "tvilling":
       return "Tvilling";
+    case "hockey_1x2":
+      return "Hockey 1X2";
     case "esports_battle":
       return "Esports Battle";
   }
@@ -201,6 +203,28 @@ function historyKeepUntilMs(p: HistoryPick): number {
   return Number.isFinite(kick) ? kick : tipped;
 }
 
+/** Flytta gamla Oddset-hockeyrader till egen kolumn. */
+function normalizeHistoryPick(p: HistoryPick): HistoryPick {
+  if (
+    p.product === "oddset" &&
+    (p.gameKey?.startsWith("oddset:hockey1x2:") ||
+      p.gameKey?.startsWith("hockey_1x2:") ||
+      /hockey\s*1x2/i.test(p.gameLabel || ""))
+  ) {
+    const dayKey =
+      p.gameKey?.replace(/^oddset:hockey1x2:/, "").replace(/^hockey_1x2:/, "") ||
+      (p.kickoff || p.tippedAt || "").slice(0, 10);
+    return {
+      ...p,
+      product: "hockey_1x2",
+      gameKey: `hockey_1x2:${dayKey}`,
+      gameLabel: p.gameLabel?.replace(/^Oddset · Hockey 1X2/, "Hockey 1X2")
+        || `Hockey 1X2 · ${dayKey}`,
+    };
+  }
+  return p;
+}
+
 function loadLocalHistoryPicks(): HistoryPick[] {
   if (typeof window === "undefined") return [];
   try {
@@ -211,7 +235,7 @@ function loadLocalHistoryPicks(): HistoryPick[] {
     const parsed = JSON.parse(raw) as HistoryPick[];
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
-    return parsed.filter((p) => {
+    return parsed.map(normalizeHistoryPick).filter((p) => {
       if (isFutureHistoryPick(p, now)) return false;
       const at = historyKeepUntilMs(p);
       return Number.isFinite(at) && now - at <= HISTORY_RETENTION_MS;
@@ -232,7 +256,8 @@ function mergeHistoryPickLists(...groups: HistoryPick[][]): HistoryPick[] {
   const byId = new Map<string, HistoryPick>();
   const now = Date.now();
   for (const group of groups) {
-    for (const p of group) {
+    for (const raw of group) {
+      const p = normalizeHistoryPick(raw);
       if (!p?.id) continue;
       if (isFutureHistoryPick(p, now)) continue;
       const at = historyKeepUntilMs(p);
@@ -347,6 +372,8 @@ function buildHistoryViewModel(
           ? Math.max(1, list.length - 2)
           : product === "tvilling"
             ? Math.max(1, Math.ceil(list.length * 0.6))
+          : product === "hockey_1x2"
+            ? Math.max(1, list.length - 1)
           : list.length >= 7 && list.length <= 9
             ? Math.max(1, list.length - 1)
             : list.length;
@@ -419,15 +446,15 @@ function oddsetToHistoryPicks(
       id: is1x2
         ? `oddset:${t.eventId}:1x2:${pick1}`
         : `oddset:${t.eventId}:over`,
-      product: "oddset" as const,
+      product: (isHockey1x2 ? "hockey_1x2" : "oddset") as HistoryProduct,
       // Gruppera per speldatum (Stockholm) + marknad
       gameKey: isHockey1x2
-        ? `oddset:hockey1x2:${dayKey}`
+        ? `hockey_1x2:${dayKey}`
         : is1x2
           ? `oddset:1x2:${dayKey}`
           : `oddset:over:${dayKey}`,
       gameLabel: isHockey1x2
-        ? `Oddset · Hockey 1X2 · ${dayLabel}`
+        ? `Hockey 1X2 · ${dayLabel}`
         : is1x2
           ? `Oddset · 1X2 · ${dayLabel}`
           : `Oddset · Över 1,5 · ${dayLabel}`,
@@ -1218,6 +1245,7 @@ const HISTORY_PRODUCT_COLUMNS: Array<{
   { id: "v64", label: "V64" },
   { id: "tvilling", label: "Tvilling" },
   { id: "oddset", label: "Oddset" },
+  { id: "hockey_1x2", label: "Hockey 1X2" },
   { id: "esports_battle", label: "Esports Battle" },
 ];
 
@@ -2855,7 +2883,7 @@ function HistoryGameCard({
               </strong>
               {p.kickoff && (
                 <div className="history-pick-date">
-                  {p.product === "oddset"
+                  {p.product === "oddset" || p.product === "hockey_1x2"
                     ? `${fmtHistoryDate(p.kickoff)} · ${fmtClock(p.kickoff)}`
                     : fmtTime(p.kickoff)}
                 </div>
@@ -3458,7 +3486,11 @@ function HistoryView({
                   type="button"
                   className="history-btn"
                   onClick={() => {
-                    onOpenProduct(library as ProductKind);
+                    onOpenProduct(
+                      library === "hockey_1x2"
+                        ? "oddset"
+                        : (library as ProductKind)
+                    );
                     onClose();
                   }}
                 >
@@ -3474,7 +3506,9 @@ function HistoryView({
                   ? " Öppna Powerplay i menyn – tipset sparas automatiskt (192 kr)."
                   : library === "topptipset"
                     ? " Öppna Topptipset – 192 kr sparas i det här biblioteket."
-                    : ""}
+                    : library === "hockey_1x2"
+                      ? " Öppna Oddset – Hockey 1X2 sparas här automatiskt."
+                      : ""}
               </p>
             ) : (
               <div
@@ -4678,7 +4712,9 @@ export default function App() {
       saveLocalHistoryPicks(merged);
 
       // Spegla settlade Oddset-rader tillbaka till Oddset-localStorage
-      const settledOddset = merged.filter((p) => p.product === "oddset");
+      const settledOddset = merged.filter(
+        (p) => p.product === "oddset" || p.product === "hockey_1x2"
+      );
       if (settledOddset.length) {
         const byEvent = new Map(
           settledOddset.map((p) => [
