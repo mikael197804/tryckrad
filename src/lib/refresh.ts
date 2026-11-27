@@ -1,12 +1,19 @@
-/** Alla spel uppdateras 12 minuter före spelstopp. */
-export const PRE_CLOSE_REFRESH_MS = 12 * 60 * 1000;
+/** Sista kollen: uppdatera odds/omsättning och ställ om tips 10 min före spelstopp. */
+export const PRE_CLOSE_REFRESH_MS = 10 * 60 * 1000;
+
+/** Matcher som startar inom detta fönster räknas fortfarande som tippbara (Oddset/Hockey 9). */
+export const OPEN_TIP_LEAD_MS = 2 * 60 * 1000;
+
+export function preCloseMinutes(): number {
+  return PRE_CLOSE_REFRESH_MS / 60_000;
+}
 
 export function closeMs(iso: string): number | null {
   const t = new Date(iso).getTime();
   return Number.isFinite(t) ? t : null;
 }
 
-/** Tidpunkt då förhands-uppdateringen ska köras (close − 12 min). */
+/** Tidpunkt då förhands-uppdateringen ska köras (close − 10 min). */
 export function preCloseAt(closeTimeIso: string): number | null {
   const t = closeMs(closeTimeIso);
   return t == null ? null : t - PRE_CLOSE_REFRESH_MS;
@@ -46,12 +53,13 @@ export function nextPreCloseRefreshAt(
 export function formatPreCloseLabel(closeTimeIso: string, now = Date.now()): string {
   const close = closeMs(closeTimeIso);
   if (close == null) return "";
+  const mins = preCloseMinutes();
   const minsToClose = Math.round((close - now) / 60000);
-  if (minsToClose > 12) {
-    return `Uppdateras automatiskt 12 min före spelstopp (om ${minsToClose - 12} min)`;
+  if (minsToClose > mins) {
+    return `Sista kollen ${mins} min före spelstopp (om ${minsToClose - mins} min) – tips ställs om efter färska odds/omsättning`;
   }
   if (minsToClose >= 0) {
-    return `Sen uppdatering före spelstopp aktiv · ${minsToClose} min kvar till stopp`;
+    return `Sista kollen aktiv · tips uppdateras efter nya odds · ${minsToClose} min kvar till stopp`;
   }
   return "Spelstopp har passerat";
 }

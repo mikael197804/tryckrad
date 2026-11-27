@@ -42,6 +42,7 @@ import {
   estimateHockey9Payout,
   MIN_PAYOUT_KR,
 } from "./poolPayout";
+import { OPEN_TIP_LEAD_MS, preCloseMinutes } from "./refresh";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
@@ -1650,8 +1651,9 @@ export async function buildOddsetDayTip(opts?: {
     }>,
   ]);
 
-  // Öppna spel nu: avspark minst ~12 min framåt, i första hand idag (svensk tid)
-  const minStart = now.getTime() + 12 * 60 * 1000;
+  // Öppna spel nu: avspark minst ~2 min framåt så sista kollen (10 min före)
+  // fortfarande kan ställa om tipsen efter färska odds.
+  const minStart = now.getTime() + OPEN_TIP_LEAD_MS;
   const collectOpen = (
     list: { events?: Array<{ event: KambiEvent }> } | null
   ): KambiEvent[] => {
@@ -1898,7 +1900,7 @@ export async function buildOddsetDayTip(opts?: {
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
       `Sannolikhetsgolv Ö1,5: ≥${Math.round(minProb * 100)}% (höjs efter övertygade missar).`,
       "Rivalitet/derby och rött-kort-marknad analyseras som extrakontext (fotboll).",
-      "Uppdateras automatiskt 12 min före avspark och när resultat kommer in.",
+      `Sista kollen ${preCloseMinutes()} min före avspark: tips ställs om efter färska odds. Uppdateras även när resultat kommer in.`,
     ],
     disclaimer:
       "Oddset-tips är analys, ingen garanti. Odds från Svenska Spel/Kambi kan ändras. 18+ spela ansvarsfullt.",

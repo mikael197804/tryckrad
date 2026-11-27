@@ -4,7 +4,7 @@ type FetchMode = { fresh: boolean };
 
 const store = new AsyncLocalStorage<FetchMode>();
 
-/** Kör arbete med cache: no-store på utgående fetch (t.ex. 12 min före stopp). */
+/** Kör arbete med cache: no-store på utgående fetch (t.ex. 10 min före stopp). */
 export function runWithFreshFetch<T>(fn: () => Promise<T>): Promise<T> {
   return store.run({ fresh: true }, fn);
 }

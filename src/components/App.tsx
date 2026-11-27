@@ -253,7 +253,8 @@ function historyStatusRank(s: HistoryPick["status"]): number {
   return 1;
 }
 
-/** Slå ihop tipprader utan att tappa t.ex. #4826. */
+/** Slå ihop tipprader utan att tappa t.ex. #4826.
+ *  Väntande tips: senaste omställda tipset (sista kollen) vinner pick. */
 function mergeHistoryPickLists(...groups: HistoryPick[][]): HistoryPick[] {
   const byId = new Map<string, HistoryPick>();
   const now = Date.now();
@@ -269,15 +270,41 @@ function mergeHistoryPickLists(...groups: HistoryPick[][]): HistoryPick[] {
         byId.set(p.id, p);
         continue;
       }
-      const preferNew = historyStatusRank(p.status) >= historyStatusRank(prev.status);
-      const base = preferNew ? p : prev;
-      const other = preferNew ? prev : p;
+      const prevSettled = prev.status === "won" || prev.status === "lost";
+      const pSettled = p.status === "won" || p.status === "lost";
+      // Avgjorda tips låses; annars ta senaste tipp (sista kollen 10 min före)
+      let base: HistoryPick;
+      let other: HistoryPick;
+      if (prevSettled && !pSettled) {
+        base = prev;
+        other = p;
+      } else if (pSettled && !prevSettled) {
+        base = p;
+        other = prev;
+      } else if (
+        historyStatusRank(p.status) !== historyStatusRank(prev.status)
+      ) {
+        const preferNew =
+          historyStatusRank(p.status) > historyStatusRank(prev.status);
+        base = preferNew ? p : prev;
+        other = preferNew ? prev : p;
+      } else {
+        const pAt = Date.parse(p.tippedAt);
+        const prevAt = Date.parse(prev.tippedAt);
+        const preferP =
+          Number.isFinite(pAt) && Number.isFinite(prevAt)
+            ? pAt >= prevAt
+            : true;
+        base = preferP ? p : prev;
+        other = preferP ? prev : p;
+      }
       byId.set(p.id, {
         ...base,
         tippedAt:
           Date.parse(prev.tippedAt) <= Date.parse(p.tippedAt)
             ? prev.tippedAt
             : p.tippedAt,
+        pick: base.pick,
         actual: base.actual ?? other.actual,
         resultNote: base.resultNote ?? other.resultNote,
         settledAt: base.settledAt ?? other.settledAt ?? null,
@@ -5012,7 +5039,7 @@ export default function App() {
         product !== "tvilling" &&
         !drawsMatch));
 
-  // Schemalägg uppdatering 12 min före spelstopp (alla produkter)
+  // Sista kollen 10 min före spelstopp: hämta färska odds/omsättning och ställ om tips
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let poll: ReturnType<typeof setInterval> | null = null;
@@ -5036,7 +5063,13 @@ export default function App() {
 
     const activeClose = () => {
       const now = Date.now();
-      if (product !== "oddset" && draw?.closeTime) return draw.closeTime;
+      if (
+        product !== "oddset" &&
+        product !== "hockey9" &&
+        draw?.closeTime
+      ) {
+        return draw.closeTime;
+      }
       return (
         closeTimes
           .map((t) => ({ t, ms: new Date(t).getTime() }))
@@ -5052,6 +5085,16 @@ export default function App() {
     updateNote();
     noteTimer = setInterval(updateNote, 30_000);
 
+    /** Färsk analys + tips omställda efter odds/omsättning (golv 3 000 kr). */
+    const runFinalCheck = () =>
+      loadProduct({ fresh: true, silent: true, resetSelection: false }).then(
+        () => {
+          if (cancelled) return;
+          // Visa bästa omställda systemet (högst utdelning över golvet först)
+          setSelectedSystem(0);
+        }
+      );
+
     const arm = () => {
       if (timer) clearTimeout(timer);
       if (poll) clearInterval(poll);
@@ -5063,7 +5106,7 @@ export default function App() {
       if (inWindow) {
         if (!preCloseStartedRef.current) {
           preCloseStartedRef.current = true;
-          void loadProduct({ fresh: true, silent: true, resetSelection: false });
+          void runFinalCheck();
         }
         poll = setInterval(() => {
           if (cancelled) return;
@@ -5073,8 +5116,8 @@ export default function App() {
             arm();
             return;
           }
-          void loadProduct({ fresh: true, silent: true, resetSelection: false });
-        }, 90_000);
+          void runFinalCheck();
+        }, 60_000);
         return;
       }
 
@@ -5085,11 +5128,9 @@ export default function App() {
       timer = setTimeout(() => {
         if (cancelled) return;
         preCloseStartedRef.current = false;
-        void loadProduct({ fresh: true, silent: true, resetSelection: false }).then(
-          () => {
-            if (!cancelled) arm();
-          }
-        );
+        void runFinalCheck().then(() => {
+          if (!cancelled) arm();
+        });
       }, delay);
     };
 
@@ -5243,8 +5284,9 @@ export default function App() {
             Mikael’s <span>tips</span>
           </h1>
           <p className="brand-tag">
-            Alla spel uppdateras 12 min före spelstopp. Tryck på Gamla resultat
-            för rätt/fel – syns 8 h efter start/klart (inga framtida matcher).
+            Sista kollen 10 min före spelstopp: tips ställs om efter färska
+            odds/omsättning (golv 3 000 kr). Tryck på Gamla resultat för
+            rätt/fel – syns 8 h efter start/klart (inga framtida matcher).
             Powerplay/Topptipset lär av missar. Stryk/Mål: lagnyheter ca 15 min
             före avspark.
           </p>
