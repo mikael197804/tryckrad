@@ -35,6 +35,7 @@ import {
 } from "../lib/tipHistoryShared";
 import {
   coverFromOutcomes,
+  estimateHockey9PayoutRange,
   estimatePayoutRange,
   systemRowCount,
 } from "../lib/poolPayout";
@@ -85,6 +86,22 @@ function productHistoryLabel(p: HistoryProduct): string {
 /** Stryk + Europa: samma system (R 4-4-144) och sen laganalys. */
 function isStrykFamily(p: string): boolean {
   return p === "stryktipset" || p === "europatipset";
+}
+
+/** Produkter med egen klickbar tipprad (Min rad · gardera). */
+function supportsMyRow(p: string): boolean {
+  return (
+    p === "powerplay" ||
+    p === "topptipset" ||
+    p === "stryktipset" ||
+    p === "europatipset" ||
+    p === "hockey9"
+  );
+}
+
+function defaultSystemIndex(p: string): number {
+  // Hockey 9 har egen flik; övriga öppnar Min rad direkt
+  return supportsMyRow(p) && p !== "hockey9" ? -1 : 0;
 }
 
 const ODDSET_LS_KEY = "mikaels-oddset-tips-8h";
@@ -2253,6 +2270,289 @@ function seedMyRowFromMatches(
   return out;
 }
 
+function hockeyCandidateOdds(
+  c: OddsetCandidate
+): Partial<Record<Outcome, number | null | undefined>> {
+  return {
+    "1": c.homeOdds ?? (c.pick1x2 === "1" ? c.odds : null),
+    X: c.drawOdds ?? (c.pick1x2 === "X" ? c.odds : null),
+    "2": c.awayOdds ?? (c.pick1x2 === "2" ? c.odds : null),
+  };
+}
+
+function Hockey9MyCouponView({ tip }: { tip: OddsetDayTip }) {
+  const pool = useMemo(() => {
+    const byId = new Map<number, OddsetCandidate>();
+    for (const c of [
+      ...(tip.selectedHockey1x2 || []),
+      ...(tip.candidatesHockey1x2 || []),
+    ]) {
+      if (!byId.has(c.eventId)) byId.set(c.eventId, c);
+    }
+    return [...byId.values()];
+  }, [tip.selectedHockey1x2, tip.candidatesHockey1x2]);
+
+  const playDate = tip.playDate || tip.playDateLabel || "hockey9";
+  const limit = tip.picksHockey1x2 ?? 9;
+
+  type Slot = { eventId: number; outcomes: Outcome[] };
+  const seedSlots = (): Slot[] => {
+    const saved = loadMyRowOutcomes("hockey9", Number(String(playDate).replace(/\D/g, "") || 0));
+    // saved keys are eventNumbers for pool games; for hockey we store eventId
+    const fromTip = (tip.selectedHockey1x2 || []).slice(0, limit).map((c) => ({
+      eventId: c.eventId,
+      outcomes: (c.pickCover?.length
+        ? [...c.pickCover]
+        : c.pick1x2
+          ? [c.pick1x2 as Outcome]
+          : (["1"] as Outcome[])) as Outcome[],
+    }));
+    if (saved && fromTip.length) {
+      return fromTip.map((s) => ({
+        eventId: s.eventId,
+        outcomes: saved[s.eventId]?.length ? [...saved[s.eventId]!] : s.outcomes,
+      }));
+    }
+    return fromTip;
+  };
+
+  const [slots, setSlots] = useState<Slot[]>(seedSlots);
+  const [showPool, setShowPool] = useState(false);
+
+  useEffect(() => {
+    setSlots(seedSlots());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when tip day changes
+  }, [playDate, tip.generatedAt]);
+
+  useEffect(() => {
+    const byEvent: Record<number, Outcome[]> = {};
+    for (const s of slots) byEvent[s.eventId] = s.outcomes;
+    const drawKey = Number(String(playDate).replace(/\D/g, "") || 0);
+    saveMyRowOutcomes("hockey9", drawKey, byEvent);
+  }, [slots, playDate]);
+
+  const byId = useMemo(() => {
+    const m = new Map<number, OddsetCandidate>();
+    for (const c of pool) m.set(c.eventId, c);
+    return m;
+  }, [pool]);
+
+  const payout = useMemo(() => {
+    const legs = slots.map((s) => {
+      const c = byId.get(s.eventId);
+      return {
+        outcomes: s.outcomes,
+        oddsByOutcome: c ? hockeyCandidateOdds(c) : {},
+      };
+    });
+    return estimateHockey9PayoutRange({ legs, unitStakeKr: 100 });
+  }, [slots, byId]);
+
+  const toggle = (eventId: number, outcome: Outcome) => {
+    setSlots((prev) =>
+      prev.map((s) => {
+        if (s.eventId !== eventId) return s;
+        const has = s.outcomes.includes(outcome);
+        let next: Outcome[];
+        if (has) {
+          next = s.outcomes.filter((o) => o !== outcome);
+          if (!next.length) next = [outcome];
+        } else {
+          next = (["1", "X", "2"] as Outcome[]).filter(
+            (o) => o === outcome || s.outcomes.includes(o)
+          );
+        }
+        return { ...s, outcomes: next };
+      })
+    );
+  };
+
+  const removeSlot = (eventId: number) => {
+    setSlots((prev) => prev.filter((s) => s.eventId !== eventId));
+  };
+
+  const addFromPool = (c: OddsetCandidate) => {
+    setSlots((prev) => {
+      if (prev.some((s) => s.eventId === c.eventId)) return prev;
+      if (prev.length >= limit) return prev;
+      const outcomes = (c.pickCover?.length
+        ? [...c.pickCover]
+        : c.pick1x2
+          ? [c.pick1x2 as Outcome]
+          : (["1"] as Outcome[])) as Outcome[];
+      return [...prev, { eventId: c.eventId, outcomes }];
+    });
+  };
+
+  const resetToTips = () => {
+    setSlots(
+      (tip.selectedHockey1x2 || []).slice(0, limit).map((c) => ({
+        eventId: c.eventId,
+        outcomes: (c.pickCover?.length
+          ? [...c.pickCover]
+          : c.pick1x2
+            ? [c.pick1x2 as Outcome]
+            : (["1"] as Outcome[])) as Outcome[],
+      }))
+    );
+  };
+
+  const usedIds = new Set(slots.map((s) => s.eventId));
+  const available = pool.filter((c) => !usedIds.has(c.eventId));
+
+  return (
+    <div className="coupon rise my-coupon">
+      <div className="coupon-head">
+        <div>
+          <h3>Min rad · Hockey 9</h3>
+          <div style={{ color: "rgba(223,247,234,0.75)", fontSize: "0.85rem" }}>
+            Tryck 1/X/2 för att tippa och gardera. Spannet är lägsta–högsta
+            utdelning vid 9 rätt (100 kr × oddsprodukt per kombination).
+          </div>
+        </div>
+        <div className="coupon-cost">
+          {payout.costKr.toLocaleString("sv-SE")} kr
+          <div
+            className="coupon-hit"
+            style={{
+              color: payout.meetsMin
+                ? "rgba(120, 220, 160, 0.95)"
+                : "rgba(240, 180, 100, 0.95)",
+            }}
+            title={payout.note}
+          >
+            spann ~{payout.lowKr.toLocaleString("sv-SE")}–
+            {payout.highKr.toLocaleString("sv-SE")} kr
+          </div>
+          <div className="coupon-hit" style={{ opacity: 0.75 }}>
+            golv {payout.minKr.toLocaleString("sv-SE")} kr · {slots.length}/
+            {limit}
+          </div>
+        </div>
+      </div>
+
+      <div className="my-coupon-actions">
+        <button type="button" className="system-btn" onClick={resetToTips}>
+          Utgå från tips
+        </button>
+        <button
+          type="button"
+          className="system-btn"
+          onClick={() => setShowPool((v) => !v)}
+        >
+          {showPool ? "Dölj matcher" : "Lägg till match"}
+        </button>
+      </div>
+
+      {slots.length === 0 ? (
+        <p className="panel-lead">Välj upp till {limit} matcher från poolen.</p>
+      ) : (
+        slots.map((s, i) => {
+          const c = byId.get(s.eventId);
+          const cover = coverFromOutcomes(s.outcomes);
+          const oddsMap = c ? hockeyCandidateOdds(c) : {};
+          return (
+            <div className="coupon-row" key={s.eventId}>
+              <strong>{i + 1}</strong>
+              <div>
+                <div>
+                  {c ? `${c.home}–${c.away}` : `Match ${s.eventId}`}
+                  <button
+                    type="button"
+                    className="my-row-remove"
+                    onClick={() => removeSlot(s.eventId)}
+                    aria-label="Ta bort match"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>
+                  {cover === "hel"
+                    ? "Helgardering"
+                    : cover === "halv"
+                      ? `Halv ${s.outcomes.join("")}`
+                      : `Enkel ${s.outcomes[0]}`}
+                  {c
+                    ? ` · odds ${(["1", "X", "2"] as Outcome[])
+                        .map((o) => {
+                          const od = oddsMap[o];
+                          return od != null
+                            ? `${o} ${String(od).replace(".", ",")}`
+                            : null;
+                        })
+                        .filter(Boolean)
+                        .join(" · ")}`
+                    : ""}
+                </div>
+              </div>
+              <div className="coupon-marks">
+                {(["1", "X", "2"] as Outcome[]).map((o) => (
+                  <button
+                    key={o}
+                    type="button"
+                    className={`mark mark-btn ${s.outcomes.includes(o) ? "filled" : ""}`}
+                    aria-pressed={s.outcomes.includes(o)}
+                    onClick={() => toggle(s.eventId, o)}
+                  >
+                    {o}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })
+      )}
+
+      {showPool && available.length > 0 && (
+        <div className="my-hockey-pool">
+          <p className="panel-lead" style={{ marginBottom: "0.5rem" }}>
+            Godkända matcher ({available.length}) – klicka för att lägga till
+            {slots.length >= limit ? " (rad full)" : ""}.
+          </p>
+          <div className="my-coupon-actions">
+            {available.slice(0, 24).map((c) => (
+              <button
+                key={c.eventId}
+                type="button"
+                className="system-btn"
+                disabled={slots.length >= limit}
+                onClick={() => addFromPool(c)}
+              >
+                {c.home}–{c.away}
+                {c.pick1x2 ? ` · ${c.pick1x2}` : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: "0.85rem",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          fontSize: "0.85rem",
+          color: "rgba(223,247,234,0.8)",
+        }}
+      >
+        <span>
+          {payout.rows} komb. × 100 kr
+          {" · "}
+          {slots.filter((s) => s.outcomes.length >= 3).length} hel ·{" "}
+          {slots.filter((s) => s.outcomes.length === 2).length} halv ·{" "}
+          {slots.filter((s) => s.outcomes.length === 1).length} enkel
+        </span>
+        <span>
+          Lägsta ~{payout.lowKr.toLocaleString("sv-SE")} kr · högsta ~
+          {payout.highKr.toLocaleString("sv-SE")} kr
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function MyCouponView({
   draw,
   product,
@@ -3900,6 +4200,7 @@ function HistoryView({
 function Hockey9View({ tip }: { tip: OddsetDayTip }) {
   const picksHockey1x2 = tip.selectedHockey1x2 || [];
   const picksHockey = tip.picksHockey1x2 ?? 9;
+  const [hockeyTab, setHockeyTab] = useState<"my" | "tips">("my");
   const tracked = (tip.tracked || []).filter(
     (t) => t.sport === "hockey" || (t.market === "1x2" && /hockey/i.test(t.league || ""))
   );
@@ -3936,10 +4237,10 @@ function Hockey9View({ tip }: { tip: OddsetDayTip }) {
             Oddset Ö1,5/fotboll).
           </li>
           <li>
-            {tip.hockey9PayoutNote ||
-              "Utdelning (100 kr-rad × oddsprodukt): golv 3 000 kr + beräknad högsta."}
+            Välj <strong>Min rad</strong> för att tippa/gardera själv och se
+            spannet lägsta–högsta utdelning (100 kr × oddsprodukt).
             {tip.hockey9EstimatedPayoutKr != null
-              ? ` Högsta ~${Math.round(tip.hockey9EstimatedPayoutKr).toLocaleString("sv-SE")} kr${
+              ? ` Analysradens högsta ~${Math.round(tip.hockey9EstimatedPayoutKr).toLocaleString("sv-SE")} kr${
                   tip.hockey9PayoutMeetsMin ? " ✓" : ""
                 }.`
               : ""}
@@ -3953,12 +4254,36 @@ function Hockey9View({ tip }: { tip: OddsetDayTip }) {
 
       <section className="panel panel-systems">
         <h2>
-          Spela dessa · Hockey 9 ({picksHockey1x2.length}/{picksHockey})
+          {hockeyTab === "my"
+            ? "Min rad · gardera"
+            : `Spela dessa · Hockey 9 (${picksHockey1x2.length}/${picksHockey})`}
         </h2>
         <p className="panel-lead">
-          Tipprad med samma kort som Powerplay (målblock, oddsryck,
-          tabell/vila).
+          {hockeyTab === "my"
+            ? "Bygg din egen niorad: tryck 1/X/2, lägg till matcher och se spannet live."
+            : "Tipprad med samma kort som Powerplay (målblock, oddsryck, tabell/vila)."}
         </p>
+        <div className="system-switch">
+          <button
+            type="button"
+            className={`system-btn ${hockeyTab === "my" ? "active" : ""}`}
+            onClick={() => setHockeyTab("my")}
+          >
+            Min rad · gardera
+          </button>
+          <button
+            type="button"
+            className={`system-btn ${hockeyTab === "tips" ? "active" : ""}`}
+            onClick={() => setHockeyTab("tips")}
+          >
+            Analysrad ({picksHockey1x2.length})
+          </button>
+        </div>
+
+        {hockeyTab === "my" ? (
+          <Hockey9MyCouponView tip={tip} />
+        ) : (
+          <>
         {picksHockey1x2.length > 0 && (
           <div className="tip-strip" aria-label="Hockey 9 tipprad">
             <strong>Tipprad · Hockey 9</strong>
@@ -4051,6 +4376,8 @@ function Hockey9View({ tip }: { tip: OddsetDayTip }) {
               />
             ))}
           </div>
+        )}
+          </>
         )}
       </section>
 
@@ -4763,7 +5090,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDraw, setSelectedDraw] = useState<number | null>(null);
-  const [selectedSystem, setSelectedSystem] = useState(0);
+  const [selectedSystem, setSelectedSystem] = useState(() =>
+    defaultSystemIndex("topptipset")
+  );
   const [preCloseNote, setPreCloseNote] = useState<string | null>(null);
   const [lastFreshAt, setLastFreshAt] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -4808,7 +5137,7 @@ export default function App() {
       setTvilling(null);
     }
     setSelectedDraw(null);
-    setSelectedSystem(0);
+    setSelectedSystem(defaultSystemIndex(next));
   }, [product]);
 
   useEffect(() => {
@@ -5003,7 +5332,7 @@ export default function App() {
             setSelectedDraw(still);
           } else {
             setSelectedDraw(json.draws[0]?.drawNumber ?? null);
-            setSelectedSystem(0);
+            setSelectedSystem(defaultSystemIndex(forProduct));
           }
           const tippedAt = json.generatedAt || new Date().toISOString();
           const drawPicks = (json.draws || []).flatMap((d) =>
@@ -5398,13 +5727,13 @@ export default function App() {
     updateNote();
     noteTimer = setInterval(updateNote, 30_000);
 
-    /** Färsk analys + tips omställda efter odds/omsättning (golv 3 000 kr). */
+    /** Färsk analys + tips omställda efter odds/omsättning. */
     const runFinalCheck = () =>
       loadProduct({ fresh: true, silent: true, resetSelection: false }).then(
         () => {
           if (cancelled) return;
-          // Visa bästa omställda systemet (högst utdelning över golvet först)
-          setSelectedSystem(0);
+          // Behåll Min rad om användaren är där; annars bästa analyssystem
+          setSelectedSystem((cur) => (cur === -1 ? -1 : 0));
         }
       );
 
@@ -5455,8 +5784,8 @@ export default function App() {
   }, [product, closeTimes, draw?.closeTime, loadProduct]);
 
   useEffect(() => {
-    setSelectedSystem(0);
-  }, [selectedDraw]);
+    setSelectedSystem(defaultSystemIndex(product));
+  }, [selectedDraw, product]);
 
   const scrollToAnalysisTips = () => {
     const el = document.getElementById("analysis-tips");
@@ -5951,7 +6280,7 @@ export default function App() {
                     {product === "maltipset" ? " (M8–M12)" : ""}.
                   </p>
                   <div className="system-switch">
-                    {product !== "maltipset" && (
+                    {supportsMyRow(product) && (
                       <button
                         type="button"
                         className={`system-btn ${selectedSystem === -1 ? "active" : ""}`}
@@ -5986,7 +6315,7 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                  {selectedSystem === -1 && product !== "maltipset" ? (
+                  {selectedSystem === -1 && supportsMyRow(product) ? (
                     <MyCouponView
                       draw={draw}
                       product={product}

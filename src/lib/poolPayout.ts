@@ -295,6 +295,85 @@ export function estimateHockey9Payout(args: {
   };
 }
 
+function hockeyOutcomeOdds(
+  oddsByOutcome: Partial<Record<Outcome, number | null | undefined>>,
+  o: Outcome
+): number | null {
+  const v = oddsByOutcome[o];
+  return v != null && v > 1 && v < 80 ? v : null;
+}
+
+/**
+ * Hockey 9 egen rad: spann lägsta–högsta vid gardering (100 kr × oddsprodukt).
+ * En kombination = en niofalt; kostnad = antal kombinationer × 100 kr.
+ */
+export function estimateHockey9PayoutRange(args: {
+  /** Per match: valda tecken + odds 1/X/2. */
+  legs: Array<{
+    outcomes: Outcome[];
+    oddsByOutcome: Partial<Record<Outcome, number | null | undefined>>;
+  }>;
+  unitStakeKr?: number;
+}): MaxPayoutEstimate & { rows: number; costKr: number } {
+  const stake = args.unitStakeKr ?? 100;
+  const minKr = MIN_PAYOUT_KR;
+  const legs = args.legs.filter((l) => l.outcomes.length > 0);
+  let lowProduct = 1;
+  let highProduct = 1;
+  let rows = 1;
+  let used = 0;
+
+  for (const leg of legs) {
+    const oddsList = leg.outcomes
+      .map((o) => hockeyOutcomeOdds(leg.oddsByOutcome, o))
+      .filter((v): v is number => v != null);
+    if (!oddsList.length) continue;
+    used++;
+    rows *= leg.outcomes.length;
+    lowProduct *= Math.min(...oddsList);
+    highProduct *= Math.max(...oddsList);
+  }
+
+  if (used === 0) {
+    return {
+      estimatedKr: 0,
+      lowKr: 0,
+      highKr: 0,
+      oddsProduct: 1,
+      folkShare: 0,
+      oddsBasedKr: 0,
+      folkBasedKr: 0,
+      meetsMin: false,
+      minKr,
+      note: "Välj nio matcher och tecken för utdelningsspann.",
+      rows: 0,
+      costKr: 0,
+    };
+  }
+
+  const lowKr = Math.round(stake * lowProduct);
+  const highKr = Math.round(stake * highProduct);
+  const estimatedKr = blendPayoutKr(lowKr, highKr);
+  const meetsMin = highKr >= minKr && used >= 9;
+  const costKr = Math.round(rows * stake);
+  return {
+    estimatedKr,
+    lowKr: Math.min(lowKr, highKr),
+    highKr: Math.max(lowKr, highKr),
+    oddsProduct: Math.round(highProduct * 100) / 100,
+    folkShare: 0,
+    oddsBasedKr: highKr,
+    folkBasedKr: highKr,
+    meetsMin,
+    minKr,
+    note: meetsMin
+      ? `Hockey 9 · golv ${minKr.toLocaleString("sv-SE")} kr · spann ~${Math.min(lowKr, highKr).toLocaleString("sv-SE")}–${Math.max(lowKr, highKr).toLocaleString("sv-SE")} kr (${rows} komb. × ${stake} kr).`
+      : `Hockey 9 · spann ~${Math.min(lowKr, highKr).toLocaleString("sv-SE")}–${Math.max(lowKr, highKr).toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`,
+    rows,
+    costKr,
+  };
+}
+
 /**
  * På enkelmatcher: byt till näst bästa utgång om det lyfter
  * beräknad utdelning mot produktens golv (ingen tak).
