@@ -285,9 +285,9 @@ export type GeneratedSystem = {
   rSystem?: string | null;
   /** Garanti antal rätt om alla tecken i ramen sitter (R-system). */
   guaranteeRights?: number | null;
-  /** Beräknad utdelning vid max rätt (odds×omsättning), kr. */
+  /** Beräknad utdelning vid fullträff (odds×omsättning), kr – ingen övre gräns. */
   estimatedMaxPayoutKr?: number | null;
-  /** true om beräknad max-rätt ≥ 3000 kr. */
+  /** true om beräknad utdelning ≥ 3000 kr (golv). */
   payoutMeetsMin?: boolean;
   /** Kort notis om utdelningsestimatet. */
   payoutNote?: string | null;

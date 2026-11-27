@@ -6,8 +6,8 @@ import type {
   SystemPick,
 } from "./types";
 
-/** Minsta beräknade utdelning vid max rätt (kr). */
-export const MIN_MAX_PAYOUT_KR = 3000;
+/** Minsta beräknade utdelning vid fullträff (kr). Ingen övre gräns. */
+export const MIN_PAYOUT_KR = 3000;
 
 /** Andel av omsättningen som går till max-rätt-potten (schablon). */
 const TIER_SHARE: Record<string, number> = {
@@ -75,7 +75,7 @@ export type MaxPayoutEstimate = {
   oddsBasedKr: number;
   /** Utdelning via folk×omsättning. */
   folkBasedKr: number;
-  /** true om estimatet ≥ MIN_MAX_PAYOUT_KR. */
+  /** true om estimatet ≥ MIN_PAYOUT_KR (golv, ingen tak). */
   meetsMin: boolean;
   note: string;
 };
@@ -143,10 +143,10 @@ export function estimateMaxPayout(args: {
   const estimatedKr = Math.round(
     Math.sqrt(Math.max(1, oddsBasedKr) * Math.max(1, folkBasedKr))
   );
-  const meetsMin = estimatedKr >= MIN_MAX_PAYOUT_KR;
+  const meetsMin = estimatedKr >= MIN_PAYOUT_KR;
   const note = meetsMin
-    ? `Beräknad max-rätt ~${estimatedKr.toLocaleString("sv-SE")} kr (odds×omsättning, potshare ${Math.round(share * 100)}%).`
-    : `Beräknad max-rätt ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${MIN_MAX_PAYOUT_KR.toLocaleString("sv-SE")} kr.`;
+    ? `Beräknad utdelning vid fullträff ~${estimatedKr.toLocaleString("sv-SE")} kr (odds×omsättning, potshare ${Math.round(share * 100)}% – ingen övre gräns).`
+    : `Beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr.`;
 
   return {
     estimatedKr,
@@ -172,7 +172,7 @@ export function estimateHockey9Payout(args: {
   let product = 1;
   for (const o of odds) product *= o;
   const estimatedKr = Math.round(stake * product);
-  const meetsMin = estimatedKr >= MIN_MAX_PAYOUT_KR && odds.length >= 9;
+  const meetsMin = estimatedKr >= MIN_PAYOUT_KR && odds.length >= 9;
   return {
     estimatedKr,
     oddsProduct: Math.round(product * 100) / 100,
@@ -181,14 +181,14 @@ export function estimateHockey9Payout(args: {
     folkBasedKr: estimatedKr,
     meetsMin,
     note: meetsMin
-      ? `Hockey 9 · ${stake} kr-rad → ~${estimatedKr.toLocaleString("sv-SE")} kr vid 9 rätt (oddsprodukt ${String(Math.round(product * 10) / 10).replace(".", ",")}).`
-      : `Hockey 9 · beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under ${MIN_MAX_PAYOUT_KR.toLocaleString("sv-SE")} kr.`,
+      ? `Hockey 9 · ${stake} kr-rad → ~${estimatedKr.toLocaleString("sv-SE")} kr vid 9 rätt (oddsprodukt ${String(Math.round(product * 10) / 10).replace(".", ",")} – ingen övre gräns).`
+      : `Hockey 9 · beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr.`,
   };
 }
 
 /**
  * På enkelmatcher: byt till näst bästa utgång om det lyfter
- * beräknad max-rätt mot ≥ 3000 utan att krossa hit-sannolikhet.
+ * beräknad utdelning mot golvet ≥ MIN_PAYOUT_KR (ingen tak).
  */
 export function liftPicksTowardMinPayout(args: {
   product: string;

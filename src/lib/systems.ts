@@ -1,6 +1,6 @@
 import {
   liftPicksTowardMinPayout,
-  MIN_MAX_PAYOUT_KR,
+  MIN_PAYOUT_KR,
 } from "./poolPayout";
 import type {
   GeneratedSystem,
@@ -686,8 +686,8 @@ function buildSystemForCost(
       : `Uppskattad täckning ~${String(hitPct).replace(".", ",")}%`;
 
   const payoutLabel = payout.meetsMin
-    ? `Max-rätt ~${payout.estimatedKr.toLocaleString("sv-SE")} kr`
-    : `Max-rätt ~${payout.estimatedKr.toLocaleString("sv-SE")} kr (under ${MIN_MAX_PAYOUT_KR.toLocaleString("sv-SE")})`;
+    ? `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr`
+    : `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr (under golvet ${MIN_PAYOUT_KR.toLocaleString("sv-SE")})`;
 
   return {
     name: systemName(cost, winPct, index),
@@ -815,10 +815,13 @@ export function generateSystems(
   }
 
   return systems.sort((a, b) => {
-    // Utdelning ≥ 3000 först, sedan 48, 192, R 4-4, kostnad
+    // Golv ≥ 3000 först (ingen tak), sedan högre utdelning, 48, 192, R 4-4, kostnad
     const aPay = a.payoutMeetsMin ? 1 : 0;
     const bPay = b.payoutMeetsMin ? 1 : 0;
     if (aPay !== bPay) return bPay - aPay;
+    const ap = a.estimatedMaxPayoutKr ?? 0;
+    const bp = b.estimatedMaxPayoutKr ?? 0;
+    if (ap !== bp) return bp - ap;
     if (a.costKr === 48 && b.costKr !== 48) return -1;
     if (b.costKr === 48 && a.costKr !== 48) return 1;
     if (a.costKr === DAILY_SYSTEM_COST_KR && b.costKr !== DAILY_SYSTEM_COST_KR)
@@ -827,9 +830,6 @@ export function generateSystems(
       return 1;
     if (a.kind === "r" && b.kind !== "r") return -1;
     if (b.kind === "r" && a.kind !== "r") return 1;
-    const ap = a.estimatedMaxPayoutKr ?? 0;
-    const bp = b.estimatedMaxPayoutKr ?? 0;
-    if (ap !== bp) return bp - ap;
     return a.costKr - b.costKr;
   });
 }

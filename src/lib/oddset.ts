@@ -40,7 +40,7 @@ import {
 } from "./oddsetHockey";
 import {
   estimateHockey9Payout,
-  MIN_MAX_PAYOUT_KR,
+  MIN_PAYOUT_KR,
 } from "./poolPayout";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
@@ -1548,7 +1548,7 @@ function selectUniquePicks(
 }
 
 /**
- * Hockey 9: välj 9 tips så oddsprodukt × 100 kr ≥ 3000 (max rätt).
+ * Hockey 9: välj 9 tips så oddsprodukt × 100 kr ≥ MIN_PAYOUT_KR (golv, ingen tak).
  * Prefererar högst score bland kombos som klarar golvet.
  */
 function selectHockey9ForMinPayout(
@@ -1892,7 +1892,7 @@ export async function buildOddsetDayTip(opts?: {
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: Över 1,5 = ≥2 mål; 1X2 = tippad utgång rätt.",
       "Fotboll-1X2: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
-      `Hockey 9: samma analyslager som Powerplay; tippraden siktar på max-rätt ≥ ${MIN_MAX_PAYOUT_KR.toLocaleString("sv-SE")} kr (100 kr-rad × oddsprodukt).`,
+      `Hockey 9: samma analyslager som Powerplay; tippraden har golv ≥ ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr vid 9 rätt (100 kr-rad × oddsprodukt, ingen övre gräns).`,
       "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel.",
       "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",
