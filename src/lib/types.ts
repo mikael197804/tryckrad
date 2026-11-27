@@ -287,6 +287,8 @@ export type GeneratedSystem = {
   guaranteeRights?: number | null;
   /** Högsta beräknade utdelning vid fullträff (odds×omsättning), kr. */
   estimatedMaxPayoutKr?: number | null;
+  /** Lägsta beräknade utdelning vid fullträff (favoriter i gardering), kr. */
+  estimatedLowPayoutKr?: number | null;
   /** Produktgolv (PP/Topp 2000, övriga 3000). */
   payoutMinKr?: number | null;
   /** true om högsta utdelning ≥ produktgolv. */

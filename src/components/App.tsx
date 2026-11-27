@@ -33,7 +33,18 @@ import {
   TIP_HISTORY_RETENTION_HOURS,
   TIP_HISTORY_RETENTION_MS,
 } from "../lib/tipHistoryShared";
-import type { DrawBundle, GeneratedSystem, Outcome } from "../lib/types";
+import {
+  coverFromOutcomes,
+  estimatePayoutRange,
+  systemRowCount,
+} from "../lib/poolPayout";
+import type {
+  DrawBundle,
+  GeneratedSystem,
+  MatchAnalysis,
+  Outcome,
+  SystemPick,
+} from "../lib/types";
 import type {
   V75DayTip,
   V75HorseTip,
@@ -2160,6 +2171,307 @@ function AnalysisTipsCoupon({
   );
 }
 
+function payoutSpanLabel(system: {
+  estimatedLowPayoutKr?: number | null;
+  estimatedMaxPayoutKr?: number | null;
+  payoutMinKr?: number | null;
+}): string | null {
+  if (system.estimatedMaxPayoutKr == null) return null;
+  const high = Math.round(system.estimatedMaxPayoutKr).toLocaleString("sv-SE");
+  const low =
+    system.estimatedLowPayoutKr != null
+      ? Math.round(system.estimatedLowPayoutKr).toLocaleString("sv-SE")
+      : null;
+  const floor =
+    system.payoutMinKr != null
+      ? `golv ${Math.round(system.payoutMinKr).toLocaleString("sv-SE")} · `
+      : "";
+  if (low && low !== high) return `${floor}spann ~${low}–${high} kr`;
+  return `${floor}högsta ~${high} kr`;
+}
+
+const MY_ROW_STORAGE_PREFIX = "mikaels-my-row-v1:";
+
+function myRowStorageKey(product: string, drawNumber: number): string {
+  return `${MY_ROW_STORAGE_PREFIX}${product}:${drawNumber}`;
+}
+
+function loadMyRowOutcomes(
+  product: string,
+  drawNumber: number
+): Record<number, Outcome[]> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(myRowStorageKey(product, drawNumber));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, Outcome[]>;
+    if (!parsed || typeof parsed !== "object") return null;
+    const out: Record<number, Outcome[]> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const n = Number(k);
+      if (!Number.isFinite(n) || !Array.isArray(v)) continue;
+      const outs = v.filter((o): o is Outcome => o === "1" || o === "X" || o === "2");
+      if (outs.length) out[n] = outs;
+    }
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveMyRowOutcomes(
+  product: string,
+  drawNumber: number,
+  byEvent: Record<number, Outcome[]>
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      myRowStorageKey(product, drawNumber),
+      JSON.stringify(byEvent)
+    );
+  } catch {
+    // private mode / quota
+  }
+}
+
+function seedMyRowFromMatches(
+  matches: MatchAnalysis[],
+  seed?: GeneratedSystem | null
+): Record<number, Outcome[]> {
+  const out: Record<number, Outcome[]> = {};
+  if (seed?.picks?.length) {
+    for (const p of seed.picks) {
+      if (p.outcomes?.length) out[p.eventNumber] = [...p.outcomes];
+    }
+    if (Object.keys(out).length) return out;
+  }
+  for (const m of matches) {
+    const pick = (m.pick?.length ? m.pick : ["1"]) as Outcome[];
+    out[m.eventNumber] = [...pick];
+  }
+  return out;
+}
+
+function MyCouponView({
+  draw,
+  product,
+  seedSystem,
+}: {
+  draw: DrawBundle;
+  product: Exclude<ProductKind, "oddset" | "hockey9">;
+  seedSystem?: GeneratedSystem | null;
+}) {
+  const [byEvent, setByEvent] = useState<Record<number, Outcome[]>>(() => {
+    const saved = loadMyRowOutcomes(product, draw.drawNumber);
+    if (saved) {
+      const next: Record<number, Outcome[]> = {};
+      for (const m of draw.matches) {
+        next[m.eventNumber] = saved[m.eventNumber]?.length
+          ? [...saved[m.eventNumber]!]
+          : ((m.pick?.length ? m.pick : ["1"]) as Outcome[]);
+      }
+      return next;
+    }
+    return seedMyRowFromMatches(draw.matches, seedSystem);
+  });
+
+  useEffect(() => {
+    const saved = loadMyRowOutcomes(product, draw.drawNumber);
+    setByEvent(
+      saved
+        ? (() => {
+            const next: Record<number, Outcome[]> = {};
+            for (const m of draw.matches) {
+              next[m.eventNumber] = saved[m.eventNumber]?.length
+                ? [...saved[m.eventNumber]!]
+                : ((m.pick?.length ? m.pick : ["1"]) as Outcome[]);
+            }
+            return next;
+          })()
+        : seedMyRowFromMatches(draw.matches, seedSystem)
+    );
+  }, [product, draw.drawNumber]); // eslint-disable-line react-hooks/exhaustive-deps -- seed only on draw change
+
+  useEffect(() => {
+    saveMyRowOutcomes(product, draw.drawNumber, byEvent);
+  }, [product, draw.drawNumber, byEvent]);
+
+  const picks: SystemPick[] = useMemo(
+    () =>
+      draw.matches.map((m) => {
+        const outcomes = byEvent[m.eventNumber]?.length
+          ? byEvent[m.eventNumber]!
+          : (["1"] as Outcome[]);
+        const cover = coverFromOutcomes(outcomes);
+        return {
+          eventNumber: m.eventNumber,
+          description: m.description,
+          outcomes,
+          cover,
+          reason:
+            cover === "hel"
+              ? "helgardering (din rad)"
+              : cover === "halv"
+                ? `halv ${outcomes.join("")} (din rad)`
+                : `enkel ${outcomes[0]} (din rad)`,
+        };
+      }),
+    [draw.matches, byEvent]
+  );
+
+  const rows = systemRowCount(picks);
+  const costKr = Math.round(rows * draw.rowPrice * 100) / 100;
+  const payout = useMemo(
+    () =>
+      estimatePayoutRange({
+        product,
+        matches: draw.matches,
+        picks,
+        netSale: draw.netSale,
+        rowPrice: draw.rowPrice,
+      }),
+    [product, draw.matches, draw.netSale, draw.rowPrice, picks]
+  );
+
+  const toggle = (eventNumber: number, outcome: Outcome) => {
+    setByEvent((prev) => {
+      const cur = prev[eventNumber] || [];
+      const has = cur.includes(outcome);
+      let next: Outcome[];
+      if (has) {
+        next = cur.filter((o) => o !== outcome);
+        if (!next.length) next = [outcome]; // minst ett tecken
+      } else {
+        next = (["1", "X", "2"] as Outcome[]).filter(
+          (o) => o === outcome || cur.includes(o)
+        );
+      }
+      return { ...prev, [eventNumber]: next };
+    });
+  };
+
+  const resetToSeed = () => {
+    setByEvent(seedMyRowFromMatches(draw.matches, seedSystem));
+  };
+
+  const clearToSingles = () => {
+    const next: Record<number, Outcome[]> = {};
+    for (const m of draw.matches) {
+      const pick = (m.pick?.length ? m.pick[0] : "1") as Outcome;
+      next[m.eventNumber] = [pick];
+    }
+    setByEvent(next);
+  };
+
+  return (
+    <div className="coupon rise my-coupon">
+      <div className="coupon-head">
+        <div>
+          <h3>Min rad</h3>
+          <div style={{ color: "rgba(223,247,234,0.75)", fontSize: "0.85rem" }}>
+            Tryck 1/X/2 för att tippa och gardera. Spannet visar lägsta–högsta
+            beräknad utdelning vid fullträff (odds × omsättning).
+          </div>
+        </div>
+        <div className="coupon-cost">
+          {String(costKr).replace(".", ",")} kr
+          <div
+            className="coupon-hit"
+            style={{
+              color: payout.meetsMin
+                ? "rgba(120, 220, 160, 0.95)"
+                : "rgba(240, 180, 100, 0.95)",
+            }}
+            title={payout.note}
+          >
+            spann ~{payout.lowKr.toLocaleString("sv-SE")}–
+            {payout.highKr.toLocaleString("sv-SE")} kr
+          </div>
+          <div className="coupon-hit" style={{ opacity: 0.75 }}>
+            golv {payout.minKr.toLocaleString("sv-SE")} kr
+          </div>
+        </div>
+      </div>
+
+      <div className="my-coupon-actions">
+        <button type="button" className="system-btn" onClick={resetToSeed}>
+          Utgå från tips
+        </button>
+        <button type="button" className="system-btn" onClick={clearToSingles}>
+          Bara enklar
+        </button>
+      </div>
+
+      {picks.map((p) => {
+        const m = draw.matches.find((x) => x.eventNumber === p.eventNumber);
+        return (
+          <div className="coupon-row" key={p.eventNumber}>
+            <strong>{p.eventNumber}</strong>
+            <div>
+              <div>{p.description}</div>
+              <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>
+                {p.cover === "hel"
+                  ? "Helgardering"
+                  : p.cover === "halv"
+                    ? `Halv ${p.outcomes.join("")}`
+                    : `Enkel ${p.outcomes[0]}`}
+                {m?.odds
+                  ? ` · odds ${[
+                      m.odds.one != null ? `1 ${String(m.odds.one).replace(".", ",")}` : null,
+                      m.odds.x != null ? `X ${String(m.odds.x).replace(".", ",")}` : null,
+                      m.odds.two != null ? `2 ${String(m.odds.two).replace(".", ",")}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}`
+                  : ""}
+              </div>
+            </div>
+            <div className="coupon-marks">
+              {(["1", "X", "2"] as Outcome[]).map((o) => (
+                <button
+                  key={o}
+                  type="button"
+                  className={`mark mark-btn ${p.outcomes.includes(o) ? "filled" : ""}`}
+                  aria-pressed={p.outcomes.includes(o)}
+                  aria-label={`Match ${p.eventNumber} tecken ${o}`}
+                  onClick={() => toggle(p.eventNumber, o)}
+                >
+                  {o}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      <div
+        style={{
+          marginTop: "0.85rem",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+          fontSize: "0.85rem",
+          color: "rgba(223,247,234,0.8)",
+        }}
+      >
+        <span>
+          {rows} rader × {String(draw.rowPrice).replace(".", ",")} kr
+          {" · "}
+          {picks.filter((p) => p.cover === "hel").length} hel ·{" "}
+          {picks.filter((p) => p.cover === "halv").length} halv ·{" "}
+          {picks.filter((p) => p.cover === "enkel").length} enkel
+        </span>
+        <span>
+          Lägsta ~{payout.lowKr.toLocaleString("sv-SE")} kr · högsta ~
+          {payout.highKr.toLocaleString("sv-SE")} kr
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function CouponView({
   system,
   product,
@@ -2170,6 +2482,7 @@ function CouponView({
   rowPrice?: number;
 }) {
   const isMal = system.kind === "mal" || product === "maltipset";
+  const span = payoutSpanLabel(system);
   return (
     <div className="coupon rise">
       <div className="coupon-head">
@@ -2191,7 +2504,7 @@ function CouponView({
               ~{String(system.estimatedWinPct ?? system.estimatedHitPct).replace(".", ",")}%
             </div>
           )}
-          {system.estimatedMaxPayoutKr != null && (
+          {span && (
             <div
               className="coupon-hit"
               style={{
@@ -2201,10 +2514,7 @@ function CouponView({
               }}
               title={system.payoutNote || undefined}
             >
-              {system.payoutMinKr != null
-                ? `golv ${Math.round(system.payoutMinKr).toLocaleString("sv-SE")} · `
-                : ""}
-              högsta ~{Math.round(system.estimatedMaxPayoutKr).toLocaleString("sv-SE")} kr
+              {span}
             </div>
           )}
         </div>
@@ -5635,13 +5945,21 @@ export default function App() {
                     {product === "powerplay" || product === "topptipset"
                       ? "2 000"
                       : "3 000"}{" "}
-                    kr på alla system, plus beräknad högsta utdelning per
-                    kupong. Kupongen speglar {productLabel(product)}-raden på
-                    Svenska Spel. Kostnad = antal kombinationer ×{" "}
-                    {String(draw.rowPrice).replace(".", ",")} kr
+                    kr. Välj <strong>Min rad</strong> för att tippa/gardera själv
+                    och se spannet lägsta–högsta utdelning. Kostnad = antal
+                    kombinationer × {String(draw.rowPrice).replace(".", ",")} kr
                     {product === "maltipset" ? " (M8–M12)" : ""}.
                   </p>
                   <div className="system-switch">
+                    {product !== "maltipset" && (
+                      <button
+                        type="button"
+                        className={`system-btn ${selectedSystem === -1 ? "active" : ""}`}
+                        onClick={() => setSelectedSystem(-1)}
+                      >
+                        Min rad · gardera
+                      </button>
+                    )}
                     {draw.systems.map((s, i) => (
                       <button
                         key={s.name}
@@ -5660,18 +5978,27 @@ export default function App() {
                               ? ` · ~${Math.round(s.estimatedHitPct)}%`
                               : ` · ${s.risk}`}
                         {s.estimatedMaxPayoutKr != null
-                          ? ` · högsta ~${Math.round(s.estimatedMaxPayoutKr / 1000)}k`
+                          ? s.estimatedLowPayoutKr != null &&
+                            s.estimatedLowPayoutKr !== s.estimatedMaxPayoutKr
+                            ? ` · ~${Math.round(s.estimatedLowPayoutKr / 1000)}–${Math.round(s.estimatedMaxPayoutKr / 1000)}k`
+                            : ` · högsta ~${Math.round(s.estimatedMaxPayoutKr / 1000)}k`
                           : ""}
                       </button>
                     ))}
                   </div>
-                  {draw.systems[selectedSystem] && (
+                  {selectedSystem === -1 && product !== "maltipset" ? (
+                    <MyCouponView
+                      draw={draw}
+                      product={product}
+                      seedSystem={draw.systems[0] ?? null}
+                    />
+                  ) : draw.systems[selectedSystem] ? (
                     <CouponView
                       system={draw.systems[selectedSystem]}
                       product={product}
                       rowPrice={draw.rowPrice}
                     />
-                  )}
+                  ) : null}
                 </section>
 
                 <section className="panel">

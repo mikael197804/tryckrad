@@ -77,6 +77,8 @@ export function primaryOutcomeForPayout(
 export type MaxPayoutEstimate = {
   /** Typisk beräknad utdelning vid fullträff (kr). */
   estimatedKr: number;
+  /** Lägsta beräknade utdelning (favoriter i gardering). */
+  lowKr: number;
   /** Högsta beräknade utdelning för tipset (sällsynta utgångar i gardering). */
   highKr: number;
   /** Oddsprodukt för högsta-scenariot. */
@@ -191,6 +193,7 @@ export function estimateMaxPayout(args: {
   if (highPath.estimatedKr <= 0 && highPath.oddsBasedKr <= 0) {
     return {
       estimatedKr: 0,
+      lowKr: 0,
       highKr: 0,
       oddsProduct: 1,
       folkShare: 1,
@@ -202,7 +205,7 @@ export function estimateMaxPayout(args: {
     };
   }
 
-  // Typisk = geometriskt medel av hög/låg-scenarier; högsta = optimistic path
+  // Typisk = geometriskt medel av hög/låg-scenarier; spann = low–high
   const estimatedKr = blendPayoutKr(
     highPath.estimatedKr,
     Math.max(1, lowPath.estimatedKr)
@@ -212,13 +215,18 @@ export function estimateMaxPayout(args: {
     highPath.estimatedKr,
     estimatedKr
   );
+  const lowKr = Math.min(
+    Math.max(1, lowPath.estimatedKr),
+    highKr
+  );
   const meetsMin = highKr >= minKr;
   const note = meetsMin
-    ? `Golv ${minKr.toLocaleString("sv-SE")} kr · högsta ~${highKr.toLocaleString("sv-SE")} kr vid fullträff (odds×omsättning).`
-    : `Högsta ~${highKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`;
+    ? `Golv ${minKr.toLocaleString("sv-SE")} kr · spann ~${lowKr.toLocaleString("sv-SE")}–${highKr.toLocaleString("sv-SE")} kr vid fullträff (odds×omsättning).`
+    : `Spann ~${lowKr.toLocaleString("sv-SE")}–${highKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`;
 
   return {
     estimatedKr,
+    lowKr,
     highKr,
     oddsProduct: highPath.oddsProduct,
     folkShare: highPath.folkShare,
@@ -228,6 +236,30 @@ export function estimateMaxPayout(args: {
     minKr,
     note,
   };
+}
+
+/** Utdelningsspann för en egen tipprad (gardering → lägsta–högsta). */
+export function estimatePayoutRange(args: {
+  product: string;
+  matches: MatchAnalysis[];
+  picks: SystemPick[];
+  netSale: string | number | null | undefined;
+  rowPrice: number;
+}): MaxPayoutEstimate {
+  return estimateMaxPayout(args);
+}
+
+export function coverFromOutcomes(
+  outcomes: Outcome[]
+): "enkel" | "halv" | "hel" {
+  const n = outcomes.length;
+  if (n >= 3) return "hel";
+  if (n === 2) return "halv";
+  return "enkel";
+}
+
+export function systemRowCount(picks: SystemPick[]): number {
+  return picks.reduce((acc, p) => acc * Math.max(1, p.outcomes.length), 1);
 }
 
 /**
@@ -245,9 +277,11 @@ export function estimateHockey9Payout(args: {
   const minKr = MIN_PAYOUT_KR;
   const estimatedKr = Math.round(stake * product);
   const highKr = estimatedKr;
+  const lowKr = estimatedKr;
   const meetsMin = highKr >= minKr && odds.length >= 9;
   return {
     estimatedKr,
+    lowKr,
     highKr,
     oddsProduct: Math.round(product * 100) / 100,
     folkShare: 0,
