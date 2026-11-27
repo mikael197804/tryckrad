@@ -2199,7 +2199,12 @@ function CouponView({
                   ? "rgba(120, 220, 160, 0.95)"
                   : "rgba(240, 180, 100, 0.95)",
               }}
-              title={system.payoutNote || "Beräknad utdelning vid fullträff (golv 3 000 kr, ingen tak)"}
+              title={
+                system.payoutNote ||
+                (product === "powerplay" || product === "topptipset"
+                  ? "Beräknad utdelning vid fullträff (golv 2 000 kr, ingen tak)"
+                  : "Beräknad utdelning vid fullträff (golv 3 000 kr, ingen tak)")
+              }
             >
               utd. ~{Math.round(system.estimatedMaxPayoutKr).toLocaleString("sv-SE")} kr
             </div>
@@ -5285,10 +5290,10 @@ export default function App() {
           </h1>
           <p className="brand-tag">
             Sista kollen 10 min före spelstopp: tips ställs om efter färska
-            odds/omsättning (golv 3 000 kr). Tryck på Gamla resultat för
-            rätt/fel – syns 8 h efter start/klart (inga framtida matcher).
-            Powerplay/Topptipset lär av missar. Stryk/Mål: lagnyheter ca 15 min
-            före avspark.
+            odds/omsättning (PP/Topp golv 2 000 kr, övriga 3 000 kr). Tryck på
+            Gamla resultat för rätt/fel – syns 8 h efter start/klart (inga
+            framtida matcher). Powerplay/Topptipset lär av missar. Stryk/Mål:
+            lagnyheter ca 15 min före avspark.
           </p>
         </div>
         <div className="meta-chip">
@@ -5628,8 +5633,11 @@ export default function App() {
                       : isStrykFamily(product)
                         ? "Sex systemspel: matematiska kuponger plus reducerat R 4-4-144 (4 hel · 4 halv · 5 spik, garanti 12 rätt om tecknen sitter). "
                         : ""}
-                    Beräknad utdelning (odds × omsättning) har golv minst 3 000
-                    kr – ingen max-tak. Kupongen speglar{" "}
+                    Beräknad utdelning (odds × omsättning) har golv minst{" "}
+                    {product === "powerplay" || product === "topptipset"
+                      ? "2 000"
+                      : "3 000"}{" "}
+                    kr på alla system – ingen max-tak. Kupongen speglar{" "}
                     {productLabel(product)}-raden på Svenska Spel. Kostnad =
                     antal kombinationer ×{" "}
                     {String(draw.rowPrice).replace(".", ",")} kr

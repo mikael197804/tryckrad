@@ -6,8 +6,17 @@ import type {
   SystemPick,
 } from "./types";
 
-/** Minsta beräknade utdelning vid fullträff (kr). Ingen övre gräns. */
+/** Standardgolv (Stryk/Europa/Hockey 9 m.fl.). Ingen övre gräns. */
 export const MIN_PAYOUT_KR = 3000;
+/** Golv för Powerplay och Topptipset – gäller alla system. */
+export const MIN_PAYOUT_PP_TOPP_KR = 2000;
+
+/** Minsta utdelning per produkt (golv, ingen tak). */
+export function minPayoutForProduct(product: string | null | undefined): number {
+  const p = String(product || "").toLowerCase();
+  if (p === "powerplay" || p === "topptipset") return MIN_PAYOUT_PP_TOPP_KR;
+  return MIN_PAYOUT_KR;
+}
 
 /** Andel av omsättningen som går till max-rätt-potten (schablon). */
 const TIER_SHARE: Record<string, number> = {
@@ -75,8 +84,10 @@ export type MaxPayoutEstimate = {
   oddsBasedKr: number;
   /** Utdelning via folk×omsättning. */
   folkBasedKr: number;
-  /** true om estimatet ≥ MIN_PAYOUT_KR (golv, ingen tak). */
+  /** true om estimatet ≥ produktens golv (ingen tak). */
   meetsMin: boolean;
+  /** Golvet som användes (kr). */
+  minKr: number;
   note: string;
 };
 
@@ -95,6 +106,7 @@ export function estimateMaxPayout(args: {
   rowPrice: number;
 }): MaxPayoutEstimate {
   const product = String(args.product || "default").toLowerCase();
+  const minKr = minPayoutForProduct(product);
   const share = TIER_SHARE[product] ?? TIER_SHARE.default;
   const rowPrice =
     args.rowPrice > 0 && Number.isFinite(args.rowPrice) ? args.rowPrice : 1;
@@ -127,6 +139,7 @@ export function estimateMaxPayout(args: {
       oddsBasedKr: 0,
       folkBasedKr: 0,
       meetsMin: false,
+      minKr,
       note: "Saknar odds för utdelningsestimat.",
     };
   }
@@ -143,10 +156,10 @@ export function estimateMaxPayout(args: {
   const estimatedKr = Math.round(
     Math.sqrt(Math.max(1, oddsBasedKr) * Math.max(1, folkBasedKr))
   );
-  const meetsMin = estimatedKr >= MIN_PAYOUT_KR;
+  const meetsMin = estimatedKr >= minKr;
   const note = meetsMin
     ? `Beräknad utdelning vid fullträff ~${estimatedKr.toLocaleString("sv-SE")} kr (odds×omsättning, potshare ${Math.round(share * 100)}% – ingen övre gräns).`
-    : `Beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr.`;
+    : `Beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`;
 
   return {
     estimatedKr,
@@ -155,6 +168,7 @@ export function estimateMaxPayout(args: {
     oddsBasedKr: Math.round(oddsBasedKr),
     folkBasedKr: Math.round(folkBasedKr),
     meetsMin,
+    minKr,
     note,
   };
 }
@@ -171,8 +185,9 @@ export function estimateHockey9Payout(args: {
   const odds = args.odds.filter((o) => o > 1 && o < 80);
   let product = 1;
   for (const o of odds) product *= o;
+  const minKr = MIN_PAYOUT_KR;
   const estimatedKr = Math.round(stake * product);
-  const meetsMin = estimatedKr >= MIN_PAYOUT_KR && odds.length >= 9;
+  const meetsMin = estimatedKr >= minKr && odds.length >= 9;
   return {
     estimatedKr,
     oddsProduct: Math.round(product * 100) / 100,
@@ -180,15 +195,16 @@ export function estimateHockey9Payout(args: {
     oddsBasedKr: estimatedKr,
     folkBasedKr: estimatedKr,
     meetsMin,
+    minKr,
     note: meetsMin
       ? `Hockey 9 · ${stake} kr-rad → ~${estimatedKr.toLocaleString("sv-SE")} kr vid 9 rätt (oddsprodukt ${String(Math.round(product * 10) / 10).replace(".", ",")} – ingen övre gräns).`
-      : `Hockey 9 · beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr.`,
+      : `Hockey 9 · beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`,
   };
 }
 
 /**
  * På enkelmatcher: byt till näst bästa utgång om det lyfter
- * beräknad utdelning mot golvet ≥ MIN_PAYOUT_KR (ingen tak).
+ * beräknad utdelning mot produktens golv (ingen tak).
  */
 export function liftPicksTowardMinPayout(args: {
   product: string;

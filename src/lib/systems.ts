@@ -1,6 +1,6 @@
 import {
   liftPicksTowardMinPayout,
-  MIN_PAYOUT_KR,
+  minPayoutForProduct,
 } from "./poolPayout";
 import type {
   GeneratedSystem,
@@ -685,9 +685,10 @@ function buildSystemForCost(
       ? `Vinstnivå (≥${matches.length - 1} rätt) ~${String(winPct).replace(".", ",")}%`
       : `Uppskattad täckning ~${String(hitPct).replace(".", ",")}%`;
 
+  const floorKr = payout.minKr ?? minPayoutForProduct(product);
   const payoutLabel = payout.meetsMin
     ? `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr`
-    : `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr (under golvet ${MIN_PAYOUT_KR.toLocaleString("sv-SE")})`;
+    : `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr (under golvet ${floorKr.toLocaleString("sv-SE")})`;
 
   return {
     name: systemName(cost, winPct, index),
@@ -815,7 +816,7 @@ export function generateSystems(
   }
 
   return systems.sort((a, b) => {
-    // Golv ≥ 3000 först (ingen tak), sedan högre utdelning, 48, 192, R 4-4, kostnad
+    // Produktgolv först (PP/Topp 2000, övriga 3000 – ingen tak), sedan högre utdelning
     const aPay = a.payoutMeetsMin ? 1 : 0;
     const bPay = b.payoutMeetsMin ? 1 : 0;
     if (aPay !== bPay) return bPay - aPay;
