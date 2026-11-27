@@ -1,3 +1,7 @@
+import {
+  liftPicksTowardMinPayout,
+  MIN_MAX_PAYOUT_KR,
+} from "./poolPayout";
 import type {
   GeneratedSystem,
   MatchAnalysis,
@@ -517,7 +521,8 @@ const STRYK_R44_FULL_ROWS = 1296;
  * Kupongen visar ramen (4 hel / 4 halv / 5 spik); raderna är reducerade till 144.
  */
 export function buildRSystem44144(
-  matches: MatchAnalysis[]
+  matches: MatchAnalysis[],
+  opts: { product?: string; netSale?: string | null; rowPrice?: number } = {}
 ): GeneratedSystem | null {
   if (matches.length !== 13) return null;
 
@@ -578,12 +583,28 @@ export function buildRSystem44144(
         .join(", ")} – helgarderas.`
     : "";
 
+  const product = opts.product || "stryktipset";
+  const rowPrice = opts.rowPrice ?? 1;
+  const lifted = liftPicksTowardMinPayout({
+    product,
+    matches,
+    picks,
+    netSale: opts.netSale ?? null,
+    rowPrice,
+    outcomeScore: (m, o) => {
+      const pr = matchProbabilities(m);
+      return o === "1" ? pr.p1 : o === "X" ? pr.pX : pr.p2;
+    },
+  });
+  const payout = lifted.estimate;
+  const finalPicks = lifted.picks;
+
   return {
     name: `${STRYK_R44_LABEL} · ${STRYK_R44_COST_KR} kr`,
     costKr: STRYK_R44_COST_KR,
     rows: STRYK_R44_COST_KR,
-    picks,
-    summary: `Reducerat R-system ${STRYK_R44_LABEL}: ${hel} hel · ${halv} halv · ${enklar} spik (${STRYK_R44_COST_KR} rader). Garanti ${STRYK_R44_GUARANTEE} rätt om alla tecken sitter (som M: ${STRYK_R44_FULL_ROWS.toLocaleString("sv-SE")} rader). Chans 13 rätt ≈ ${String(p13IfFrame).replace(".", ",")}% om ramen sitter. ${undecidedLabel}`.trim(),
+    picks: finalPicks,
+    summary: `Reducerat R-system ${STRYK_R44_LABEL}: ${hel} hel · ${halv} halv · ${enklar} spik (${STRYK_R44_COST_KR} rader). Garanti ${STRYK_R44_GUARANTEE} rätt om alla tecken sitter (som M: ${STRYK_R44_FULL_ROWS.toLocaleString("sv-SE")} rader). Chans 13 rätt ≈ ${String(p13IfFrame).replace(".", ",")}%. ${payout.note} ${undecidedLabel}`.trim(),
     risk: riskFromHitPct(frameHit, STRYK_R44_COST_KR),
     kind: "r",
     rSystem: STRYK_R44_LABEL,
@@ -591,20 +612,40 @@ export function buildRSystem44144(
     estimatedHitPct: frameHit,
     estimatedWinPct: winPct,
     undecidedEventNumbers,
+    estimatedMaxPayoutKr: payout.estimatedKr,
+    payoutMeetsMin: payout.meetsMin,
+    payoutNote: payout.note,
   };
 }
 
 function buildSystemForCost(
   matches: MatchAnalysis[],
   target: number,
-  index: number
+  index: number,
+  opts: { product?: string; netSale?: string | null; rowPrice?: number } = {}
 ): GeneratedSystem | null {
   if (target < MIN_COST || target > MAX_COST) return null;
   const plan = planForCost(matches, target);
   if (!plan) return null;
-  const picks = makePicks(matches, plan);
+  let picks = makePicks(matches, plan);
   const cost = rowCost(picks);
   if (cost < MIN_COST || cost > MAX_COST) return null;
+
+  const product = opts.product || "powerplay";
+  const rowPrice = opts.rowPrice ?? 1;
+  const lifted = liftPicksTowardMinPayout({
+    product,
+    matches,
+    picks,
+    netSale: opts.netSale ?? null,
+    rowPrice,
+    outcomeScore: (m, o) => {
+      const pr = matchProbabilities(m);
+      return o === "1" ? pr.p1 : o === "X" ? pr.pX : pr.p2;
+    },
+  });
+  picks = lifted.picks;
+  const payout = lifted.estimate;
 
   const hitPct = estimateSystemHitPct(matches, plan);
   const winPct = estimateWinPct(matches, plan);
@@ -644,17 +685,24 @@ function buildSystemForCost(
       ? `Vinstnivå (≥${matches.length - 1} rätt) ~${String(winPct).replace(".", ",")}%`
       : `Uppskattad täckning ~${String(hitPct).replace(".", ",")}%`;
 
+  const payoutLabel = payout.meetsMin
+    ? `Max-rätt ~${payout.estimatedKr.toLocaleString("sv-SE")} kr`
+    : `Max-rätt ~${payout.estimatedKr.toLocaleString("sv-SE")} kr (under ${MIN_MAX_PAYOUT_KR.toLocaleString("sv-SE")})`;
+
   return {
     name: systemName(cost, winPct, index),
     costKr: cost,
     rows: cost,
     picks,
-    summary: `${safetyNote} ${undecidedLabel} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${fatigueMatches} matcher med belastning vägdes in.`,
+    summary: `${safetyNote} ${undecidedLabel} ${winLabel}. Helträff ~${String(hitPct).replace(".", ",")}%. ${payoutLabel}. ${fatigueMatches} matcher med belastning vägdes in.`,
     risk: riskFromHitPct(winPct, cost),
     kind: "1x2",
     estimatedHitPct: hitPct,
     estimatedWinPct: winPct,
     undecidedEventNumbers,
+    estimatedMaxPayoutKr: payout.estimatedKr,
+    payoutMeetsMin: payout.meetsMin,
+    payoutNote: payout.note,
   };
 }
 
@@ -667,6 +715,8 @@ export type GenerateSystemsOptions = {
     | "europatipset"
     | "maltipset"
     | string;
+  netSale?: string | null;
+  rowPrice?: number;
 };
 
 /**
@@ -699,9 +749,20 @@ export function generateSystems(
   const systems: GeneratedSystem[] = [];
   const used = new Set<number>();
 
+  const payoutOpts = {
+    product: opts.product,
+    netSale: opts.netSale ?? null,
+    rowPrice: opts.rowPrice ?? 1,
+  };
+
   for (const target of preferred) {
     if (used.has(target)) continue;
-    const built = buildSystemForCost(matches, target, systems.length);
+    const built = buildSystemForCost(
+      matches,
+      target,
+      systems.length,
+      payoutOpts
+    );
     if (!built) continue;
     used.add(built.costKr);
     systems.push(built);
@@ -715,7 +776,8 @@ export function generateSystems(
     const forced = buildSystemForCost(
       matches,
       DAILY_SYSTEM_COST_KR,
-      systems.length
+      systems.length,
+      payoutOpts
     );
     if (forced && forced.costKr === DAILY_SYSTEM_COST_KR) {
       systems.push(forced);
@@ -724,7 +786,11 @@ export function generateSystems(
 
   // Stryk/Europa: R 4-4-144 som sjätte systemspel
   if (isStryk) {
-    const r44 = buildRSystem44144(matches);
+    const r44 = buildRSystem44144(matches, {
+      product: opts.product || "stryktipset",
+      netSale: opts.netSale ?? null,
+      rowPrice: opts.rowPrice ?? 1,
+    });
     if (r44) {
       // Inga matematiska 144 kr – R-systemet äger den kostnaden
       for (let i = systems.length - 1; i >= 0; i--) {
@@ -741,7 +807,7 @@ export function generateSystems(
 
   if (systems.length === 0) {
     for (const target of TARGET_COSTS) {
-      const built = buildSystemForCost(matches, target, 0);
+      const built = buildSystemForCost(matches, target, 0, payoutOpts);
       if (!built) continue;
       systems.push(built);
       break;
@@ -749,7 +815,10 @@ export function generateSystems(
   }
 
   return systems.sort((a, b) => {
-    // 48 kr säkerhet först, sedan 192 (dagligt), R 4-4, sedan kostnad
+    // Utdelning ≥ 3000 först, sedan 48, 192, R 4-4, kostnad
+    const aPay = a.payoutMeetsMin ? 1 : 0;
+    const bPay = b.payoutMeetsMin ? 1 : 0;
+    if (aPay !== bPay) return bPay - aPay;
     if (a.costKr === 48 && b.costKr !== 48) return -1;
     if (b.costKr === 48 && a.costKr !== 48) return 1;
     if (a.costKr === DAILY_SYSTEM_COST_KR && b.costKr !== DAILY_SYSTEM_COST_KR)
@@ -758,6 +827,9 @@ export function generateSystems(
       return 1;
     if (a.kind === "r" && b.kind !== "r") return -1;
     if (b.kind === "r" && a.kind !== "r") return 1;
+    const ap = a.estimatedMaxPayoutKr ?? 0;
+    const bp = b.estimatedMaxPayoutKr ?? 0;
+    if (ap !== bp) return bp - ap;
     return a.costKr - b.costKr;
   });
 }

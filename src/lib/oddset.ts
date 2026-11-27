@@ -38,6 +38,10 @@ import {
   emptyHockeyAlerts,
   type HockeyAnalysisAlerts,
 } from "./oddsetHockey";
+import {
+  estimateHockey9Payout,
+  MIN_MAX_PAYOUT_KR,
+} from "./poolPayout";
 
 export type { OddsetTrackedTip } from "./oddsetHistory";
 export type { OddsetLearningMemory, OddsetLesson } from "./oddsetLearning";
@@ -133,6 +137,10 @@ export type OddsetDayTip = {
   picksHockey1x2: number;
   /** Powerplay-liknande alertlistor för Hockey · 1X2. */
   hockeyAlerts?: HockeyAnalysisAlerts;
+  /** Beräknad utdelning Hockey 9 (100 kr-rad × oddsprodukt). */
+  hockey9EstimatedPayoutKr?: number | null;
+  hockey9PayoutMeetsMin?: boolean;
+  hockey9PayoutNote?: string | null;
   rules: string[];
   disclaimer: string;
   /** Efteranalys + aspekter till nästa tips (uppdateras automatiskt). */
@@ -1539,6 +1547,74 @@ function selectUniquePicks(
   return picked;
 }
 
+/**
+ * Hockey 9: välj 9 tips så oddsprodukt × 100 kr ≥ 3000 (max rätt).
+ * Prefererar högst score bland kombos som klarar golvet.
+ */
+function selectHockey9ForMinPayout(
+  ranked: OddsetCandidate[],
+  limit = PICKS_HOCKEY_1X2
+): { picks: OddsetCandidate[]; estimate: ReturnType<typeof estimateHockey9Payout> } {
+  const base = selectUniquePicks(ranked, Math.max(limit, 14));
+  const pool = base.length >= limit ? base : selectUniquePicks(ranked, ranked.length);
+
+  const scoreCombo = (picks: OddsetCandidate[]) => {
+    const est = estimateHockey9Payout({
+      odds: picks.map((p) => p.odds),
+      unitStakeKr: 100,
+    });
+    const tipScore = picks.reduce((s, p) => s + p.score, 0);
+    return { est, tipScore };
+  };
+
+  // Greedy: start from top score, swap in higher-odds candidates until ≥ 3000
+  let picks = pool.slice(0, limit);
+  let best = scoreCombo(picks);
+
+  if (!best.est.meetsMin && pool.length > limit) {
+    const rest = pool.slice(limit);
+    for (const cand of rest) {
+      if (best.est.meetsMin) break;
+      // Byt ut den kortaste oddsen bland picks mot cand om det lyfter produkten
+      let worstIdx = 0;
+      let worstOdds = picks[0]?.odds ?? 99;
+      for (let i = 1; i < picks.length; i++) {
+        const o = picks[i]?.odds ?? 99;
+        if (o < worstOdds) {
+          worstOdds = o;
+          worstIdx = i;
+        }
+      }
+      if ((cand.odds || 1) <= worstOdds * 1.05) continue;
+      if (picks.some((p) => p.eventId === cand.eventId)) continue;
+      const trial = picks.map((p, i) => (i === worstIdx ? cand : p));
+      const scored = scoreCombo(trial);
+      if (
+        scored.est.estimatedKr > best.est.estimatedKr ||
+        (scored.est.meetsMin && scored.tipScore >= best.tipScore * 0.85)
+      ) {
+        picks = trial;
+        best = scored;
+      }
+    }
+  }
+
+  // Om fortfarande under golvet: ta de 9 med högst odds bland topp-score
+  if (!best.est.meetsMin && pool.length >= limit) {
+    const byOdds = [...pool].sort(
+      (a, b) => b.odds - a.odds || b.score - a.score
+    );
+    const alt = selectUniquePicks(byOdds, limit);
+    const scored = scoreCombo(alt);
+    if (scored.est.estimatedKr > best.est.estimatedKr) {
+      picks = alt;
+      best = scored;
+    }
+  }
+
+  return { picks: picks.slice(0, limit), estimate: best.est };
+}
+
 export async function buildOddsetDayTip(opts?: {
   clientTips?: Array<OddsetCandidate & { tippedAt?: string }>;
   clientLessons?: OddsetLesson[];
@@ -1765,10 +1841,11 @@ export async function buildOddsetDayTip(opts?: {
   sortCandidates(candidatesHockey1x2);
   const selected = selectUniquePicks(candidates, PICKS_PER_DAY);
   const selected1x2 = selectUniquePicks(candidates1x2, PICKS_PER_DAY);
-  const selectedHockey1x2 = selectUniquePicks(
+  const hockeyPick = selectHockey9ForMinPayout(
     candidatesHockey1x2,
     PICKS_HOCKEY_1X2
   );
+  const selectedHockey1x2 = hockeyPick.picks;
   const hockeyAlerts = hockeyPp.alerts || emptyHockeyAlerts();
 
   await rememberOddsetTips([
@@ -1798,6 +1875,9 @@ export async function buildOddsetDayTip(opts?: {
     picksPerDay: PICKS_PER_DAY,
     picksHockey1x2: PICKS_HOCKEY_1X2,
     hockeyAlerts,
+    hockey9EstimatedPayoutKr: hockeyPick.estimate.estimatedKr,
+    hockey9PayoutMeetsMin: hockeyPick.estimate.meetsMin,
+    hockey9PayoutNote: hockeyPick.estimate.note,
     learning: {
       updatedAt: learningAfter.updatedAt,
       summary: learningAfter.lastSummary,
@@ -1812,7 +1892,7 @@ export async function buildOddsetDayTip(opts?: {
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: Över 1,5 = ≥2 mål; 1X2 = tippad utgång rätt.",
       "Fotboll-1X2: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
-      "Hockey · 1X2 (9): samma analyslager som Powerplay – tabell, belastning, vila, multi-book/överodds, målanalys, admin-1X2 (regulation).",
+      `Hockey 9: samma analyslager som Powerplay; tippraden siktar på max-rätt ≥ ${MIN_MAX_PAYOUT_KR.toLocaleString("sv-SE")} kr (100 kr-rad × oddsprodukt).`,
       "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel.",
       "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",

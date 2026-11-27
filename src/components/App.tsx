@@ -2164,6 +2164,19 @@ function CouponView({
               ~{String(system.estimatedWinPct ?? system.estimatedHitPct).replace(".", ",")}%
             </div>
           )}
+          {system.estimatedMaxPayoutKr != null && (
+            <div
+              className="coupon-hit"
+              style={{
+                color: system.payoutMeetsMin
+                  ? "rgba(120, 220, 160, 0.95)"
+                  : "rgba(240, 180, 100, 0.95)",
+              }}
+              title={system.payoutNote || undefined}
+            >
+              max ~{Math.round(system.estimatedMaxPayoutKr).toLocaleString("sv-SE")} kr
+            </div>
+          )}
         </div>
       </div>
       {!isMal &&
@@ -3581,6 +3594,15 @@ function Hockey9View({ tip }: { tip: OddsetDayTip }) {
           <li>
             Hockey 9 = nio 1X2-tips på ishockey med Powerplay-analys (inte
             Oddset Ö1,5/fotboll).
+          </li>
+          <li>
+            {tip.hockey9PayoutNote ||
+              "Beräknad max-rätt (100 kr-rad × oddsprodukt) siktar på minst 3 000 kr."}
+            {tip.hockey9EstimatedPayoutKr != null
+              ? ` Nu ~${Math.round(tip.hockey9EstimatedPayoutKr).toLocaleString("sv-SE")} kr${
+                  tip.hockey9PayoutMeetsMin ? " ✓" : ""
+                }.`
+              : ""}
           </li>
           <li>
             Resultat syns i egen kolumn <strong>Hockey 9</strong> under Gamla
@@ -5560,12 +5582,13 @@ export default function App() {
                   </h2>
                   <p className="panel-lead">
                     {product === "powerplay" || product === "topptipset"
-                      ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad chans till 8 rätt (utdelning) – inte garanti. "
+                      ? "48 kr är ett säkerhetssystem: gardering där det skakar, enkel bara vid stark odds/folk-konsensus. Siffran ~% är uppskattad chans till 8 rätt – inte garanti. "
                       : isStrykFamily(product)
                         ? "Sex systemspel: matematiska kuponger plus reducerat R 4-4-144 (4 hel · 4 halv · 5 spik, garanti 12 rätt om tecknen sitter). "
                         : ""}
-                    Kupongen speglar {productLabel(product)}-raden på Svenska
-                    Spel. Kostnad = antal kombinationer ×{" "}
+                    Beräknad max-rätt (odds × omsättning) siktar på minst 3 000
+                    kr. Kupongen speglar {productLabel(product)}-raden på
+                    Svenska Spel. Kostnad = antal kombinationer ×{" "}
                     {String(draw.rowPrice).replace(".", ",")} kr
                     {product === "maltipset" ? " (M8–M12)" : ""}.
                   </p>
@@ -5587,6 +5610,9 @@ export default function App() {
                             : s.estimatedHitPct != null
                               ? ` · ~${Math.round(s.estimatedHitPct)}%`
                               : ` · ${s.risk}`}
+                        {s.estimatedMaxPayoutKr != null
+                          ? ` · ~${Math.round(s.estimatedMaxPayoutKr / 1000)}k`
+                          : ""}
                       </button>
                     ))}
                   </div>
