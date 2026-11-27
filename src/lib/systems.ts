@@ -612,7 +612,8 @@ export function buildRSystem44144(
     estimatedHitPct: frameHit,
     estimatedWinPct: winPct,
     undecidedEventNumbers,
-    estimatedMaxPayoutKr: payout.estimatedKr,
+    estimatedMaxPayoutKr: payout.highKr,
+    payoutMinKr: payout.minKr,
     payoutMeetsMin: payout.meetsMin,
     payoutNote: payout.note,
   };
@@ -687,8 +688,8 @@ function buildSystemForCost(
 
   const floorKr = payout.minKr ?? minPayoutForProduct(product);
   const payoutLabel = payout.meetsMin
-    ? `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr`
-    : `Utdelning ~${payout.estimatedKr.toLocaleString("sv-SE")} kr (under golvet ${floorKr.toLocaleString("sv-SE")})`;
+    ? `Golv ${floorKr.toLocaleString("sv-SE")} kr · högsta ~${payout.highKr.toLocaleString("sv-SE")} kr`
+    : `Högsta ~${payout.highKr.toLocaleString("sv-SE")} kr (under golvet ${floorKr.toLocaleString("sv-SE")})`;
 
   return {
     name: systemName(cost, winPct, index),
@@ -701,7 +702,8 @@ function buildSystemForCost(
     estimatedHitPct: hitPct,
     estimatedWinPct: winPct,
     undecidedEventNumbers,
-    estimatedMaxPayoutKr: payout.estimatedKr,
+    estimatedMaxPayoutKr: payout.highKr,
+    payoutMinKr: payout.minKr,
     payoutMeetsMin: payout.meetsMin,
     payoutNote: payout.note,
   };

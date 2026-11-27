@@ -2199,14 +2199,12 @@ function CouponView({
                   ? "rgba(120, 220, 160, 0.95)"
                   : "rgba(240, 180, 100, 0.95)",
               }}
-              title={
-                system.payoutNote ||
-                (product === "powerplay" || product === "topptipset"
-                  ? "Beräknad utdelning vid fullträff (golv 2 000 kr, ingen tak)"
-                  : "Beräknad utdelning vid fullträff (golv 3 000 kr, ingen tak)")
-              }
+              title={system.payoutNote || undefined}
             >
-              utd. ~{Math.round(system.estimatedMaxPayoutKr).toLocaleString("sv-SE")} kr
+              {system.payoutMinKr != null
+                ? `golv ${Math.round(system.payoutMinKr).toLocaleString("sv-SE")} · `
+                : ""}
+              högsta ~{Math.round(system.estimatedMaxPayoutKr).toLocaleString("sv-SE")} kr
             </div>
           )}
         </div>
@@ -3629,9 +3627,9 @@ function Hockey9View({ tip }: { tip: OddsetDayTip }) {
           </li>
           <li>
             {tip.hockey9PayoutNote ||
-              "Beräknad utdelning (100 kr-rad × oddsprodukt): minst 3 000 kr, ingen övre gräns."}
+              "Utdelning (100 kr-rad × oddsprodukt): golv 3 000 kr + beräknad högsta."}
             {tip.hockey9EstimatedPayoutKr != null
-              ? ` Nu ~${Math.round(tip.hockey9EstimatedPayoutKr).toLocaleString("sv-SE")} kr${
+              ? ` Högsta ~${Math.round(tip.hockey9EstimatedPayoutKr).toLocaleString("sv-SE")} kr${
                   tip.hockey9PayoutMeetsMin ? " ✓" : ""
                 }.`
               : ""}
@@ -5633,13 +5631,13 @@ export default function App() {
                       : isStrykFamily(product)
                         ? "Sex systemspel: matematiska kuponger plus reducerat R 4-4-144 (4 hel · 4 halv · 5 spik, garanti 12 rätt om tecknen sitter). "
                         : ""}
-                    Beräknad utdelning (odds × omsättning) har golv minst{" "}
+                    Utdelning (odds × omsättning): golv minst{" "}
                     {product === "powerplay" || product === "topptipset"
                       ? "2 000"
                       : "3 000"}{" "}
-                    kr på alla system – ingen max-tak. Kupongen speglar{" "}
-                    {productLabel(product)}-raden på Svenska Spel. Kostnad =
-                    antal kombinationer ×{" "}
+                    kr på alla system, plus beräknad högsta utdelning per
+                    kupong. Kupongen speglar {productLabel(product)}-raden på
+                    Svenska Spel. Kostnad = antal kombinationer ×{" "}
                     {String(draw.rowPrice).replace(".", ",")} kr
                     {product === "maltipset" ? " (M8–M12)" : ""}.
                   </p>
@@ -5662,7 +5660,7 @@ export default function App() {
                               ? ` · ~${Math.round(s.estimatedHitPct)}%`
                               : ` · ${s.risk}`}
                         {s.estimatedMaxPayoutKr != null
-                          ? ` · ~${Math.round(s.estimatedMaxPayoutKr / 1000)}k`
+                          ? ` · högsta ~${Math.round(s.estimatedMaxPayoutKr / 1000)}k`
                           : ""}
                       </button>
                     ))}

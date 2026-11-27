@@ -52,20 +52,21 @@ function outcomeFolk(dist: Distribution, o: Outcome): number {
 }
 
 /**
- * Primär tipputgång för max-rätt-estimat:
- * enkel = tipset; halv/hel = den i tipset med högst odds (lägre folk → högre utdelning).
+ * Tipputgång för utdelningsestimat inom tipset.
+ * mode "high" = högst odds (högsta utdelning), "low" = lägst odds.
  */
 export function primaryOutcomeForPayout(
   pick: SystemPick,
-  match: MatchAnalysis
+  match: MatchAnalysis,
+  mode: "high" | "low" = "high"
 ): Outcome {
   const outs = pick.outcomes.length ? pick.outcomes : (["1"] as Outcome[]);
   if (outs.length === 1) return outs[0]!;
   let best: Outcome = outs[0]!;
-  let bestOdds = -1;
+  let bestOdds = mode === "high" ? -1 : Number.POSITIVE_INFINITY;
   for (const o of outs) {
     const od = outcomeOdds(match.odds, o) ?? 1;
-    if (od > bestOdds) {
+    if (mode === "high" ? od > bestOdds : od < bestOdds) {
       bestOdds = od;
       best = o;
     }
@@ -74,9 +75,11 @@ export function primaryOutcomeForPayout(
 }
 
 export type MaxPayoutEstimate = {
-  /** Beräknad utdelning max rätt (kr). */
+  /** Typisk beräknad utdelning vid fullträff (kr). */
   estimatedKr: number;
-  /** Oddsprodukt för primära utgångar. */
+  /** Högsta beräknade utdelning för tipset (sällsynta utgångar i gardering). */
+  highKr: number;
+  /** Oddsprodukt för högsta-scenariot. */
   oddsProduct: number;
   /** Folkandel för samma rad (0–1). */
   folkShare: number;
@@ -84,12 +87,87 @@ export type MaxPayoutEstimate = {
   oddsBasedKr: number;
   /** Utdelning via folk×omsättning. */
   folkBasedKr: number;
-  /** true om estimatet ≥ produktens golv (ingen tak). */
+  /** true om högsta ≥ produktens golv (ingen tak). */
   meetsMin: boolean;
   /** Golvet som användes (kr). */
   minKr: number;
   note: string;
 };
+
+function blendPayoutKr(oddsBasedKr: number, folkBasedKr: number): number {
+  return Math.round(
+    Math.sqrt(Math.max(1, oddsBasedKr) * Math.max(1, folkBasedKr))
+  );
+}
+
+function payoutForPath(args: {
+  product: string;
+  matches: MatchAnalysis[];
+  picks: SystemPick[];
+  netSale: string | number | null | undefined;
+  rowPrice: number;
+  mode: "high" | "low";
+}): {
+  estimatedKr: number;
+  oddsProduct: number;
+  folkShare: number;
+  oddsBasedKr: number;
+  folkBasedKr: number;
+  highSideKr: number;
+} {
+  const product = String(args.product || "default").toLowerCase();
+  const share = TIER_SHARE[product] ?? TIER_SHARE.default;
+  const rowPrice =
+    args.rowPrice > 0 && Number.isFinite(args.rowPrice) ? args.rowPrice : 1;
+  const netSale = parseNetSaleKr(args.netSale);
+  const byEvent = new Map(args.matches.map((m) => [m.eventNumber, m]));
+  let oddsProduct = 1;
+  let folkShare = 1;
+  let used = 0;
+
+  for (const pick of args.picks) {
+    const m = byEvent.get(pick.eventNumber);
+    if (!m) continue;
+    const primary = primaryOutcomeForPayout(pick, m, args.mode);
+    const od = outcomeOdds(m.odds, primary);
+    const folk = outcomeFolk(m.svenskaFolket, primary);
+    if (od != null) {
+      oddsProduct *= od;
+      used++;
+    }
+    folkShare *= clamp(folk / 100, 0.01, 0.95);
+  }
+
+  if (used === 0) {
+    return {
+      estimatedKr: 0,
+      oddsProduct: 1,
+      folkShare: 1,
+      oddsBasedKr: 0,
+      folkBasedKr: 0,
+      highSideKr: 0,
+    };
+  }
+
+  const oddsBasedKr = share * rowPrice * oddsProduct;
+  let folkBasedKr = oddsBasedKr;
+  if (netSale != null && netSale > 0 && folkShare > 0) {
+    const rowsSold = Math.max(1, netSale / rowPrice);
+    const winningRows = Math.max(0.01, rowsSold * folkShare);
+    folkBasedKr = (netSale * share) / winningRows;
+  }
+
+  const estimatedKr = blendPayoutKr(oddsBasedKr, folkBasedKr);
+  const highSideKr = Math.round(Math.max(oddsBasedKr, folkBasedKr, estimatedKr));
+  return {
+    estimatedKr,
+    oddsProduct: Math.round(oddsProduct * 100) / 100,
+    folkShare: Math.round(folkShare * 1e6) / 1e6,
+    oddsBasedKr: Math.round(oddsBasedKr),
+    folkBasedKr: Math.round(folkBasedKr),
+    highSideKr,
+  };
+}
 
 /**
  * Beräkna utdelning vid max rätt så att odds och omsättning stämmer.
@@ -107,33 +185,13 @@ export function estimateMaxPayout(args: {
 }): MaxPayoutEstimate {
   const product = String(args.product || "default").toLowerCase();
   const minKr = minPayoutForProduct(product);
-  const share = TIER_SHARE[product] ?? TIER_SHARE.default;
-  const rowPrice =
-    args.rowPrice > 0 && Number.isFinite(args.rowPrice) ? args.rowPrice : 1;
-  const netSale = parseNetSaleKr(args.netSale);
+  const highPath = payoutForPath({ ...args, product, mode: "high" });
+  const lowPath = payoutForPath({ ...args, product, mode: "low" });
 
-  const byEvent = new Map(args.matches.map((m) => [m.eventNumber, m]));
-  let oddsProduct = 1;
-  let folkShare = 1;
-  let used = 0;
-
-  for (const pick of args.picks) {
-    const m = byEvent.get(pick.eventNumber);
-    if (!m) continue;
-    const primary = primaryOutcomeForPayout(pick, m);
-    const od = outcomeOdds(m.odds, primary);
-    const folk = outcomeFolk(m.svenskaFolket, primary);
-    if (od != null) {
-      oddsProduct *= od;
-      used++;
-    }
-    // Golv 1% per match så en enda tunn favorit inte spränger estimatet
-    folkShare *= clamp(folk / 100, 0.01, 0.95);
-  }
-
-  if (used === 0) {
+  if (highPath.estimatedKr <= 0 && highPath.oddsBasedKr <= 0) {
     return {
       estimatedKr: 0,
+      highKr: 0,
       oddsProduct: 1,
       folkShare: 1,
       oddsBasedKr: 0,
@@ -144,29 +202,28 @@ export function estimateMaxPayout(args: {
     };
   }
 
-  const oddsBasedKr = share * rowPrice * oddsProduct;
-  let folkBasedKr = oddsBasedKr;
-  if (netSale != null && netSale > 0 && folkShare > 0) {
-    const rowsSold = Math.max(1, netSale / rowPrice);
-    const winningRows = Math.max(0.01, rowsSold * folkShare);
-    folkBasedKr = (netSale * share) / winningRows;
-  }
-
-  // Geometriskt medel – tvingar odds och omsättning/folk att “stämma”
-  const estimatedKr = Math.round(
-    Math.sqrt(Math.max(1, oddsBasedKr) * Math.max(1, folkBasedKr))
+  // Typisk = geometriskt medel av hög/låg-scenarier; högsta = optimistic path
+  const estimatedKr = blendPayoutKr(
+    highPath.estimatedKr,
+    Math.max(1, lowPath.estimatedKr)
   );
-  const meetsMin = estimatedKr >= minKr;
+  const highKr = Math.max(
+    highPath.highSideKr,
+    highPath.estimatedKr,
+    estimatedKr
+  );
+  const meetsMin = highKr >= minKr;
   const note = meetsMin
-    ? `Beräknad utdelning vid fullträff ~${estimatedKr.toLocaleString("sv-SE")} kr (odds×omsättning, potshare ${Math.round(share * 100)}% – ingen övre gräns).`
-    : `Beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`;
+    ? `Golv ${minKr.toLocaleString("sv-SE")} kr · högsta ~${highKr.toLocaleString("sv-SE")} kr vid fullträff (odds×omsättning).`
+    : `Högsta ~${highKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`;
 
   return {
     estimatedKr,
-    oddsProduct: Math.round(oddsProduct * 100) / 100,
-    folkShare: Math.round(folkShare * 1e6) / 1e6,
-    oddsBasedKr: Math.round(oddsBasedKr),
-    folkBasedKr: Math.round(folkBasedKr),
+    highKr,
+    oddsProduct: highPath.oddsProduct,
+    folkShare: highPath.folkShare,
+    oddsBasedKr: highPath.oddsBasedKr,
+    folkBasedKr: highPath.folkBasedKr,
     meetsMin,
     minKr,
     note,
@@ -187,9 +244,11 @@ export function estimateHockey9Payout(args: {
   for (const o of odds) product *= o;
   const minKr = MIN_PAYOUT_KR;
   const estimatedKr = Math.round(stake * product);
-  const meetsMin = estimatedKr >= minKr && odds.length >= 9;
+  const highKr = estimatedKr;
+  const meetsMin = highKr >= minKr && odds.length >= 9;
   return {
     estimatedKr,
+    highKr,
     oddsProduct: Math.round(product * 100) / 100,
     folkShare: 0,
     oddsBasedKr: estimatedKr,
@@ -197,8 +256,8 @@ export function estimateHockey9Payout(args: {
     meetsMin,
     minKr,
     note: meetsMin
-      ? `Hockey 9 · ${stake} kr-rad → ~${estimatedKr.toLocaleString("sv-SE")} kr vid 9 rätt (oddsprodukt ${String(Math.round(product * 10) / 10).replace(".", ",")} – ingen övre gräns).`
-      : `Hockey 9 · beräknad utdelning ~${estimatedKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`,
+      ? `Hockey 9 · golv ${minKr.toLocaleString("sv-SE")} kr · högsta ~${highKr.toLocaleString("sv-SE")} kr vid 9 rätt (oddsprodukt ${String(Math.round(product * 10) / 10).replace(".", ",")}).`
+      : `Hockey 9 · högsta ~${highKr.toLocaleString("sv-SE")} kr – under golvet ${minKr.toLocaleString("sv-SE")} kr.`,
   };
 }
 
@@ -230,8 +289,8 @@ export function liftPicksTowardMinPayout(args: {
     const ma = byEvent.get(picks[ia]!.eventNumber);
     const mb = byEvent.get(picks[ib]!.eventNumber);
     if (!ma || !mb) return 0;
-    const oa = primaryOutcomeForPayout(picks[ia]!, ma);
-    const ob = primaryOutcomeForPayout(picks[ib]!, mb);
+    const oa = primaryOutcomeForPayout(picks[ia]!, ma, "high");
+    const ob = primaryOutcomeForPayout(picks[ib]!, mb, "high");
     const oddsa = outcomeOdds(ma.odds, oa) ?? 1;
     const oddsb = outcomeOdds(mb.odds, ob) ?? 1;
     return oddsa - oddsb; // lyft först korta favoriter
@@ -270,7 +329,7 @@ export function liftPicksTowardMinPayout(args: {
         netSale: args.netSale,
         rowPrice: args.rowPrice,
       });
-      if (next.estimatedKr > estimate.estimatedKr) {
+      if (next.highKr > estimate.highKr) {
         picks = trial;
         estimate = next;
         if (estimate.meetsMin) break;

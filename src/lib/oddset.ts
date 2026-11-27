@@ -1591,7 +1591,7 @@ function selectHockey9ForMinPayout(
       const trial = picks.map((p, i) => (i === worstIdx ? cand : p));
       const scored = scoreCombo(trial);
       if (
-        scored.est.estimatedKr > best.est.estimatedKr ||
+        scored.est.highKr > best.est.highKr ||
         (scored.est.meetsMin && scored.tipScore >= best.tipScore * 0.85)
       ) {
         picks = trial;
@@ -1607,7 +1607,7 @@ function selectHockey9ForMinPayout(
     );
     const alt = selectUniquePicks(byOdds, limit);
     const scored = scoreCombo(alt);
-    if (scored.est.estimatedKr > best.est.estimatedKr) {
+    if (scored.est.highKr > best.est.highKr) {
       picks = alt;
       best = scored;
     }
@@ -1877,7 +1877,7 @@ export async function buildOddsetDayTip(opts?: {
     picksPerDay: PICKS_PER_DAY,
     picksHockey1x2: PICKS_HOCKEY_1X2,
     hockeyAlerts,
-    hockey9EstimatedPayoutKr: hockeyPick.estimate.estimatedKr,
+    hockey9EstimatedPayoutKr: hockeyPick.estimate.highKr,
     hockey9PayoutMeetsMin: hockeyPick.estimate.meetsMin,
     hockey9PayoutNote: hockeyPick.estimate.note,
     learning: {

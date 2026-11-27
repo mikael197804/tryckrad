@@ -285,9 +285,11 @@ export type GeneratedSystem = {
   rSystem?: string | null;
   /** Garanti antal rätt om alla tecken i ramen sitter (R-system). */
   guaranteeRights?: number | null;
-  /** Beräknad utdelning vid fullträff (odds×omsättning), kr – ingen övre gräns. */
+  /** Högsta beräknade utdelning vid fullträff (odds×omsättning), kr. */
   estimatedMaxPayoutKr?: number | null;
-  /** true om beräknad utdelning ≥ produktgolv (PP/Topp 2000, övriga 3000). */
+  /** Produktgolv (PP/Topp 2000, övriga 3000). */
+  payoutMinKr?: number | null;
+  /** true om högsta utdelning ≥ produktgolv. */
   payoutMeetsMin?: boolean;
   /** Kort notis om utdelningsestimatet. */
   payoutNote?: string | null;
