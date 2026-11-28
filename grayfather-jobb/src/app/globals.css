@@ -305,9 +305,23 @@ a {
 }
 
 .offer-blurb {
-  margin: 0.3rem 0 0.75rem;
+  margin: 0.3rem 0 0.35rem;
   color: var(--ink-soft);
   font-size: 0.95rem;
+}
+
+.offer-partner {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.offer-note a {
+  color: var(--accent-deep);
+}
+
+.offer-note code {
+  font-size: 0.85em;
 }
 
 .offer-cta {

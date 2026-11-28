@@ -16,8 +16,13 @@ export function OfferRail({
       <p className="eyebrow">Partnererbjudanden</p>
       <h3>{heading}</h3>
       <p className="offer-note">
-        Byt länkarna i koden till dina affiliate-URL:er (smink, maskiner, skydd
-        m.m.) för att tjäna provision.
+        Annonslänkar per yrkessegment. Skapa konto på{" "}
+        <a href="https://www.adtraction.com/" target="_blank" rel="noreferrer">
+          Adtraction
+        </a>
+        , ansök till butikerna och byt URL:erna i{" "}
+        <code>src/lib/offers.ts</code> till dina spårlänkar för att tjäna
+        provision.
       </p>
       <ul className="offer-list">
         {offers.map((offer) => (
@@ -25,6 +30,9 @@ export function OfferRail({
             <p className="offer-cat">{offer.category}</p>
             <p className="offer-title">{offer.title}</p>
             <p className="offer-blurb">{offer.blurb}</p>
+            <p className="offer-partner">
+              {offer.partner} · {offer.network} · annonslänk
+            </p>
             <a
               className="btn primary offer-cta"
               href={offer.url}
