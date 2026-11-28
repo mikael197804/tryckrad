@@ -600,10 +600,69 @@ function teamMatch(a: string, b: string): boolean {
   return na === nb || na.includes(nb) || nb.includes(na);
 }
 
+/** Nation/ligafamilj – lärdomar från PL ska inte styra Allsvenskan o.s.v. */
+export function leagueNationFamily(league: string | null | undefined): string {
+  const l = norm(league || "");
+  if (!l) return "";
+  if (
+    l.includes("allsvenskan") ||
+    l.includes("superettan") ||
+    l.includes("ettan") ||
+    l.includes("svenska cup")
+  ) {
+    return "sweden";
+  }
+  if (
+    l.includes("premier league") ||
+    l.includes("championship") ||
+    l.includes("league one") ||
+    l.includes("league two") ||
+    l.includes("national league") ||
+    l.includes("efa") ||
+    l.includes("fa cup") ||
+    l.includes("efl")
+  ) {
+    return "england";
+  }
+  if (l.includes("la liga") || l.includes("laliga") || l.includes("segunda")) {
+    return "spain";
+  }
+  if (l.includes("serie a") || l.includes("serie b") || l.includes("coppa")) {
+    return "italy";
+  }
+  if (l.includes("bundesliga") || l.includes("dfb")) return "germany";
+  if (l.includes("ligue")) return "france";
+  if (l.includes("eredivisie") || l.includes("eerste") || l.includes("keuken")) {
+    return "netherlands";
+  }
+  if (l.includes("pro league") || l.includes("jupiler") || l.includes("challenger")) {
+    return "belgium";
+  }
+  if (l.includes("liga portugal") || l.includes("primeira") || l.includes("liga 2")) {
+    return "portugal";
+  }
+  if (l.includes("scottish") || l.includes("premiership")) return "scotland";
+  if (l.includes("mls") || l.includes("usl")) return "usa";
+  if (l.includes("brasileir") || l.includes("serie a brazil")) return "brazil";
+  return l.slice(0, 28);
+}
+
+function sameLeagueNation(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  const fa = leagueNationFamily(a);
+  const fb = leagueNationFamily(b);
+  if (!fa || !fb) return false;
+  return fa === fb;
+}
+
 export function learningAdjustForMatch(args: {
   memory: LearningMemory | null;
   home: TeamInfo;
   away: TeamInfo;
+  /** Liga för matchen – begränsar lärdomar till samma nation/familj */
+  league?: string | null;
 }): {
   d1: number;
   dX: number;
@@ -614,28 +673,56 @@ export function learningAdjustForMatch(args: {
   if (!args.memory) {
     return { d1: 0, dX: 0, d2: 0, notes: [], relatedLessons: [] };
   }
-  const { memory, home, away } = args;
+  const { memory, home, away, league } = args;
+  const matchFamily = leagueNationFamily(league);
+
+  // Bara lärdomar från samma nation/ligafamilj (PL ≠ Allsvenskan)
+  const nationLessons = matchFamily
+    ? memory.lessons.filter((l) => sameLeagueNation(l.league, league))
+    : memory.lessons;
+  const nationShare =
+    memory.lessons.length > 0
+      ? nationLessons.length / memory.lessons.length
+      : 0;
+  // Global bias bara om tillräckligt med lärdomar i samma nation – annars tona ner
+  const biasScale =
+    !matchFamily ? 0.35 : nationShare >= 0.25 ? 1 : nationShare >= 0.1 ? 0.45 : 0.15;
+
   let d1 = 0;
-  let dX = memory.biases.boostX;
+  let dX = memory.biases.boostX * biasScale;
   let d2 = 0;
   const notes: string[] = [];
 
-  // Global biases
+  // Global biases (skalade per nation)
   if (memory.biases.cutShortFavourite > 0) {
-    // applied softly both sides – stronger cut when we later know who's favourite
-    d1 -= memory.biases.cutShortFavourite * 0.5;
-    d2 -= memory.biases.cutShortFavourite * 0.5;
-    dX += memory.biases.cutShortFavourite * 0.35;
+    const cut = memory.biases.cutShortFavourite * biasScale;
+    d1 -= cut * 0.5;
+    d2 -= cut * 0.5;
+    dX += cut * 0.35;
   }
   if (memory.biases.distrustFolkFavourite > 0) {
-    dX += memory.biases.distrustFolkFavourite * 0.4;
+    dX += memory.biases.distrustFolkFavourite * 0.4 * biasScale;
   }
   if (memory.biases.trustOverOdds > 0) {
-    // mild X/underdog openness
-    dX += memory.biases.trustOverOdds * 0.3;
+    dX += memory.biases.trustOverOdds * 0.3 * biasScale;
   }
-  if (memory.biases.note && (memory.biases.boostX > 0.01 || memory.biases.cutShortFavourite > 0.01)) {
-    notes.push(`Lärdom: ${memory.biases.note}`);
+  if (
+    biasScale >= 0.45 &&
+    memory.biases.note &&
+    (memory.biases.boostX > 0.01 || memory.biases.cutShortFavourite > 0.01)
+  ) {
+    notes.push(
+      matchFamily
+        ? `Lärdom (${matchFamily}): ${memory.biases.note}`
+        : `Lärdom: ${memory.biases.note}`
+    );
+  }
+
+  // Lag-aspects: kräv samma nation om ligan är känd
+  const lessonByTeam = new Map<string, string>();
+  for (const l of memory.lessons) {
+    lessonByTeam.set(norm(l.home), l.league);
+    lessonByTeam.set(norm(l.away), l.league);
   }
 
   for (const aspect of memory.teamAspects) {
@@ -644,6 +731,15 @@ export function learningAdjustForMatch(args: {
     if (!onHome && !onAway) continue;
     if (aspect.asHome === true && !onHome) continue;
     if (aspect.asHome === false && !onAway) continue;
+    if (matchFamily) {
+      const aspectLeague =
+        lessonByTeam.get(norm(aspect.team)) ||
+        memory.lessons.find(
+          (l) =>
+            teamMatch(l.home, aspect.team) || teamMatch(l.away, aspect.team)
+        )?.league;
+      if (aspectLeague && !sameLeagueNation(aspectLeague, league)) continue;
+    }
     d1 += aspect.d1;
     dX += aspect.dX;
     d2 += aspect.d2;
@@ -654,6 +750,7 @@ export function learningAdjustForMatch(args: {
     .filter(
       (l) =>
         !l.hit &&
+        (!matchFamily || sameLeagueNation(l.league, league)) &&
         (teamMatch(l.home, home.name) ||
           teamMatch(l.away, home.name) ||
           teamMatch(l.home, away.name) ||

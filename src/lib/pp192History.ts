@@ -109,6 +109,14 @@ export function daily192PicksFromDraw(
   tippedAt: string
 ): HistoryPick[] {
   if (!isDailyProduct(draw.productKind)) return [];
+  // Bara daglig Topptipset (productId 25) – inte Stryk/Extra (andra nationer/kuponger)
+  if (
+    draw.productKind === "topptipset" &&
+    draw.apiSlug &&
+    draw.apiSlug !== "topptipset"
+  ) {
+    return [];
+  }
   const system = (draw.systems || []).find(
     (s) => s.costKr === DAILY_SYSTEM_COST_KR && s.kind !== "mal"
   );

@@ -605,8 +605,9 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       }
     }
 
-    // Flashscore via lagnamn + kickoff (Oddset / saknad SvS)
-    if (!alreadySettled) {
+    // Flashscore bara utanför pool-1X2 – lagnamn kan träffa fel land
+    // (t.ex. flera "United"). Pool-facit = Svenska Spel med rätt kupong-slug.
+    if (!alreadySettled && !(isPoolProduct && p.market === "1x2")) {
       const viaFs = await settlePickViaFlashscore(p);
       if (viaFs) {
         out.push(viaFs);
@@ -618,7 +619,9 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
     if (p.drawNumber == null || p.eventNumber == null) {
       out.push({
         ...p,
-        resultNote: p.resultNote || "Väntar på Flashscore…",
+        resultNote:
+          p.resultNote ||
+          (isPoolProduct ? "Väntar på Svenska Spel…" : "Väntar på Flashscore…"),
       });
       continue;
     }
@@ -635,7 +638,10 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
         resultNote:
           res?.status === "live"
             ? `Live ${res.homeGoals}–${res.awayGoals} · Svenska Spel`
-            : p.resultNote || "Väntar på Flashscore…",
+            : p.resultNote ||
+              (isPoolProduct
+                ? "Väntar på Svenska Spel…"
+                : "Väntar på Flashscore…"),
       });
       continue;
     }

@@ -701,6 +701,7 @@ export async function analyzeDraw(
       memory: learning,
       home,
       away,
+      league,
     });
     if (learnAdj.d1 || learnAdj.dX || learnAdj.d2) {
       let s1 = adjusted.score1 + learnAdj.d1;
