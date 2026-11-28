@@ -7,6 +7,7 @@ Svensk jobb-sida för arbetsgivare i Telegram-communityn
 
 - Yrkessegment: undersköterska, snickare, rivare, asbestsanerare, betonghåltagare, isolerare med flera
 - Sök över hela Sverige eller filtrera kommun för kommun
+- Partnererbjudanden per segment (smink, arbetskläder, skyddsutrustning, arbetsmaskiner) – byt URL:er i `src/lib/offers.ts` till dina affiliate-länkar
 - Publicera annons och kopiera färdig text till Telegram
 - Telegram Mini App-stöd (aktiveras inne i Telegram)
 

@@ -12,7 +12,9 @@ import {
   getTelegramUsername,
 } from "@/components/TelegramBoot";
 import { MunicipalityField } from "@/components/MunicipalityField";
+import { OfferRail } from "@/components/OfferRail";
 import type { Job } from "@/lib/jobs";
+import { offersForFilter } from "@/lib/offers";
 import { JOB_SEGMENTS } from "@/lib/segments";
 
 type JobsResponse = { jobs: Job[]; sample: boolean };
@@ -237,40 +239,54 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
             </p>
           ) : null}
 
-          {loading ? (
-            <p className="muted">Laddar annonser…</p>
-          ) : jobs.length === 0 ? (
-            <p className="muted">Inga annonser matchar sökningen.</p>
-          ) : (
-            <ul className="job-list">
-              {jobs.map((job, index) => (
-                <li
-                  key={job.id}
-                  className="job-item"
-                  style={{ animationDelay: `${0.05 * index}s` }}
-                >
-                  <div className="job-meta">
-                    <span className="segment-tag">{job.segment}</span>
-                    <span>{job.employment_type}</span>
-                    <span>{job.location}</span>
-                    {job.sample ? <span className="sample">Exempel</span> : null}
-                  </div>
-                  <h3>{job.title}</h3>
-                  <p className="company">{job.company}</p>
-                  <p>{job.description}</p>
-                  <p className="contact">
-                    Kontakt: {job.contact}
-                    {job.telegram_user
-                      ? ` · @${job.telegram_user.replace(/^@/, "")}`
-                      : ""}
-                  </p>
-                  <time dateTime={job.created_at}>
-                    {formatDate(job.created_at)}
-                  </time>
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="listings-layout">
+            <div>
+              {loading ? (
+                <p className="muted">Laddar annonser…</p>
+              ) : jobs.length === 0 ? (
+                <p className="muted">Inga annonser matchar sökningen.</p>
+              ) : (
+                <ul className="job-list">
+                  {jobs.map((job, index) => (
+                    <li
+                      key={job.id}
+                      className="job-item"
+                      style={{ animationDelay: `${0.05 * index}s` }}
+                    >
+                      <div className="job-meta">
+                        <span className="segment-tag">{job.segment}</span>
+                        <span>{job.employment_type}</span>
+                        <span>{job.location}</span>
+                        {job.sample ? (
+                          <span className="sample">Exempel</span>
+                        ) : null}
+                      </div>
+                      <h3>{job.title}</h3>
+                      <p className="company">{job.company}</p>
+                      <p>{job.description}</p>
+                      <p className="contact">
+                        Kontakt: {job.contact}
+                        {job.telegram_user
+                          ? ` · @${job.telegram_user.replace(/^@/, "")}`
+                          : ""}
+                      </p>
+                      <time dateTime={job.created_at}>
+                        {formatDate(job.created_at)}
+                      </time>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <OfferRail
+              offers={offersForFilter(segmentFilter)}
+              heading={
+                segmentFilter === "Alla"
+                  ? "Erbjudanden i populära segment"
+                  : `Erbjudanden för ${segmentFilter}`
+              }
+            />
+          </div>
         </div>
       </section>
 

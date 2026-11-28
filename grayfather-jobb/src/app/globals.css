@@ -247,6 +247,74 @@ a {
   font-weight: 700;
 }
 
+.listings-layout {
+  display: grid;
+  gap: 2rem;
+}
+
+@media (min-width: 960px) {
+  .listings-layout {
+    grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.9fr);
+    align-items: start;
+  }
+}
+
+.offer-rail h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+
+.offer-note {
+  margin: 0.55rem 0 1rem;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.offer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1.1rem;
+}
+
+.offer-list li {
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.offer-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.offer-cat {
+  margin: 0 0 0.2rem;
+  color: var(--gold);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.offer-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.offer-blurb {
+  margin: 0.3rem 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.offer-cta {
+  padding: 0.65rem 1rem;
+  font-size: 0.92rem;
+}
+
 .steps {
   list-style: none;
   margin: 0;
