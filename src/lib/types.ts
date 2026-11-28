@@ -206,13 +206,14 @@ export type MatchAnalysis = {
   /** Säker vinnare (endast 2 @ ca 2,00) om kriterierna uppfylls */
   safeWinner: SafeWinnerTip | null;
   /**
-   * Tippsajter pratar tungt om nyckelspelare borta → matchen kan gå hur som helst.
-   * Systemen ska då gardera (hög hedgeNeed), inte torrspika.
+   * Tippsajter lyfter truppförändring (borta / tillbaka / ny spelare)
+   * → matchen kan gå hur som helst. Systemen garderar, torrspikar inte.
    */
   tipOpenMatch?: {
     reason: string;
     sources: string[];
     playerHint: string | null;
+    openReason?: "absence" | "return" | "newcomer" | null;
   } | null;
 };
 
@@ -266,6 +267,7 @@ export type ExpertSpikeTip = {
   voteCount: number;
   kind: "spik" | "fade" | "cover" | "open";
   note: string;
+  openReason?: "absence" | "return" | "newcomer" | null;
 };
 
 export type Article = {

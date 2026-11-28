@@ -435,7 +435,13 @@ function makePicks(
     if (plan === "hel") {
       outcomes = ["1", "X", "2"];
       undecidedNote = m.tipOpenMatch
-        ? `Kan inte avgöras – nyckelspelare borta (${m.tipOpenMatch.playerHint || "tung frånvaro"}). Helgarderas (1/X/2).`
+        ? `Kan inte avgöras – ${
+            m.tipOpenMatch.openReason === "return"
+              ? `spelare tillbaka (${m.tipOpenMatch.playerHint || "comeback"})`
+              : m.tipOpenMatch.openReason === "newcomer"
+                ? `ny spelare/debut (${m.tipOpenMatch.playerHint || "nyförvärv"})`
+                : `nyckelspelare borta (${m.tipOpenMatch.playerHint || "tung frånvaro"})`
+          }. Helgarderas (1/X/2).`
         : "Kan inte avgöras – för jämnt/osäkert. Helgarderas (1/X/2).";
       reason = `${undecidedNote} ${m.pickReason}`;
     } else if (plan === "halv") {

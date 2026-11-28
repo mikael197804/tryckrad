@@ -16,6 +16,8 @@ export type ExpertTipMention = {
   snippet: string;
   /** Om open: spelarnamn eller kort hint från snutten */
   playerHint?: string | null;
+  /** Om open: frånvaro / tillbaka / ny spelare */
+  openReason?: "absence" | "return" | "newcomer" | null;
 };
 
 export type ExpertTipSourceReport = {
@@ -35,6 +37,7 @@ export type ExpertSpikeConsensus = {
   kind: "spik" | "fade" | "cover" | "open";
   note: string;
   playerHint?: string | null;
+  openReason?: "absence" | "return" | "newcomer" | null;
 };
 
 export type PoolExpertTipsResult = {
@@ -174,51 +177,129 @@ function dateSlugs(now = new Date()): {
   };
 }
 
-/** Tung frånvaro-narrativ: nyckelspelare borta → matchen kan gå hur som helst. */
-function isKeyPlayerOutOpenNarrative(snippet: string): {
+type OpenRosterHit = {
   hit: boolean;
   playerHint: string | null;
-} {
+  /** Varför matchen öppnas – styr UI-text */
+  reasonKind: "absence" | "return" | "newcomer" | null;
+};
+
+function extractPlayerHint(
+  snippet: string,
+  verbs: RegExp
+): string | null {
+  return (
+    snippet.match(
+      new RegExp(
+        `\\b([A-ZÅÄÖ][\\w'’-]+(?:\\s+[A-ZÅÄÖ][\\w'’-]+)?)\\b(?:\\s+(?:${verbs.source}))`,
+        "i"
+      )
+    )?.[1] ?? null
+  );
+}
+
+/**
+ * Truppförändring som gör matchen svår att spika:
+ * nyckelspelare borta, tillbaka efter skada, eller ny spelare/debut.
+ */
+function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
   const s = snippet.toLowerCase();
+
   const absence =
     /\b(missar|borta|skadad|saknas|utesluten|avstängd|out|ruled out|sidelined|injured|unavailable|won't play|will miss)\b/.test(
       s
     );
+  const returnVerb =
+    /\b(tillbaka|åter(?:vänder|komst)?|comeback|åter\s+i\s+(?:laget|truppen|spel)|available again|returns?|fit again|cleared to play|makes? (?:his |her )?return|spelar\s+igen|är\s+tillbaka|med\s+igen|klart\s+för\s+spel)\b/.test(
+      s
+    );
+  // Kräv spelarkontext – inte "laget är tillbaka i form"
+  const returning =
+    returnVerb &&
+    (/\b(efter\s+skada|lång\s+frånvaro|månader?\s+(?:out|borta)|veckor?\s+(?:out|borta)|rehab|skadeuppeh[aå]ll)\b/.test(
+      s
+    ) ||
+      /\b([a-zåäö]{3,})\s+(?:är\s+)?tillbaka\b/.test(s) ||
+      /\b(?:spelaren|stjärnan|kaptenen|målvakten|centern|backen|forwarden|nyckelspelaren)\b.{0,30}\b(?:tillbaka|comeback|åter)/.test(
+        s
+      ) ||
+      /\b(?:tillbaka|comeback|återvänder)\b.{0,40}\b(?:efter|från)\b/.test(s));
+  const newcomer =
+    /\b(nyförvärv|ny\s+spelare|debut(?:erar|en)?|första\s+match(?:en)?|gör\s+debut|makes?\s+(?:his\s+|her\s+)?debut|first\s+(?:shl|nhl|start|game)|nysign(?:erad|ing)|inkallad|kallats\s+in|lånas?\s+in|loan\s+(?:debut|spell))\b/.test(
+      s
+    );
+
   const doom =
     /\b(utan honom|utan henne|utan sin|kan inte vinna|svårt att vinna|omöjligt att vinna|beroende av|nyckelspelare|stjärnan|avgörande spelare|ryggraden|hjärtat i|saknar sin|tung frånvaro|kännbart|kännbar frånvaro|stor frånvaro|saknar .+ i truppen)\b/.test(
       s
     ) ||
     /\b(utan|without)\b.{0,40}\b(vinna|win|seger)\b/.test(s) ||
     /\b(can't|cannot|hard to)\b.{0,30}\bwin\b/.test(s);
-  if (!(absence && doom) && !(absence && /\b(stjärn|nyckel|första\s*center|första\s*back|målvakt|kapten)\b/.test(s) && /\b(tung|stor|kännbar|avgörande)\b/.test(s))) {
-    // Enkel variant: tippare säger uttryckligen att det kan gå hur som helst p.g.a. frånvaro
-    if (
-      absence &&
-      /\b(hur som helst|öppet kort|svårbedömt|oförutsägbar|lotteri|allt kan hända)\b/.test(s)
-    ) {
-      const player =
-        snippet.match(
-          /\b([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)\b(?:\s+(?:missar|borta|skadad|saknas))/
-        )?.[1] ?? null;
-      return { hit: true, playerHint: player };
-    }
-    return { hit: false, playerHint: null };
+
+  const uncertainty =
+    /\b(hur som helst|öppet kort|svårbedömt|oförutsägbar|lotteri|allt kan hända|osäkert|frågetecken|svårt att tippa|kan gå hur som)\b/.test(
+      s
+    );
+
+  const keyRole =
+    /\b(stjärn|nyckel|första\s*center|första\s*back|målvakt|kapten|nyförvärv)\b/.test(
+      s
+    );
+
+  // Tillbaka / ny spelare: tippare lyfter det → gardera
+  if (returning) {
+    const player =
+      extractPlayerHint(
+        snippet,
+        /tillbaka|återvänder|comeback|spelar\s+igen|är\s+tillbaka|returns?/
+      ) ??
+      snippet.match(
+        /\b([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)\b(?:\s+(?:är|kan vara|blir)\s+tillbaka)/i
+      )?.[1] ??
+      null;
+    return { hit: true, playerHint: player, reasonKind: "return" };
   }
+
+  if (newcomer) {
+    const player =
+      extractPlayerHint(
+        snippet,
+        /debuterar|gör\s+debut|nyförvärv|nysign(?:erad)?|inkallad/
+      ) ??
+      snippet.match(
+        /\b(?:nyförvärvet|debutanten)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
+      )?.[1] ??
+      null;
+    return { hit: true, playerHint: player, reasonKind: "newcomer" };
+  }
+
+  if (
+    !(absence && doom) &&
+    !(absence && keyRole && /\b(tung|stor|kännbar|avgörande)\b/.test(s))
+  ) {
+    if (absence && uncertainty) {
+      const player = extractPlayerHint(
+        snippet,
+        /missar|borta|skadad|saknas/
+      );
+      return { hit: true, playerHint: player, reasonKind: "absence" };
+    }
+    return { hit: false, playerHint: null, reasonKind: null };
+  }
+
   const player =
-    snippet.match(
-      /\b([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)\b(?:\s+(?:missar|borta|skadad|saknas|out|ruled))/i
-    )?.[1] ??
+    extractPlayerHint(snippet, /missar|borta|skadad|saknas|out|ruled/) ??
     snippet.match(
       /(?:utan|without)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
     )?.[1] ??
     null;
-  return { hit: true, playerHint: player };
+  return { hit: true, playerHint: player, reasonKind: "absence" };
 }
 
 function classifySnippet(
   snippet: string
 ): { kind: ExpertTipMention["kind"]; outcome: Outcome | null } {
-  if (isKeyPlayerOutOpenNarrative(snippet).hit) {
+  if (isRosterChangeOpenNarrative(snippet).hit) {
     return { kind: "open", outcome: null };
   }
   const s = snippet.toLowerCase();
@@ -351,7 +432,7 @@ function extractHeadlineSpikes(
   return out;
 }
 
-/** Extra sweep: frånvaro + "kan inte vinna" nära lag/spelare i hela artikeln. */
+/** Extra sweep: truppförändring (borta / tillbaka / debut) nära lag i artikeln. */
 function extractOpenFromAbsence(
   text: string,
   matches: MatchAnalysis[],
@@ -364,14 +445,23 @@ function extractOpenFromAbsence(
     /.{0,80}\b(?:missar|borta|skadad|saknas|utesluten|avstängd)\b.{0,100}\b(?:utan honom|utan henne|kan inte vinna|svårt att vinna|tung frånvaro|kännbar frånvaro|hur som helst|öppet kort)\b.{0,60}/gi,
     /.{0,80}\b(?:utan honom|utan henne|kan inte vinna|svårt att vinna|tung frånvaro|kännbar frånvaro)\b.{0,100}\b(?:missar|borta|skadad|saknas)\b.{0,60}/gi,
     /.{0,60}\b(?:stjärnan|nyckelspelaren|kaptenen|första\s*centern|målvakten)\b.{0,40}\b(?:missar|borta|skadad|saknas)\b.{0,80}/gi,
+    /.{0,80}\b(?:tillbaka|comeback|återvänder|åter\s+i\s+(?:laget|truppen|spel)|spelar\s+igen)\b.{0,100}/gi,
+    /.{0,80}\b(?:nyförvärv|debuterar|gör\s+debut|första\s+match(?:en)?|nysignerad|inkallad)\b.{0,100}/gi,
   ];
   for (const re of patterns) {
     for (const m of text.matchAll(re)) {
       const snippet = m[0].replace(/\s+/g, " ").trim();
-      const open = isKeyPlayerOutOpenNarrative(snippet);
-      if (!open.hit && !/\b(missar|borta|skadad|saknas)\b/i.test(snippet)) {
+      const open = isRosterChangeOpenNarrative(snippet);
+      if (
+        !open.hit &&
+        !/\b(missar|borta|skadad|saknas|tillbaka|comeback|debut|nyförvärv)\b/i.test(
+          snippet
+        )
+      ) {
         continue;
       }
+      // Kräv att narrativet träffar (annars blir "tillbaka" för brusigt)
+      if (!open.hit) continue;
       for (const match of matches) {
         for (const side of [match.home.name, match.away.name] as const) {
           const needles = teamNeedles(side);
@@ -388,6 +478,7 @@ function extractOpenFromAbsence(
             kind: "open",
             snippet: snippet.slice(0, 200),
             playerHint: open.playerHint,
+            openReason: open.reasonKind,
           });
         }
       }
@@ -427,7 +518,7 @@ function findTeamMentions(
           const start = Math.max(0, abs - 160);
           const end = Math.min(text.length, abs + needle.length + 180);
           const snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
-          const openInfo = isKeyPlayerOutOpenNarrative(snippet);
+          const openInfo = isRosterChangeOpenNarrative(snippet);
           const { kind, outcome } = openInfo.hit
             ? { kind: "open" as const, outcome: null }
             : classifySnippet(snippet);
@@ -485,6 +576,7 @@ function findTeamMentions(
             kind,
             snippet: snippet.slice(0, 180),
             playerHint: kind === "open" ? openInfo.playerHint : null,
+            openReason: kind === "open" ? openInfo.reasonKind : null,
           });
           searchFrom = abs + needle.length;
           hit++;
@@ -738,29 +830,47 @@ function buildConsensus(
     });
   }
 
-  // Nyckelspelare borta → öppet kort (slår spik på samma match)
+  // Truppförändring (borta / tillbaka / ny) → öppet kort (slår spik)
   const opens = new Map<
     number,
-    { sources: Set<string>; playerHint: string | null }
+    {
+      sources: Set<string>;
+      playerHint: string | null;
+      openReason: "absence" | "return" | "newcomer" | null;
+    }
   >();
   for (const m of mentions) {
     if (m.kind !== "open" || m.eventNumber == null) continue;
     const cur = opens.get(m.eventNumber) ?? {
       sources: new Set<string>(),
       playerHint: null as string | null,
+      openReason: null as "absence" | "return" | "newcomer" | null,
     };
     cur.sources.add(m.source);
     if (!cur.playerHint && m.playerHint) cur.playerHint = m.playerHint;
+    if (!cur.openReason && m.openReason) cur.openReason = m.openReason;
     opens.set(m.eventNumber, cur);
   }
   for (const [eventNumber, data] of opens) {
     const match = matches.find((m) => m.eventNumber === eventNumber);
     if (!match) continue;
-    // Ta bort spik/fade på samma match – frånvaro gör kortet öppet
+    // Ta bort spik/fade på samma match – truppförändring gör kortet öppet
     const filtered = out.filter((c) => c.eventNumber !== eventNumber);
     out.length = 0;
     out.push(...filtered);
     const who = data.playerHint ? ` (${data.playerHint})` : "";
+    const label =
+      data.openReason === "return"
+        ? `Spelare tillbaka${who}`
+        : data.openReason === "newcomer"
+          ? `Ny spelare/debut${who}`
+          : `Nyckelspelare borta${who}`;
+    const detail =
+      data.openReason === "return"
+        ? "tippsajter lyfter comeback – form/minuter osäkra"
+        : data.openReason === "newcomer"
+          ? "tippsajter lyfter nyförvärv/debut – svårt att värdera"
+          : "tippsajter säger att laget tappar mycket";
     out.push({
       eventNumber,
       description: match.description,
@@ -769,7 +879,8 @@ function buildConsensus(
       voteCount: data.sources.size,
       kind: "open",
       playerHint: data.playerHint,
-      note: `Nyckelspelare borta${who} – tippsajter säger att laget tappar mycket; matchen kan gå hur som helst (${[...data.sources].join(", ")})`,
+      openReason: data.openReason,
+      note: `${label} – ${detail}; matchen kan gå hur som helst (${[...data.sources].join(", ")})`,
     });
   }
 
@@ -827,6 +938,7 @@ export function applyExpertTipsToMatches(
         reason: tip.note,
         sources: tip.sources,
         playerHint: tip.playerHint ?? null,
+        openReason: tip.openReason ?? null,
       };
       alerts.push(`Match ${m.eventNumber}: ${tip.note} – garderas`);
     } else if (tip.kind === "spik") {

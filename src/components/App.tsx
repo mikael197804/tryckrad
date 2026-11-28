@@ -6262,8 +6262,9 @@ export default function App() {
                     <p className="panel-lead">
                       Spikar och varningar från Hurbra, RekatOchKlart, Expressen,
                       Betii m.fl. När minst två källor pekar samma tecken vägs det
-                      in som starkare enkel. Om tippare pratar tungt om
-                      nyckelspelare borta räknas matchen som öppen och garderas.
+                      in som starkare enkel. Om tippare lyfter nyckelspelare borta,
+                      tillbaka efter skada eller ny spelare/debut räknas matchen
+                      som öppen och garderas.
                     </p>
                     {(draw.expertTips?.length ?? 0) > 0 && (
                       <ul className="alert-list expert-tips">
