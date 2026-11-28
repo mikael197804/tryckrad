@@ -147,6 +147,17 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
     s2 = s2 * 0.45 + 1 / 3;
   }
 
+  // Kval/retur med övertag i motiveringen → spetsa ledande sidan
+  if (
+    !m.tipOpenMatch &&
+    /övertag|försprång|kvalretur|vann första|måste vinna med|aggregate/i.test(
+      m.pickReason
+    )
+  ) {
+    if (s1 >= sX && s1 >= s2) s1 += 0.1;
+    else if (s2 >= s1 && s2 >= sX) s2 += 0.1;
+  }
+
   [s1, sX, s2] = normalize3(s1, sX, s2);
 
   const singles: { o: Outcome; p: number }[] = [
@@ -167,13 +178,30 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
   const bestHalf = halves[0].outcomes;
   const bestHalfP = halves[0].p;
 
+  // Folkets tydliga favorit: odds kan vara "platta" i kval (jaga-mål)
+  // utan att matchen egentligen är helgardering (Varberg-fallet).
+  const folkMax = Math.max(f1, fX, f2);
+  const folkAligned =
+    (bestSingle === "1" && f1 >= folkMax) ||
+    (bestSingle === "X" && fX >= folkMax) ||
+    (bestSingle === "2" && f2 >= folkMax);
+  const folkHedgeCut =
+    folkAligned && folkMax >= 0.55
+      ? folkMax >= 0.62
+        ? 0.22
+        : 0.14
+      : 0;
+
   // Behöver gardering om enkel är svag eller halv ger stor lyft
   // Högre ribba → fler halv på de matcher som brukar bli "2 fel"
-  const hedgeNeed =
+  const hedgeNeed = Math.max(
+    0,
     1 - bestSingleP + Math.max(0, bestHalfP - bestSingleP) * 0.95 +
-    (bestSingleP < 0.66 ? 0.08 : 0) +
-    (bestSingleP < 0.58 ? 0.1 : 0) +
-    (m.tipOpenMatch ? 0.42 : 0);
+      (bestSingleP < 0.66 ? 0.08 : 0) +
+      (bestSingleP < 0.58 ? 0.1 : 0) +
+      (m.tipOpenMatch ? 0.42 : 0) -
+      folkHedgeCut
+  );
 
   return {
     p1: s1,

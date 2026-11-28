@@ -236,12 +236,40 @@ function extractPlayerHint(
   );
 }
 
+/** Negation: "inga nyckelspelare … borta", "inte skadad", "no one ruled out". */
+function hasAbsenceNegation(snippet: string): boolean {
+  const s = snippet.toLowerCase();
+  return (
+    /\binga?\b.{0,40}\b(nyckelspelare|spelare|avbräck).{0,40}\b(borta|skadad|saknas|missar)\b/.test(
+      s
+    ) ||
+    /\b(inga?\s+bekräftade|ingen\s+bekräftad|inte\s+borta|ej\s+skadad|not\s+out|no\s+one\s+ruled\s+out|none\s+ruled\s+out)\b/.test(
+      s
+    ) ||
+    /\b(utan\s+bekräftade\s+frånvaro|inga?\s+avstängningar)\b/.test(s)
+  );
+}
+
 /**
  * Truppförändring som gör matchen svår att spika:
  * nyckelspelare borta, tillbaka efter skada, eller ny spelare/debut.
  */
 function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
   const s = snippet.toLowerCase();
+
+  // Bara spelplats/underlag → inte öppet kort (Varberg-fallet)
+  if (
+    /\b(spelplats|underlag|arena|matta|flyttad|borås arena|påskbergsvall)\b/.test(
+      s
+    ) &&
+    !/\b(missar|skadad|utesluten|avstängd|debuterar|nyförvärv|comeback)\b/.test(s)
+  ) {
+    return { hit: false, playerHint: null, reasonKind: null };
+  }
+
+  if (hasAbsenceNegation(snippet)) {
+    return { hit: false, playerHint: null, reasonKind: null };
+  }
 
   const absence =
     /\b(missar|borta|skadad|saknas|utesluten|avstängd|out|ruled out|sidelined|injured|unavailable|won't play|will miss)\b/.test(
@@ -268,16 +296,25 @@ function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
     );
 
   const doom =
-    /\b(utan honom|utan henne|utan sin|kan inte vinna|svårt att vinna|omöjligt att vinna|beroende av|nyckelspelare|stjärnan|avgörande spelare|ryggraden|hjärtat i|saknar sin|tung frånvaro|kännbart|kännbar frånvaro|stor frånvaro|saknar .+ i truppen)\b/.test(
+    /\b(utan honom|utan henne|utan sin|kan inte vinna|svårt att vinna|omöjligt att vinna|beroende av|stjärnan|avgörande spelare|ryggraden|hjärtat i|saknar sin|tung frånvaro|kännbart|kännbar frånvaro|stor frånvaro|saknar .+ i truppen)\b/.test(
       s
     ) ||
     /\b(utan|without)\b.{0,40}\b(vinna|win|seger)\b/.test(s) ||
     /\b(can't|cannot|hard to)\b.{0,30}\bwin\b/.test(s);
+  // "nyckelspelare" ensamt räknas bara med tydlig frånvaro (inte "inga nyckelspelare borta")
+  const keyAbsenceDoom =
+    /\bnyckelspelare\b/.test(s) &&
+    /\b(missar|skadad|utesluten|avstängd|ruled out|sidelined)\b/.test(s) &&
+    !hasAbsenceNegation(snippet);
 
   const uncertainty =
-    /\b(hur som helst|öppet kort|svårbedömt|oförutsägbar|lotteri|allt kan hända|osäkert|frågetecken|svårt att tippa|kan gå hur som)\b/.test(
+    /\b(hur som helst|öppet kort|svårbedömt|oförutsägbar|lotteri|allt kan hända|frågetecken|svårt att tippa|kan gå hur som)\b/.test(
       s
     );
+  // "osäkert" ensamt är för svagt (spelplats/underlag) – kräver spelarkontext
+  const softUncertain =
+    /\bosäkert\b/.test(s) &&
+    /\b(spelare|skad|status|trupp|elvan|start)\b/.test(s);
 
   const keyRole =
     /\b(stjärn|nyckel|första\s*center|första\s*back|målvakt|kapten|nyförvärv)\b/.test(
@@ -317,10 +354,10 @@ function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
   }
 
   if (
-    !(absence && doom) &&
+    !(absence && (doom || keyAbsenceDoom)) &&
     !(absence && keyRole && /\b(tung|stor|kännbar|avgörande)\b/.test(s))
   ) {
-    if (absence && uncertainty) {
+    if (absence && (uncertainty || softUncertain)) {
       const player = extractPlayerHint(
         snippet,
         /missar|borta|skadad|saknas/
@@ -483,6 +520,104 @@ function extractHeadlineSpikes(
   return out;
 }
 
+/**
+ * Kval/retur: "vann första 2–0", "tvåmålsövertag", "måste vinna med minst två".
+ * → spika laget med övertag (Varberg-fallet), inte helgardera.
+ */
+function extractTwoLegSpikes(
+  text: string,
+  matches: MatchAnalysis[],
+  source: string,
+  url: string,
+  title: string
+): ExpertTipMention[] {
+  const out: ExpertTipMention[] = [];
+  const lower = text.toLowerCase();
+  if (
+    !/\b(kval|retur|play-?off|agg(?:regate)?|övertag|försprång|första\s+möte|första\s+match)\b/i.test(
+      lower
+    )
+  ) {
+    return out;
+  }
+
+  for (const match of matches) {
+    for (const side of [match.home.name, match.away.name] as const) {
+      const needles = teamNeedles(side);
+      const sideHit = needles.some((n) => lower.includes(n));
+      if (!sideHit) continue;
+
+      // Hitta snutt runt laget
+      let snippet = "";
+      for (const n of needles) {
+        const idx = lower.indexOf(n);
+        if (idx < 0) continue;
+        snippet = text
+          .slice(Math.max(0, idx - 120), Math.min(text.length, idx + n.length + 160))
+          .replace(/\s+/g, " ")
+          .trim();
+        break;
+      }
+      if (!snippet) continue;
+      const s = snippet.toLowerCase();
+
+      const lead =
+        /\b(tvåmålsövertag|tremålsövertag|övertag|försprång|vann\s+första|led(?:er|ning)|aggregate\s+lead|leads?\s+\d)/i.test(
+          s
+        ) ||
+        /\bvann\b.{0,40}\b(2\s*[-–]\s*0|3\s*[-–]\s*0|2\s*[-–]\s*1|3\s*[-–]\s*1)\b/.test(
+          s
+        );
+      const mustChase =
+        /\b(måste\s+vinna|behöver\s+vinna|behöver\s+en\s+.*seger|must\s+win|needs?\s+to\s+win)\b/.test(
+          s
+        );
+
+      // Om motståndaren måste jaga → side med övertag är den andra
+      if (mustChase && !lead) {
+        // This side must chase → opponent has lead; skip marking this side as spike
+        continue;
+      }
+      if (!lead && !mustChase) continue;
+      if (!lead) continue;
+
+      out.push({
+        source,
+        url,
+        title,
+        team: side,
+        eventNumber: match.eventNumber,
+        outcome: side === match.home.name ? "1" : "2",
+        kind: "spik",
+        snippet: snippet.slice(0, 200),
+      });
+    }
+
+    // "Östersund måste vinna" nära Varberg-match → spika hemma (Varberg)
+    const homeN = teamNeedles(match.home.name);
+    const awayN = teamNeedles(match.away.name);
+    const blob = lower;
+    const awayMust =
+      awayN.some((n) => blob.includes(n)) &&
+      /\b(måste\s+vinna|behöver\s+vinna|must\s+win)\b/.test(blob) &&
+      homeN.some((n) => blob.includes(n));
+    if (awayMust) {
+      out.push({
+        source,
+        url,
+        title,
+        team: match.home.name,
+        eventNumber: match.eventNumber,
+        outcome: "1",
+        kind: "spik",
+        snippet: "Kvalretur: bortalaget måste jaga → hemmalag med övertag",
+      });
+    }
+  }
+
+  return out;
+}
+
 /** Extra sweep: truppförändring (borta / tillbaka / debut) nära lag i artikeln. */
 function extractOpenFromAbsence(
   text: string,
@@ -548,6 +683,7 @@ function findTeamMentions(
   const out: ExpertTipMention[] = [
     ...extractHeadlineSpikes(text, matches, source, url, title),
     ...extractOpenFromAbsence(text, matches, source, url, title),
+    ...extractTwoLegSpikes(text, matches, source, url, title),
   ];
   const lower = text.toLowerCase();
 
@@ -1105,10 +1241,17 @@ export function applyExpertTipsToMatches(
         openReason: tip.openReason ?? null,
       };
       alerts.push(`Match ${m.eventNumber}: ${tip.note} – garderas`);
-    } else if (tip.kind === "spik") {
-      if (tip.outcome === "1") score1 += boost;
-      if (tip.outcome === "X") scoreX += boost;
-      if (tip.outcome === "2") score2 += boost;
+    } else     if (tip.kind === "spik") {
+      // Kvalövertag/spikkonsensus: starkare boost när flera källor eniga
+      const spikBoost =
+        tip.voteCount >= 2
+          ? boost + 0.06
+          : /övertag|kval|försprång|måste vinna/i.test(tip.note)
+            ? boost + 0.08
+            : boost;
+      if (tip.outcome === "1") score1 += spikBoost;
+      if (tip.outcome === "X") scoreX += spikBoost;
+      if (tip.outcome === "2") score2 += spikBoost;
       alerts.push(
         `Match ${m.eventNumber}: ${tip.note} – vägs in som starkare enkel`
       );
