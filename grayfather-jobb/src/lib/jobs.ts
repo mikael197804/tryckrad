@@ -145,8 +145,9 @@ export async function listJobs(filters: JobFilters = {}): Promise<Job[]> {
        order by created_at desc
        limit 500`,
     );
-    const source = rows.length === 0 ? SAMPLE_JOBS : rows;
-    return source.filter((job) => matchesFilters(job, filters));
+    const real = rows.filter((job) => matchesFilters(job, filters));
+    if (real.length > 0) return real;
+    return SAMPLE_JOBS.filter((job) => matchesFilters(job, filters));
   } catch {
     return SAMPLE_JOBS.filter((job) => matchesFilters(job, filters));
   }
