@@ -135,6 +135,7 @@ function mergePicks(groups: HistoryPick[][]): HistoryPick[] {
         resultNote: base.resultNote ?? other.resultNote,
         settledAt: base.settledAt ?? other.settledAt ?? null,
         costKr: base.costKr ?? other.costKr ?? null,
+        apiSlug: base.apiSlug ?? other.apiSlug ?? null,
       });
     }
   }
@@ -162,15 +163,23 @@ async function fetchJson(url: string): Promise<unknown> {
   return res.json();
 }
 
+type DrawEventResult = {
+  outcome: Outcome;
+  homeGoals: number | null;
+  awayGoals: number | null;
+  /** ft = Fulltime / result-API, live = bara Current (ej settla som won/lost) */
+  status: "ft" | "live";
+};
+
 async function fetchDrawResults(
   product: SvenskaSpelHistoryProduct,
-  drawNumber: number
-): Promise<Map<number, { outcome: Outcome; homeGoals: number | null; awayGoals: number | null }>> {
-  const slug = PRODUCT_SLUG[product];
-  const map = new Map<
-    number,
-    { outcome: Outcome; homeGoals: number | null; awayGoals: number | null }
-  >();
+  drawNumber: number,
+  apiSlug?: string | null
+): Promise<Map<number, DrawEventResult>> {
+  // Rätt kupong-slug (Stryk/Extra ≠ daglig Topptipset)
+  const slug =
+    (apiSlug && String(apiSlug).trim()) || PRODUCT_SLUG[product];
+  const map = new Map<number, DrawEventResult>();
   try {
     const [drawWrap, resWrap] = await Promise.all([
       fetchJson(
@@ -225,28 +234,38 @@ async function fetchDrawResults(
         outcome: o as Outcome,
         homeGoals,
         awayGoals,
+        status: "ft",
       });
     }
 
-    // Draw-events FT/Current som komplement – skriv inte över result-API:s mål
-    // (spelarspecialer kan felaktigt ärva lagmatchens FT, t.ex. 2–5).
+    // Draw-events: Fulltime = facit. Current utan FT = live (visa, settla ej).
+    // Skriv inte över result-API:s mål (spelarspecialer).
     for (const ev of draw.drawEvents || []) {
       if (playerEvents.has(ev.eventNumber)) continue;
-      const ft = ev.match?.result?.find(
-        (r) =>
-          r.sportEventResultType === "Fulltime" ||
-          r.sportEventResultType === "Current"
-      );
-      if (!ft) continue;
-      const h = Number(ft.home);
-      const a = Number(ft.away);
+      const rows = ev.match?.result || [];
+      const ft = rows.find((r) => r.sportEventResultType === "Fulltime");
+      const cur = rows.find((r) => r.sportEventResultType === "Current");
+      const row = ft || cur;
+      if (!row) continue;
+      const h = Number(row.home);
+      const a = Number(row.away);
       if (!Number.isFinite(h) || !Number.isFinite(a)) continue;
       const outcome: Outcome = h > a ? "1" : h < a ? "2" : "X";
       const prev = map.get(ev.eventNumber);
+      if (prev?.status === "ft") {
+        map.set(ev.eventNumber, {
+          outcome: prev.outcome,
+          homeGoals: prev.homeGoals ?? h,
+          awayGoals: prev.awayGoals ?? a,
+          status: "ft",
+        });
+        continue;
+      }
       map.set(ev.eventNumber, {
         outcome: prev?.outcome || outcome,
         homeGoals: prev?.homeGoals ?? h,
         awayGoals: prev?.awayGoals ?? a,
+        status: ft ? "ft" : "live",
       });
     }
 
@@ -471,10 +490,7 @@ async function settleAtgLegPick(p: HistoryPick): Promise<HistoryPick> {
 }
 
 async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
-  const resultsCache = new Map<
-    string,
-    Map<number, { outcome: Outcome; homeGoals: number | null; awayGoals: number | null }>
-  >();
+  const resultsCache = new Map<string, Map<number, DrawEventResult>>();
 
   const out: HistoryPick[] = [];
   for (const p of picks) {
@@ -507,7 +523,89 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       continue;
     }
 
-    // Primärt: Flashscore via lagnamn + kickoff (alla spelformer)
+    const isPoolProduct =
+      p.product === "powerplay" ||
+      p.product === "topptipset" ||
+      p.product === "stryktipset" ||
+      p.product === "europatipset" ||
+      p.product === "maltipset";
+
+    async function loadPoolResult(
+      pick: HistoryPick
+    ): Promise<DrawEventResult | undefined> {
+      if (pick.drawNumber == null || pick.eventNumber == null) return undefined;
+      const cacheKey = `${pick.apiSlug || pick.product}:${pick.drawNumber}`;
+      if (!resultsCache.has(cacheKey)) {
+        resultsCache.set(
+          cacheKey,
+          await fetchDrawResults(
+            pick.product as SvenskaSpelHistoryProduct,
+            pick.drawNumber,
+            pick.apiSlug
+          )
+        );
+      }
+      return resultsCache.get(cacheKey)!.get(pick.eventNumber);
+    }
+
+    // Pool: Svenska Spel först (rätt kupong-slug) – undvik fel land via Flashscore
+    if (!alreadySettled && isPoolProduct) {
+      const poolRes = await loadPoolResult(p);
+      if (poolRes) {
+        const actual =
+          poolRes.homeGoals != null && poolRes.awayGoals != null
+            ? `${poolRes.homeGoals}-${poolRes.awayGoals}`
+            : poolRes.outcome;
+        if (poolRes.status === "live") {
+          out.push({
+            ...p,
+            status: "live",
+            actual,
+            resultNote: `Live ${actual.replace("-", "–")} · Svenska Spel`,
+          });
+          continue;
+        }
+        if (p.market === "1x2") {
+          const hit = p.pick.includes(poolRes.outcome);
+          const settledAt = p.settledAt || new Date().toISOString();
+          out.push({
+            ...p,
+            status: hit ? "won" : "lost",
+            actual,
+            settledAt,
+            resultNote: hit
+              ? `Rätt · ${actual} (tipset ${p.pick.join("")} → ${poolRes.outcome}) · Svenska Spel`
+              : `Fel · ${actual} (tipset ${p.pick.join("")}, blev ${poolRes.outcome}) · Svenska Spel`,
+          });
+          continue;
+        }
+        if (p.market === "mal") {
+          if (poolRes.homeGoals == null || poolRes.awayGoals == null) {
+            out.push({
+              ...p,
+              status: "pending",
+              actual: poolRes.outcome,
+              resultNote: `Resultat ${poolRes.outcome} · väntar på målantal`,
+            });
+            continue;
+          }
+          const total = poolRes.homeGoals + poolRes.awayGoals;
+          const hit = total >= 3;
+          out.push({
+            ...p,
+            status: hit ? "won" : "lost",
+            actual: `${poolRes.homeGoals}-${poolRes.awayGoals}`,
+            settledAt: p.settledAt || new Date().toISOString(),
+            resultNote: hit
+              ? `Rätt · ${poolRes.homeGoals}–${poolRes.awayGoals} (≥3 mål)`
+              : `Fel · ${poolRes.homeGoals}–${poolRes.awayGoals} (<3 mål)`,
+          });
+          continue;
+        }
+      }
+    }
+
+    // Flashscore via lagnamn + kickoff (Oddset / saknad SvS)
     if (!alreadySettled) {
       const viaFs = await settlePickViaFlashscore(p);
       if (viaFs) {
@@ -525,20 +623,19 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
       continue;
     }
 
-    const cacheKey = `${p.product}:${p.drawNumber}`;
-    if (!resultsCache.has(cacheKey)) {
-      resultsCache.set(
-        cacheKey,
-        await fetchDrawResults(p.product as SvenskaSpelHistoryProduct, p.drawNumber)
-      );
-    }
-    const results = resultsCache.get(cacheKey)!;
-    const res = results.get(p.eventNumber);
-    if (!res) {
+    const res = await loadPoolResult(p);
+    if (!res || res.status === "live") {
       out.push({
         ...p,
-        settledAt: p.settledAt || new Date().toISOString(),
-        resultNote: p.resultNote || "Väntar på Flashscore…",
+        status: res?.status === "live" ? "live" : p.status,
+        actual:
+          res?.homeGoals != null && res?.awayGoals != null
+            ? `${res.homeGoals}-${res.awayGoals}`
+            : p.actual,
+        resultNote:
+          res?.status === "live"
+            ? `Live ${res.homeGoals}–${res.awayGoals} · Svenska Spel`
+            : p.resultNote || "Väntar på Flashscore…",
       });
       continue;
     }
@@ -602,12 +699,14 @@ const payoutCache = new Map<string, { at: number; tiers: PayoutTier }>();
 
 async function fetchDrawPayoutTiers(
   product: SvenskaSpelHistoryProduct,
-  drawNumber: number
+  drawNumber: number,
+  apiSlug?: string | null
 ): Promise<PayoutTier> {
-  const key = `${product}:${drawNumber}`;
+  const slug =
+    (apiSlug && String(apiSlug).trim()) || PRODUCT_SLUG[product];
+  const key = `${slug}:${drawNumber}`;
   const cached = payoutCache.get(key);
   if (cached && Date.now() - cached.at < 120_000) return cached.tiers;
-  const slug = PRODUCT_SLUG[product];
   try {
     const wrap = (await fetchJson(
       `https://api.www.svenskaspel.se/draw/1/${slug}/draws/${drawNumber}/result`
@@ -679,6 +778,8 @@ function summarize(picks: HistoryPick[]): {
         list.find((x) => x.costKr != null)?.costKr ?? null;
       const drawNumber =
         list.find((x) => x.drawNumber != null)?.drawNumber ?? null;
+      const apiSlug =
+        list.find((x) => x.apiSlug)?.apiSlug ?? null;
       const settled = won + lost;
       const winThreshold = systemWinThreshold(list[0].product, list.length);
       let systemResult: "won" | "lost" | "pending" = "pending";
@@ -700,6 +801,7 @@ function summarize(picks: HistoryPick[]): {
         systemResult,
         payoutLabel: null,
         drawNumber,
+        apiSlug,
       };
     })
     .sort((a, b) => {
@@ -745,7 +847,8 @@ async function attachPayouts(
       try {
         const tiers = await fetchDrawPayoutTiers(
           g.product as SvenskaSpelHistoryProduct,
-          g.drawNumber
+          g.drawNumber,
+          g.apiSlug
         );
         const payoutLabel = formatPayoutLabel(tiers, g.won);
         return { ...g, payoutLabel };

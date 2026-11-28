@@ -154,6 +154,7 @@ export function daily192PicksFromDraw(
       drawNumber: draw.drawNumber,
       eventNumber: p.eventNumber,
       eventId: null,
+      apiSlug: draw.apiSlug || null,
       status: "pending" as const,
       actual: null,
       resultNote: null,

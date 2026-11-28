@@ -1437,6 +1437,36 @@ a.product-btn:hover {
   color: #04221f;
 }
 
+.pick-cell.facit-cell {
+  outline: 2px solid var(--ok, #1f8a4c);
+  outline-offset: 1px;
+}
+
+.pick-cell.facit-live-cell {
+  outline: 2px solid var(--warn, #c48a1a);
+  outline-offset: 1px;
+}
+
+.match-card.facit-hit {
+  border-color: color-mix(in srgb, var(--ok, #1f8a4c) 55%, var(--line));
+}
+
+.match-card.facit-miss {
+  border-color: color-mix(in srgb, var(--danger, #b33a3a) 45%, var(--line));
+}
+
+.match-card.facit-live {
+  border-color: color-mix(in srgb, var(--warn, #c48a1a) 50%, var(--line));
+}
+
+.facit-score {
+  font-weight: 700;
+}
+
+.facit-score.live {
+  color: var(--warn, #c48a1a);
+}
+
 .reason {
   color: var(--muted);
   font-size: 0.8rem;

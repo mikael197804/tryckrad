@@ -291,6 +291,7 @@ function mergeHistoryPickLists(...groups: HistoryPick[][]): HistoryPick[] {
         resultNote: base.resultNote ?? other.resultNote,
         settledAt: base.settledAt ?? other.settledAt ?? null,
         costKr: base.costKr ?? other.costKr ?? null,
+        apiSlug: base.apiSlug ?? other.apiSlug ?? null,
         gameLabel:
           (base.gameLabel || "").length >= (other.gameLabel || "").length
             ? base.gameLabel
@@ -579,6 +580,7 @@ function drawToHistoryPicks(
           drawNumber: draw.drawNumber,
           eventNumber: m.eventNumber,
           eventId: null,
+          apiSlug: draw.apiSlug || null,
           status: "pending",
           actual: null,
           resultNote: null,
@@ -608,6 +610,7 @@ function drawToHistoryPicks(
         drawNumber: draw.drawNumber,
         eventNumber: p.eventNumber,
         eventId: null,
+        apiSlug: draw.apiSlug || null,
         status: "pending",
         actual: null,
         resultNote: null,
@@ -6067,9 +6070,27 @@ export default function App() {
                       ]?.picks.find(
                         (p) => p.eventNumber === m.eventNumber
                       )?.undecidedNote;
+                      const facit = m.facit;
+                      const facitHit =
+                        facit?.status === "ft" &&
+                        product !== "maltipset" &&
+                        m.pick.includes(facit.outcome);
+                      const facitMiss =
+                        facit?.status === "ft" &&
+                        product !== "maltipset" &&
+                        !m.pick.includes(facit.outcome);
+                      const cardFacitClass = facit
+                        ? facit.status === "live"
+                          ? "facit-live"
+                          : facitHit
+                            ? "facit-hit"
+                            : facitMiss
+                              ? "facit-miss"
+                              : ""
+                        : "";
                       return (
                       <article
-                        className={`match-card ${undecided ? "undecided-match" : ""}`}
+                        className={`match-card ${undecided ? "undecided-match" : ""} ${cardFacitClass}`}
                         key={m.eventNumber}
                       >
                         <div className="match-card-top">
@@ -6087,10 +6108,45 @@ export default function App() {
                             <div className="reason">
                               {fmtTime(m.matchStart)} · {m.league}
                               {undecidedNote ? ` · ${undecidedNote}` : ""}
+                              {facit
+                                ? ` · ${facit.status === "live" ? "Live" : "Facit"} ${facit.homeGoals}–${facit.awayGoals} (${facit.outcome})`
+                                : ""}
                             </div>
                           </div>
                           <div className="pick-cells">
-                            {product === "maltipset" ? (
+                            {facit && product !== "maltipset" ? (
+                              <>
+                                {(["1", "X", "2"] as Outcome[]).map((o) => (
+                                  <span
+                                    key={o}
+                                    className={`pick-cell ${m.pick.includes(o) ? "on" : ""} ${
+                                      facit.outcome === o
+                                        ? facit.status === "live"
+                                          ? "facit-live-cell"
+                                          : "facit-cell"
+                                        : ""
+                                    }`}
+                                  >
+                                    {o}
+                                  </span>
+                                ))}
+                                <span
+                                  className={`oddset-result-badge ${
+                                    facit.status === "live"
+                                      ? "live"
+                                      : facitHit
+                                        ? "won"
+                                        : "lost"
+                                  }`}
+                                >
+                                  {facit.status === "live"
+                                    ? "Live"
+                                    : facitHit
+                                      ? "Rätt"
+                                      : "Fel"}
+                                </span>
+                              </>
+                            ) : product === "maltipset" ? (
                               <span
                                 className={`pick-cell ${m.malSelected ? "on" : ""}`}
                               >
@@ -6120,6 +6176,16 @@ export default function App() {
                             Folk {m.svenskaFolket.one}-{m.svenskaFolket.x}-
                             {m.svenskaFolket.two}
                           </span>
+                          {facit && (
+                            <span
+                              className={`odds facit-score ${
+                                facit.status === "live" ? "live" : ""
+                              }`}
+                            >
+                              {facit.status === "live" ? "Live" : "Facit"}{" "}
+                              {facit.homeGoals}–{facit.awayGoals}
+                            </span>
+                          )}
                         </div>
                         {m.goals && (
                           <GoalBlock

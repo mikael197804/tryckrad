@@ -8,6 +8,7 @@ import {
 import { rememberDaily192 } from "./pp192History";
 import { generateMaltipsetSystems, generateSystems } from "./systems";
 import {
+  drawApiSlug,
   fetchDrawsForProduct,
   type ProductKind,
 } from "./svenskaspel";
@@ -114,6 +115,7 @@ export async function buildAllDrawBundles(
           drawNumber: draw.drawNumber,
           productName: draw.productName,
           productKind: product,
+          apiSlug: drawApiSlug(draw),
           closeDescription: draw.regCloseDescription,
           closeTime: draw.regCloseTime,
           openTime: draw.regOpenTime,

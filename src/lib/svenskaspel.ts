@@ -34,6 +34,14 @@ export type RawDraw = {
   drawEvents: RawEvent[];
 };
 
+export type RawMatchScore = {
+  home?: string;
+  away?: string;
+  sportEventResultType?: string;
+  description?: string;
+  type?: number;
+};
+
 export type RawEvent = {
   eventNumber: number;
   eventDescription: string;
@@ -56,8 +64,70 @@ export type RawEvent = {
       shortName: string;
     }>;
     league: { name: string };
+    /** Live/FT-mål från Svenska Spel (90 min – inte aggregat). */
+    result?: RawMatchScore[] | null;
   };
 };
+
+/** Officiell API-slug per productId – blanda aldrig kuponger. */
+const PRODUCT_ID_SLUG: Record<number, string> = {
+  1: "stryktipset",
+  2: "europatipset",
+  8: "maltipset",
+  23: "topptipsetstryk",
+  24: "topptipsetextra",
+  25: "topptipset",
+  28: "powerplay",
+};
+
+/**
+ * Rätt Svenska Spel-slug för just denna kupong.
+ * Topptipset / Stryk / Extra har olika drawNumber-serier.
+ */
+export function drawApiSlug(
+  draw: Pick<RawDraw, "productId" | "productName">
+): string {
+  if (draw.productId != null && PRODUCT_ID_SLUG[draw.productId]) {
+    return PRODUCT_ID_SLUG[draw.productId];
+  }
+  const name = String(draw.productName || "").toLowerCase();
+  if (name.includes("topp") && name.includes("stryk")) return "topptipsetstryk";
+  if (name.includes("topp") && name.includes("extra")) return "topptipsetextra";
+  if (name.includes("topp")) return "topptipset";
+  if (name.includes("europa")) return "europatipset";
+  if (name.includes("stryk")) return "stryktipset";
+  if (name.includes("mål") || name.includes("mal")) return "maltipset";
+  if (name.includes("power")) return "powerplay";
+  return "topptipset";
+}
+
+/**
+ * 1X2-facit från Svenska Spels matchresultat.
+ * Fulltime = klart (90 min). Current utan FT = live. Aldrig halvlek/aggregat.
+ */
+export function parseEventFacit(event: RawEvent): {
+  outcome: Outcome;
+  homeGoals: number;
+  awayGoals: number;
+  status: "ft" | "live";
+} | null {
+  const results = event.match?.result;
+  if (!Array.isArray(results) || results.length === 0) return null;
+  const ft = results.find((r) => r.sportEventResultType === "Fulltime");
+  const cur = results.find((r) => r.sportEventResultType === "Current");
+  const row = ft || cur;
+  if (!row) return null;
+  const h = Number(row.home);
+  const a = Number(row.away);
+  if (!Number.isFinite(h) || !Number.isFinite(a)) return null;
+  const outcome: Outcome = h > a ? "1" : h < a ? "2" : "X";
+  return {
+    outcome,
+    homeGoals: h,
+    awayGoals: a,
+    status: ft ? "ft" : "live",
+  };
+}
 
 function parseSvNumber(value: string | undefined | null): number | null {
   if (value == null || value === "") return null;
@@ -246,7 +316,24 @@ async function findLatestTopptipsetDrawNumber(): Promise<number> {
   return best;
 }
 
-/** Dagliga Topptipset-omgångar (productId 25) – t.ex. fredag 20:29. */
+/** Öppen tipp eller nyligen stängd (Spelas nu / facit inom HISTORY_KEEP_MS). */
+function isOpenOrRecentResultDraw(
+  d: RawDraw | null | undefined,
+  now = Date.now()
+): boolean {
+  if (!d?.drawEvents?.length) return false;
+  const state = String(d.drawState || "");
+  if (state === "Closed" || state === "Finalized") {
+    return isRecentClosedDraw(d, now);
+  }
+  // Open / okänd – hoppa över om stängningstid redan passerat med marginal
+  if (new Date(d.regCloseTime).getTime() < now - 5 * 60 * 1000) {
+    return false;
+  }
+  return true;
+}
+
+/** Dagliga Topptipset-omgångar (productId 25) – inkl. nyligen stängda för facit. */
 async function fetchDailyTopptipsetDraws(): Promise<RawDraw[]> {
   const latest = await findLatestTopptipsetDrawNumber();
   const start = Math.max(1, latest - 18);
@@ -256,20 +343,12 @@ async function fetchDailyTopptipsetDraws(): Promise<RawDraw[]> {
 
   const draws = (
     await Promise.all(numbers.map((n) => fetchOptionalDraw("topptipset", n)))
-  ).filter((d): d is RawDraw => {
-    if (!d?.drawEvents?.length) return false;
-    if (d.drawState && d.drawState !== "Open") return false;
-    // Hoppa över redan stängda (säkerhetsnät om state släpar)
-    if (new Date(d.regCloseTime).getTime() < Date.now() - 5 * 60 * 1000) {
-      return false;
-    }
-    return true;
-  });
+  ).filter((d): d is RawDraw => isOpenOrRecentResultDraw(d));
 
   return draws;
 }
 
-/** Topptipset via Stryk/Europa relatedDraws (helgkuponger). */
+/** Topptipset via Stryk/Europa relatedDraws (helgkuponger) – rätt slug per nation/kupong. */
 async function fetchRelatedTopptipsetDraws(): Promise<RawDraw[]> {
   const parents: { slug: string; toppSlug: string; productId: number }[] = [
     { slug: "stryktipset", toppSlug: "topptipsetstryk", productId: 23 },
@@ -278,23 +357,46 @@ async function fetchRelatedTopptipsetDraws(): Promise<RawDraw[]> {
   const found: RawDraw[] = [];
   const seen = new Set<string>();
 
+  async function absorbRelated(parentDraw: RawDraw) {
+    for (const rel of parentDraw.relatedDraws ?? []) {
+      const meta = parents.find((p) => p.productId === rel.productId);
+      if (!meta) continue;
+      const key = `${meta.toppSlug}:${rel.drawNumber}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const draw = await fetchOptionalDraw(meta.toppSlug, rel.drawNumber);
+      if (!draw || !isOpenOrRecentResultDraw(draw)) continue;
+      found.push(draw);
+    }
+  }
+
   for (const parent of parents) {
     const list = (await fetchJson(
       `https://api.www.svenskaspel.se/draw/1/${parent.slug}/draws`
     )) as { draws?: RawDraw[] };
 
-    for (const parentDraw of list.draws ?? []) {
-      for (const rel of parentDraw.relatedDraws ?? []) {
-        const meta = parents.find((p) => p.productId === rel.productId);
-        if (!meta) continue;
-        const key = `${meta.toppSlug}:${rel.drawNumber}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+    const listed = list.draws ?? [];
+    for (const parentDraw of listed) {
+      await absorbRelated(parentDraw);
+    }
 
-        const draw = await fetchOptionalDraw(meta.toppSlug, rel.drawNumber);
-        if (!draw?.drawEvents?.length) continue;
-        if (draw.drawState && draw.drawState !== "Open") continue;
-        found.push(draw);
+    // List-API tappar stängda föräldrar – sondera bakåt så facit syns
+    const openNums = listed
+      .map((d) => d.drawNumber)
+      .filter((n) => Number.isFinite(n));
+    const lowestOpen = openNums.length ? Math.min(...openNums) : null;
+    if (lowestOpen != null && lowestOpen > 1) {
+      const probes: number[] = [];
+      for (let n = lowestOpen - 1; n >= Math.max(1, lowestOpen - 4); n--) {
+        probes.push(n);
+      }
+      const closedParents = await Promise.all(
+        probes.map((n) => fetchOptionalDraw(parent.slug, n))
+      );
+      for (const pd of closedParents) {
+        if (!pd || !isRecentClosedDraw(pd)) continue;
+        await absorbRelated(pd);
       }
     }
   }
@@ -327,33 +429,61 @@ export async function fetchTopptipsetDraws(): Promise<RawDraw[]> {
   );
 }
 
-async function fetchOpenListDraws(slug: string): Promise<RawDraw[]> {
+/** Öppna + nyligen stängda omgångar (facit / Spelas nu) för list-API-produkter. */
+async function fetchListWithRecentClosed(slug: string): Promise<RawDraw[]> {
   const data = (await fetchJson(
     `https://api.www.svenskaspel.se/draw/1/${slug}/draws`
   )) as { draws?: RawDraw[] };
-  return (data.draws ?? []).filter((d) => {
-    if (!Array.isArray(d.drawEvents) || d.drawEvents.length === 0) return false;
-    if (d.drawState && d.drawState !== "Open") return false;
-    return true;
-  });
+  const listed = (data.draws ?? []).filter(
+    (d) => Array.isArray(d.drawEvents) && d.drawEvents.length > 0
+  );
+  const openListed = listed.filter(
+    (d) => !d.drawState || d.drawState === "Open"
+  );
+
+  const openNums = openListed
+    .map((d) => d.drawNumber)
+    .filter((n) => Number.isFinite(n));
+  const lowestOpen = openNums.length ? Math.min(...openNums) : null;
+  const recentClosed: RawDraw[] = [];
+  if (lowestOpen != null && lowestOpen > 1) {
+    const probes: number[] = [];
+    for (let n = lowestOpen - 1; n >= Math.max(1, lowestOpen - 6); n--) {
+      probes.push(n);
+    }
+    const fetched = await Promise.all(
+      probes.map((n) => fetchOptionalDraw(slug, n))
+    );
+    for (const d of fetched) {
+      if (!d?.drawEvents?.length) continue;
+      if (!isRecentClosedDraw(d)) continue;
+      recentClosed.push(d);
+    }
+  }
+
+  const byNum = new Map<number, RawDraw>();
+  for (const d of [...recentClosed, ...openListed]) {
+    byNum.set(d.drawNumber, d);
+  }
+  return [...byNum.values()];
 }
 
 export async function fetchStryktipsetDraws(): Promise<RawDraw[]> {
-  return (await fetchOpenListDraws("stryktipset")).sort(
+  return (await fetchListWithRecentClosed("stryktipset")).sort(
     (a, b) =>
       new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
   );
 }
 
 export async function fetchEuropatipsetDraws(): Promise<RawDraw[]> {
-  return (await fetchOpenListDraws("europatipset")).sort(
+  return (await fetchListWithRecentClosed("europatipset")).sort(
     (a, b) =>
       new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
   );
 }
 
 export async function fetchMaltipsetDraws(): Promise<RawDraw[]> {
-  return (await fetchOpenListDraws("maltipset")).sort(
+  return (await fetchListWithRecentClosed("maltipset")).sort(
     (a, b) =>
       new Date(a.regCloseTime).getTime() - new Date(b.regCloseTime).getTime()
   );

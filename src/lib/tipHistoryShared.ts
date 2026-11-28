@@ -32,6 +32,11 @@ export type HistoryPick = {
   drawNumber: number | null;
   eventNumber: number | null;
   eventId: number | null;
+  /**
+   * Svenska Spel API-slug för just denna kupong
+   * (topptipsetstryk / topptipsetextra / topptipset …).
+   */
+  apiSlug?: string | null;
   /** ATG race-id för V75/V64/Tvilling. */
   raceId?: string | null;
   status: HistoryPickStatus;
@@ -65,6 +70,8 @@ export type HistoryGameSummary = {
   /** Officiell utdelning från Svenska Spel, t.ex. "8 rätt · 601,18". */
   payoutLabel?: string | null;
   drawNumber?: number | null;
+  /** Kupong-slug för utdelnings-API (Stryk/Extra ≠ daglig Topp). */
+  apiSlug?: string | null;
 };
 
 /**

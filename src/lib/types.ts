@@ -172,6 +172,15 @@ export type ValueOddsInfo = {
   ryck: OddsRyckInfo | null;
 };
 
+/** Facit från Svenska Spel för just denna kupongmatch (90 min, ej aggregat). */
+export type MatchFacit = {
+  outcome: Outcome;
+  homeGoals: number;
+  awayGoals: number;
+  /** ft = Fulltime, live = Current utan slutsignal */
+  status: "ft" | "live";
+};
+
 export type MatchAnalysis = {
   eventNumber: number;
   description: string;
@@ -215,6 +224,8 @@ export type MatchAnalysis = {
     playerHint: string | null;
     openReason?: "absence" | "return" | "newcomer" | null;
   } | null;
+  /** Officiellt/live 1X2-facit från Svenska Spel för denna omgång */
+  facit?: MatchFacit | null;
 };
 
 export type DrawBundle = {
@@ -226,6 +237,11 @@ export type DrawBundle = {
     | "stryktipset"
     | "europatipset"
     | "maltipset";
+  /**
+   * Svenska Spel API-slug för just denna kupong
+   * (t.ex. topptipsetstryk ≠ topptipset – olika drawNumber-serier).
+   */
+  apiSlug: string;
   closeDescription: string;
   closeTime: string;
   openTime: string;

@@ -17,6 +17,7 @@ import {
   favouriteFromDist,
   isFootballProduct,
   parseDistribution,
+  parseEventFacit,
   parseOdds,
   participants,
   type ProductKind,
@@ -816,6 +817,7 @@ export async function analyzeDraw(
       scoreX: adjusted.scoreX,
       score2: adjusted.score2,
       safeWinner,
+      facit: parseEventFacit(event),
       startOdds,
     });
   }
