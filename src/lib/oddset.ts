@@ -1549,15 +1549,21 @@ function selectUniquePicks(
 }
 
 /**
- * Hockey 9: välj 9 tips så oddsprodukt × 100 kr ≥ MIN_PAYOUT_KR (golv, ingen tak).
- * Prefererar högst score bland kombos som klarar golvet.
+ * Hockey 9: jakt på 9 rätt först, utdelningsgolv därefter.
+ * Byter aldrig bort starka höga-score tips bara för längre odds.
  */
 function selectHockey9ForMinPayout(
   ranked: OddsetCandidate[],
   limit = PICKS_HOCKEY_1X2
 ): { picks: OddsetCandidate[]; estimate: ReturnType<typeof estimateHockey9Payout> } {
-  const base = selectUniquePicks(ranked, Math.max(limit, 14));
-  const pool = base.length >= limit ? base : selectUniquePicks(ranked, ranked.length);
+  // Rank: konfidens/score först, korta odds som tiebreak (säkrare 9-rätt)
+  const byHit = [...ranked].sort(
+    (a, b) =>
+      b.score - a.score ||
+      (a.odds || 99) - (b.odds || 99) ||
+      (b.over25ProbPct || 0) - (a.over25ProbPct || 0)
+  );
+  const pool = selectUniquePicks(byHit, Math.max(limit, 16));
 
   const scoreCombo = (picks: OddsetCandidate[]) => {
     const est = estimateHockey9Payout({
@@ -1565,51 +1571,60 @@ function selectHockey9ForMinPayout(
       unitStakeKr: 100,
     });
     const tipScore = picks.reduce((s, p) => s + p.score, 0);
-    return { est, tipScore };
+    const conf = picks.reduce((s, p) => s + (p.over25ProbPct || 0), 0);
+    return { est, tipScore, conf };
   };
 
-  // Greedy: start from top score, swap in higher-odds candidates until ≥ 3000
+  // Start: 9 starkaste tipsen
   let picks = pool.slice(0, limit);
   let best = scoreCombo(picks);
 
+  // Utdelningsgolv: byt bara den svagaste tipset mot kandidat med liknande score
   if (!best.est.meetsMin && pool.length > limit) {
     const rest = pool.slice(limit);
     for (const cand of rest) {
       if (best.est.meetsMin) break;
-      // Byt ut den kortaste oddsen bland picks mot cand om det lyfter produkten
-      let worstIdx = 0;
-      let worstOdds = picks[0]?.odds ?? 99;
+      if (picks.some((p) => p.eventId === cand.eventId)) continue;
+      let weakIdx = 0;
+      let weakScore = picks[0]?.score ?? 999;
       for (let i = 1; i < picks.length; i++) {
-        const o = picks[i]?.odds ?? 99;
-        if (o < worstOdds) {
-          worstOdds = o;
-          worstIdx = i;
+        const s = picks[i]?.score ?? 999;
+        if (s < weakScore) {
+          weakScore = s;
+          weakIdx = i;
         }
       }
-      if ((cand.odds || 1) <= worstOdds * 1.05) continue;
-      if (picks.some((p) => p.eventId === cand.eventId)) continue;
-      const trial = picks.map((p, i) => (i === worstIdx ? cand : p));
+      const weak = picks[weakIdx]!;
+      // Skydda starka tips (≥72) – byt aldrig bort dem för odds
+      if ((weak.over25ProbPct || 0) >= 72 || weak.score >= weakScore + 8) {
+        // hitta näst svagaste under ribban
+        let altIdx = -1;
+        let altScore = 999;
+        for (let i = 0; i < picks.length; i++) {
+          const p = picks[i]!;
+          if ((p.over25ProbPct || 0) >= 72) continue;
+          if (p.score < altScore) {
+            altScore = p.score;
+            altIdx = i;
+          }
+        }
+        if (altIdx < 0) continue;
+        weakIdx = altIdx;
+        weakScore = altScore;
+      }
+      const replaced = picks[weakIdx]!;
+      if (cand.score < replaced.score * 0.9) continue;
+      if ((cand.odds || 1) <= (replaced.odds || 1) * 1.02) continue;
+      const trial = picks.map((p, i) => (i === weakIdx ? cand : p));
       const scored = scoreCombo(trial);
+      // Kräv att tipscore inte rasar – 9 rätt före maxutdelning
       if (
-        scored.est.highKr > best.est.highKr ||
-        (scored.est.meetsMin && scored.tipScore >= best.tipScore * 0.85)
+        scored.tipScore >= best.tipScore * 0.92 &&
+        (scored.est.meetsMin || scored.est.highKr > best.est.highKr)
       ) {
         picks = trial;
         best = scored;
       }
-    }
-  }
-
-  // Om fortfarande under golvet: ta de 9 med högst odds bland topp-score
-  if (!best.est.meetsMin && pool.length >= limit) {
-    const byOdds = [...pool].sort(
-      (a, b) => b.odds - a.odds || b.score - a.score
-    );
-    const alt = selectUniquePicks(byOdds, limit);
-    const scored = scoreCombo(alt);
-    if (scored.est.highKr > best.est.highKr) {
-      picks = alt;
-      best = scored;
     }
   }
 
@@ -1894,7 +1909,7 @@ export async function buildOddsetDayTip(opts?: {
       `Tipsen ligger kvar på sidan ${ODDSET_TIP_RETENTION_HOURS} timmar.`,
       "Efter slutsignal: Över 1,5 = ≥2 mål; 1X2 = tippad utgång rätt.",
       "Fotboll-1X2: utjämnarpress, säker vinnare 2 @ ca 2,00, mittfält-underdog (4,xx), favorit med jakt på 1–1.",
-      `Hockey 9: samma analyslager som Powerplay; tippraden har golv ≥ ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr vid 9 rätt (100 kr-rad × oddsprodukt, ingen övre gräns).`,
+      `Hockey 9: jakt på 9 rätt först (hög konfidens/korta favoriter); utdelningsgolv ≥ ${MIN_PAYOUT_KR.toLocaleString("sv-SE")} kr därefter (100 kr-rad × oddsprodukt).`,
       "Lågmålskontroll: Ö1,5 ensamt räcker inte – Ö/U-stege, xG, P(≤1 mål), Under 2,5, BTTS och kryss måste stödja öppet spel.",
       "Utjämnarpress: vid 0–1 ska laget bakom känna att det är fel och jaga 1–1.",
       "Efter varje avgjort tips lär sig analysen varför det gick rätt/fel och justerar nästa urval automatiskt.",

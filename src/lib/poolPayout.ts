@@ -377,6 +377,7 @@ export function estimateHockey9PayoutRange(args: {
 /**
  * På enkelmatcher: byt till näst bästa utgång om det lyfter
  * beräknad utdelning mot produktens golv (ingen tak).
+ * protectHitRate: PP/Topp – byt aldrig bort starka enklar (jakt på 8 rätt).
  */
 export function liftPicksTowardMinPayout(args: {
   product: string;
@@ -386,6 +387,8 @@ export function liftPicksTowardMinPayout(args: {
   rowPrice: number;
   /** Modellscore per eventNumber → Outcome → 0–1 */
   outcomeScore: (m: MatchAnalysis, o: Outcome) => number;
+  /** true = träff före utdelning (Powerplay/Topptipset). */
+  protectHitRate?: boolean;
 }): { picks: SystemPick[]; estimate: MaxPayoutEstimate } {
   let picks = args.picks.map((p) => ({ ...p, outcomes: [...p.outcomes] }));
   let estimate = estimateMaxPayout({
@@ -396,6 +399,10 @@ export function liftPicksTowardMinPayout(args: {
     rowPrice: args.rowPrice,
   });
   if (estimate.meetsMin) return { picks, estimate };
+
+  const protect = args.protectHitRate === true;
+  // PP/Topp: utdelningslyft får inte kosta 8-rätt – behåll tipset
+  if (protect) return { picks, estimate };
 
   const byEvent = new Map(args.matches.map((m) => [m.eventNumber, m]));
   const order = [...picks.keys()].sort((ia, ib) => {
@@ -416,6 +423,7 @@ export function liftPicksTowardMinPayout(args: {
     const m = byEvent.get(pick.eventNumber);
     if (!m) continue;
     const current = pick.outcomes[0]!;
+    const currentScore = args.outcomeScore(m, current);
     const alts = (["1", "X", "2"] as Outcome[])
       .filter((o) => o !== current)
       .map((o) => ({
@@ -423,8 +431,13 @@ export function liftPicksTowardMinPayout(args: {
         score: args.outcomeScore(m, o),
         odds: outcomeOdds(m.odds, o) ?? 1,
       }))
-      .filter((a) => a.score >= 0.28 && a.odds > (outcomeOdds(m.odds, current) ?? 1) * 1.08)
-      .sort((a, b) => b.odds * b.score - a.odds * a.score);
+      .filter(
+        (a) =>
+          a.score >= 0.36 &&
+          a.score + 0.02 >= currentScore &&
+          a.odds > (outcomeOdds(m.odds, current) ?? 1) * 1.08
+      )
+      .sort((a, b) => b.score * 2 + b.odds * 0.05 - (a.score * 2 + a.odds * 0.05));
     for (const alt of alts) {
       const trial = picks.map((p, i) =>
         i === idx

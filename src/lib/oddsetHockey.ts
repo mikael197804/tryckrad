@@ -321,21 +321,24 @@ function pickHockey1x2(args: {
   let pick: Oddset1x2Pick = top.o;
   let confidence = Math.round(top.s * 100);
 
-  if (gap < 0.1 || top.s < 0.52) {
+  // Striktare enkel (jakt på 9 rätt) – hellre halv än tunn favorit
+  if (gap < 0.12 || top.s < 0.55) {
     cover = [top.o, second.o];
     reasons.push("jämnt/svagt läge – halvgardering i Powerplay-stil");
-    confidence = Math.round(top.s * 100 - 4);
-  } else if (gap < 0.18 && second.s > 0.2) {
+    confidence = Math.round(top.s * 100 - 6);
+  } else if (gap < 0.2 && second.s > 0.18) {
     cover = [top.o, second.o];
-    reasons.push("osäker favorit – halv för säkerhet");
-  } else if (top.s >= 0.62 && gap >= 0.2) {
+    reasons.push("osäker favorit – halv för säkerhet (9-rätt)");
+    confidence = Math.round(top.s * 100 - 2);
+  } else if (top.s >= 0.66 && gap >= 0.22) {
     reasons.push(
       `stark enkel ${top.o} (${Math.round(top.s * 100)}%, marginal ${Math.round(gap * 100)}%)`
     );
-    confidence = Math.min(88, Math.round(top.s * 100 + 6));
+    confidence = Math.min(90, Math.round(top.s * 100 + 8));
   } else {
     cover = [top.o, second.o];
     reasons.push("medelstark favorit – halv i Powerplay-stil");
+    confidence = Math.round(top.s * 100);
   }
 
   if (homeFatigue.level === "high" || awayFatigue.level === "high") {
@@ -772,7 +775,8 @@ async function analyzeOneHockeyEvent(
       : picked.pick === "2"
         ? odds.two!
         : odds.x!;
-  if (pickOdds < 1.28 || pickOdds > 5.5) return null;
+  // Håll tipset i favorit-/mellanläge – långodds sänker chans till 9 rätt
+  if (pickOdds < 1.28 || pickOdds > 4.4) return null;
 
   let reason = `${picked.reason}. ${goals.equalizer.headline}${
     goals.equalizer.points[0] ? ` · ${goals.equalizer.points[0]}` : ""
@@ -783,15 +787,22 @@ async function analyzeOneHockeyEvent(
       .replace(".", ",")}`;
   }
 
-  let score = picked.confidence * 1.15 + goals.equalizer.score * 2;
+  // Score: konfidens först (9 rätt), inte långodds
+  let score = picked.confidence * 1.35 + goals.equalizer.score * 1.5;
   const hr = hockeyLeagueRank(league, country);
   score += Math.max(0, 8 - hr * 3);
-  if (valueOdds.admin?.safeWinner) score += 12;
-  if (valueOdds.admin?.confidence === "high") score += 8;
+  if (valueOdds.admin?.safeWinner) score += 14;
+  if (valueOdds.admin?.confidence === "high") score += 10;
   if (valueOdds.admin?.confidence === "medium") score += 4;
-  if (valueOdds.ryck?.toward === picked.pick) score += 6;
-  if (homeFatigue.level === "high" || awayFatigue.level === "high") score -= 3;
-  if (picked.cover.length > 1) score -= 1;
+  if (valueOdds.ryck?.toward === picked.pick) score += 7;
+  if (homeFatigue.level === "high" || awayFatigue.level === "high") score -= 5;
+  if (homeFatigue.level === "medium" || awayFatigue.level === "medium")
+    score -= 2;
+  if (picked.cover.length === 1 && picked.confidence >= 70) score += 10;
+  else if (picked.cover.length > 1) score -= 6;
+  // Korta favoriter (>1.45) lite bonus; udda långodds straff
+  if (pickOdds >= 1.45 && pickOdds <= 2.35) score += 5;
+  else if (pickOdds > 3.2) score -= 4;
 
   return {
     eventId: ev.id,

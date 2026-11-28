@@ -102,27 +102,42 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
   ).sort((a, b) => b[1] - a[1])[0][0];
 
   if (oddsTop && modelTop === oddsTop && modelTop === folkTop) {
-    if (modelTop === "1") s1 += 0.11;
-    if (modelTop === "X") sX += 0.11;
-    if (modelTop === "2") s2 += 0.11;
+    // Stark konsensus → spetsa enkel (jakt på 8 rätt)
+    if (modelTop === "1") s1 += 0.14;
+    if (modelTop === "X") sX += 0.14;
+    if (modelTop === "2") s2 += 0.14;
   } else if (oddsTop && modelTop === oddsTop) {
-    if (modelTop === "1") s1 += 0.055;
-    if (modelTop === "X") sX += 0.055;
-    if (modelTop === "2") s2 += 0.055;
+    if (modelTop === "1") s1 += 0.07;
+    if (modelTop === "X") sX += 0.07;
+    if (modelTop === "2") s2 += 0.07;
+  } else if (oddsTop && folkTop && oddsTop !== folkTop) {
+    // Folk ≠ odds → mer osäkerhet, höj X-risk
+    sX += 0.045;
   }
 
-  // Osäkerhetssignaler → mer X / plattare
+  // Osäkerhetssignaler → mer X / plattare (klassiska 2-missar)
   if (m.homeFatigue.level === "high" || m.awayFatigue.level === "high") {
-    sX += 0.05;
+    sX += 0.07;
+  } else if (
+    m.homeFatigue.level === "medium" ||
+    m.awayFatigue.level === "medium"
+  ) {
+    sX += 0.035;
   }
   if (m.homeRest.level === "likely" || m.awayRest.level === "likely") {
-    sX += 0.04;
+    sX += 0.055;
   }
   if (
     m.homeTable.rankGapToOpponent != null &&
     m.homeTable.rankGapToOpponent <= 2
   ) {
-    sX += 0.03;
+    sX += 0.04;
+  }
+  // Kort favorit utan konsensus → tona ner (favoriter som faller)
+  if (oddsTop && modelTop !== oddsTop) {
+    if (oddsTop === "1") s1 -= 0.04;
+    if (oddsTop === "X") sX -= 0.04;
+    if (oddsTop === "2") s2 -= 0.04;
   }
 
   [s1, sX, s2] = normalize3(s1, sX, s2);
@@ -146,8 +161,11 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
   const bestHalfP = halves[0].p;
 
   // Behöver gardering om enkel är svag eller halv ger stor lyft
+  // Högre ribba → fler halv på de matcher som brukar bli "2 fel"
   const hedgeNeed =
-    1 - bestSingleP + Math.max(0, bestHalfP - bestSingleP) * 0.85;
+    1 - bestSingleP + Math.max(0, bestHalfP - bestSingleP) * 0.95 +
+    (bestSingleP < 0.66 ? 0.08 : 0) +
+    (bestSingleP < 0.58 ? 0.1 : 0);
 
   return {
     p1: s1,
@@ -293,19 +311,24 @@ function planForHighHit(
     // Flytta halv → enkel bara på extremt säkra matcher om vi har för många halv?
     // Nej – för target är antalet fixerat.
 
-    // Extra: om en "enkel" har bestSingleP < 0.58, byt med en halv som är säkrare enkel
+    // Extra: svaga enklar (<0.68) byts mot halv – jakt på 8 rätt (färre 2-missar)
     const enkelIdx = plan
       .map((c, i) => ({ c, i, p: probs[i].bestSingleP }))
       .filter((x) => x.c === "enkel");
     const halvIdx = plan
-      .map((c, i) => ({ c, i, p: probs[i].bestSingleP, halfP: probs[i].bestHalfP }))
+      .map((c, i) => ({
+        c,
+        i,
+        p: probs[i].bestSingleP,
+        halfP: probs[i].bestHalfP,
+      }))
       .filter((x) => x.c === "halv");
 
     for (const e of enkelIdx) {
-      if (e.p >= 0.62) continue;
+      if (e.p >= 0.68) continue;
       // Byt med halv som har högre singleP (den halv-matchen är säkrare som enkel)
       const swap = halvIdx
-        .filter((h) => h.p > e.p + 0.04)
+        .filter((h) => h.p > e.p + 0.03 && h.p >= 0.62)
         .sort((a, b) => b.p - a.p)[0];
       if (!swap) continue;
       plan[e.i] = "halv";
@@ -407,7 +430,23 @@ function makePicks(
         "Kan inte avgöras – för jämnt/osäkert. Helgarderas (1/X/2).";
       reason = `${undecidedNote} ${m.pickReason}`;
     } else if (plan === "halv") {
-      outcomes = pr.bestHalf;
+      // Preferera 1X/X2 när X-risk är hög (vanlig källa till 2 fel)
+      const xRisk =
+        m.homeFatigue.level !== "low" ||
+        m.awayFatigue.level !== "low" ||
+        m.homeRest.level === "likely" ||
+        m.awayRest.level === "likely" ||
+        pr.pX >= 0.22;
+      if (xRisk && pr.bestSingle !== "X") {
+        const withX = [
+          { outcomes: ["1", "X"] as Outcome[], p: pr.p1 + pr.pX },
+          { outcomes: ["X", "2"] as Outcome[], p: pr.pX + pr.p2 },
+        ].sort((a, b) => b.p - a.p)[0]!;
+        outcomes =
+          withX.p + 0.02 >= pr.bestHalfP ? [...withX.outcomes] : pr.bestHalf;
+      } else {
+        outcomes = pr.bestHalf;
+      }
       if (undecided) {
         undecidedNote = `Kan inte avgöras säkert – svåraste matchen. Halv ${outcomes.join("")}.`;
         reason = `${undecidedNote} ${m.pickReason}`;
@@ -591,6 +630,7 @@ export function buildRSystem44144(
     picks,
     netSale: opts.netSale ?? null,
     rowPrice,
+    protectHitRate: false,
     outcomeScore: (m, o) => {
       const pr = matchProbabilities(m);
       return o === "1" ? pr.p1 : o === "X" ? pr.pX : pr.p2;
@@ -635,12 +675,15 @@ function buildSystemForCost(
 
   const product = opts.product || "powerplay";
   const rowPrice = opts.rowPrice ?? 1;
+  const hitFirst =
+    product === "powerplay" || product === "topptipset";
   const lifted = liftPicksTowardMinPayout({
     product,
     matches,
     picks,
     netSale: opts.netSale ?? null,
     rowPrice,
+    protectHitRate: hitFirst,
     outcomeScore: (m, o) => {
       const pr = matchProbabilities(m);
       return o === "1" ? pr.p1 : o === "X" ? pr.pX : pr.p2;
@@ -677,9 +720,9 @@ function buildSystemForCost(
 
   const safetyNote =
     cost === 48
-      ? `Säkerhetsbygge mot hög vinstnivå: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%).`
+      ? `Jakt på 8 rätt: hel/halv där det skakar, enkel bara vid stark konsensus (svagaste enkel ~${Math.round(minEnkel * 100)}%). Utdelningslyft blockeras så tipset inte byts till långodds.`
       : cost === DAILY_SYSTEM_COST_KR
-        ? `Dagligt system ${DAILY_SYSTEM_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – sparas i resultat 8 h.`
+        ? `Dagligt system ${DAILY_SYSTEM_COST_KR} kr (${hel} hel · ${halv} halv · ${enklar.length} enkel) – jakt på 8 rätt, sparas i resultat 8 h.`
         : `${hel} hel · ${halv} halv · ${enklar.length} enkel.`;
 
   const winLabel =

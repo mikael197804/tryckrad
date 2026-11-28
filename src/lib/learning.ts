@@ -401,10 +401,11 @@ function buildBiases(lessons: MatchLesson[]): LearningMemory["biases"] {
     l.kinds.includes("overodds_worked")
   ).length;
 
-  const boostX = Math.min(0.06, (xSurprise / n) * 0.08);
-  const cutShortFavourite = Math.min(0.05, (favFail / n) * 0.07);
-  const trustOverOdds = Math.min(0.05, ((overMiss + overWorked) / Math.max(lessons.length, 1)) * 0.1);
-  const distrustFolkFavourite = Math.min(0.04, (folkWrong / n) * 0.06);
+  // Starkare bias efter 2-missar (X-skräll / favoritfall) → nästa tipprad
+  const boostX = Math.min(0.09, (xSurprise / n) * 0.12);
+  const cutShortFavourite = Math.min(0.08, (favFail / n) * 0.11);
+  const trustOverOdds = Math.min(0.06, ((overMiss + overWorked) / Math.max(lessons.length, 1)) * 0.12);
+  const distrustFolkFavourite = Math.min(0.055, (folkWrong / n) * 0.08);
 
   const bits: string[] = [];
   if (boostX > 0.015) bits.push(`fler X-missar → höj kryssvikt (+${(boostX * 100).toFixed(1)}%)`);
