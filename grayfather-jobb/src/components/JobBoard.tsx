@@ -119,9 +119,11 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
           telegramUser: getTelegramUsername(),
         });
         await refresh();
-        document.getElementById("annonser")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
+        requestAnimationFrame(() => {
+          document.getElementById("dela-telegram")?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
         });
       } catch {
         setError("Nätverksfel. Försök igen.");
@@ -322,7 +324,7 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
           </form>
 
           {telegramText ? (
-            <div className="telegram-box">
+            <div className="telegram-box" id="dela-telegram">
               <p className="eyebrow">Dela i Telegram</p>
               <pre>{telegramText}</pre>
               <button type="button" className="btn primary" onClick={copyTelegram}>
