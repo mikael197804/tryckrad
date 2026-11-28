@@ -280,6 +280,7 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
             </div>
             <OfferRail
               offers={offersForFilter(segmentFilter)}
+              segmentLabel={segmentFilter}
               heading={
                 segmentFilter === "Alla"
                   ? "Erbjudanden i populära segment"
@@ -440,7 +441,7 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
                 className="btn primary"
                 onClick={copyTelegram}
               >
-                {copied ? "Kopierad" : "Kopiera text"}
+                {copied ? "Kopierad – klistra in i Telegram" : "Kopiera till Telegram"}
               </button>
             </div>
           ) : null}

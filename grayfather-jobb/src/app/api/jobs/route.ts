@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  createJob,
-  formatJobForTelegram,
-  jobInputSchema,
-  listJobs,
-} from "@/lib/jobs";
+import { createJob, jobInputSchema, listJobs } from "@/lib/jobs";
 import { rateLimit } from "@/lib/rate-limit";
 import { verifyTelegramInitData } from "@/lib/telegram";
+import { formatJobWithOffersForTelegram } from "@/lib/telegram-text";
 
 export const dynamic = "force-dynamic";
 
@@ -91,7 +87,7 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({
       job,
-      telegramText: formatJobForTelegram(job),
+      telegramText: formatJobWithOffersForTelegram(job),
     });
   } catch (error) {
     console.error("createJob failed", error);

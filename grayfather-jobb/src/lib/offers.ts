@@ -353,3 +353,43 @@ export function offersForFilter(segmentFilter: string): SegmentOffer[] {
   }
   return offersForSegment(segmentFilter);
 }
+
+/** En erbjudandetext redo att klistra in i Telegram. */
+export function formatOfferForTelegram(offer: SegmentOffer): string {
+  return [
+    `Reklam · ${offer.partner}`,
+    "",
+    offer.title,
+    offer.blurb,
+    "",
+    offer.url,
+  ].join("\n");
+}
+
+/** Alla erbjudanden för ett yrkessegment, som Telegram-text. */
+export function formatSegmentOffersForTelegram(segment: string): string {
+  const offers = offersForSegment(segment);
+  if (offers.length === 0) return "";
+  const channel = "𝕘𝕣𝕒𝕪𝕗𝕒𝕥𝕙𝕖𝕣";
+  const blocks = offers.map(
+    (offer, index) =>
+      `${index + 1}. ${offer.title}\n${offer.blurb}\n${offer.url}`,
+  );
+  return [
+    `Erbjudanden för ${segment}`,
+    `via ${channel}`,
+    "",
+    ...blocks.flatMap((block, i) => (i === 0 ? [block] : ["", block])),
+  ].join("\n");
+}
+
+/** Kort reklamblock att lägga under en jobbannons i Telegram. */
+export function formatOffersFooterForTelegram(segment: string): string {
+  const offers = offersForSegment(segment).slice(0, 2);
+  if (offers.length === 0) return "";
+  return [
+    "—",
+    "Tips & erbjudanden:",
+    ...offers.map((o) => `• ${o.partner}: ${o.url}`),
+  ].join("\n");
+}
