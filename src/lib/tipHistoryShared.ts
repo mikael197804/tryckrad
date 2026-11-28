@@ -12,8 +12,7 @@ export type HistoryProduct =
   | "v75"
   | "v64"
   | "tvilling"
-  | "hockey_1x2"
-  | "esports_battle";
+  | "hockey_1x2";
 
 export type HistoryPickStatus = "pending" | "live" | "won" | "lost";
 
@@ -168,7 +167,5 @@ export function productHistoryLabel(p: HistoryProduct): string {
       return "Tvilling";
     case "hockey_1x2":
       return "Hockey 9";
-    case "esports_battle":
-      return "Esports Battle";
   }
 }

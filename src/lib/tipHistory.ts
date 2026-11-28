@@ -33,7 +33,7 @@ export {
 
 type SvenskaSpelHistoryProduct = Exclude<
   HistoryProduct,
-  "oddset" | "hockey_1x2" | "esports_battle" | "v75" | "v64" | "tvilling"
+  "oddset" | "hockey_1x2" | "v75" | "v64" | "tvilling"
 >;
 
 const PRODUCT_SLUG: Record<SvenskaSpelHistoryProduct, string> = {
@@ -478,11 +478,7 @@ async function settleDrawPicks(picks: HistoryPick[]): Promise<HistoryPick[]> {
 
   const out: HistoryPick[] = [];
   for (const p of picks) {
-    if (
-      p.product === "oddset" ||
-      p.product === "hockey_1x2" ||
-      p.product === "esports_battle"
-    ) {
+    if (p.product === "oddset" || p.product === "hockey_1x2") {
       out.push(p);
       continue;
     }
@@ -739,7 +735,6 @@ async function attachPayouts(
       if (
         g.product === "oddset" ||
         g.product === "hockey_1x2" ||
-        g.product === "esports_battle" ||
         g.product === "v75" ||
         g.product === "v64" ||
         g.product === "tvilling"

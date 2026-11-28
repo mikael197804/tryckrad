@@ -859,6 +859,14 @@ function isSeniorMensMatch(event: KambiEvent): boolean {
   ) {
     return false;
   }
+  // Inga esports / eSoccer / virtuala matcher i tipsen
+  if (
+    /esport|e-sport|esoccer|e-soccer|fifa\b|nba 2k|rocket league|counter-strike|\bcs:?\s*2\b|\blol\b|league of legends|dota|valorant|virtual\b|simulerad|esports\s*battle|8\s*min/.test(
+      blob
+    )
+  ) {
+    return false;
+  }
   return true;
 }
 
