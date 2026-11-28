@@ -20,9 +20,18 @@ declare global {
         themeParams?: Record<string, string>;
         openTelegramLink?: (url: string) => void;
         openLink?: (url: string) => void;
+        platform?: string;
       };
     };
   }
+}
+
+function isInsideTelegram(): boolean {
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return false;
+  if (tg.initData && tg.initData.length > 0) return true;
+  const platform = tg.platform;
+  return Boolean(platform && platform !== "unknown");
 }
 
 export function getTelegramInitData(): string {
@@ -38,11 +47,15 @@ export function getTelegramUsername(): string {
 export function TelegramBoot() {
   useEffect(() => {
     const tg = window.Telegram?.WebApp;
-    if (!tg) return;
+    if (!tg || !isInsideTelegram()) return;
     tg.ready();
     tg.expand();
-    tg.setHeaderColor?.("#e8eef4");
-    tg.setBackgroundColor?.("#e8eef4");
+    try {
+      tg.setHeaderColor?.("#e8eef4");
+      tg.setBackgroundColor?.("#e8eef4");
+    } catch {
+      // Older Telegram clients reject theme helpers.
+    }
   }, []);
 
   return null;
