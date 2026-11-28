@@ -10,11 +10,21 @@ import { verifyTelegramInitData } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const jobs = await listJobs();
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const jobs = await listJobs({
+    q: searchParams.get("q") ?? undefined,
+    segment: searchParams.get("segment") ?? undefined,
+    location: searchParams.get("location") ?? undefined,
+  });
   return NextResponse.json({
     jobs,
-    sample: jobs.every((j) => j.sample),
+    sample: jobs.length > 0 && jobs.every((j) => j.sample),
+    filters: {
+      q: searchParams.get("q") ?? "",
+      segment: searchParams.get("segment") ?? "Alla",
+      location: searchParams.get("location") ?? "Hela Sverige",
+    },
   });
 }
 
@@ -41,7 +51,10 @@ export async function POST(request: NextRequest) {
   const parsed = jobInputSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Kontrollera fälten och försök igen.", details: parsed.error.flatten() },
+      {
+        error: "Kontrollera fälten och försök igen.",
+        details: parsed.error.flatten(),
+      },
       { status: 400 },
     );
   }

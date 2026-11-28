@@ -17,8 +17,8 @@ export default function HomePage() {
           </p>
           <h1>Hitta rätt folk till ditt team</h1>
           <p className="support">
-            En plats för arbetsgivare som söker anställda – publicera och dela
-            direkt i Telegram.
+            Arbetsgivare lägger ut jobb i yrkessegment över hela Sverige – sök
+            kommun för kommun och dela i Telegram.
           </p>
           <div className="cta-row">
             <a className="btn primary" href="#lagg-ut">
@@ -36,31 +36,30 @@ export default function HomePage() {
           <p className="eyebrow">Så funkar det</p>
           <h2>Från annons till Telegram på tre steg</h2>
           <p className="lede">
-            Byggd för arbetsgivare i Grayfather-communityn. Enkel, snabb och redo
-            att öppnas som Mini App i Telegram.
+            Segment för bland annat undersköterska, snickare, rivare,
+            asbestsanerare, betonghåltagare och isolerare. Du skickar själv in
+            appen i Telegram när koden är klar.
           </p>
           <ol className="steps">
             <li>
               <span className="step-num">1</span>
               <div>
-                <h3>Skriv annonsen</h3>
-                <p>Företag, roll, ort, beskrivning och kontakt.</p>
+                <h3>Välj segment och kommun</h3>
+                <p>Sök över hela Sverige eller kommun för kommun.</p>
               </div>
             </li>
             <li>
               <span className="step-num">2</span>
               <div>
-                <h3>Publicera här</h3>
-                <p>Annonsen sparas och syns under lediga jobb.</p>
+                <h3>Publicera annonsen</h3>
+                <p>Företag, roll, beskrivning och kontakt sparas i listan.</p>
               </div>
             </li>
             <li>
               <span className="step-num">3</span>
               <div>
                 <h3>Dela i Telegram</h3>
-                <p>
-                  Kopiera färdig text och klistra in i {channel}.
-                </p>
+                <p>Kopiera färdig text och klistra in i {channel}.</p>
               </div>
             </li>
           </ol>

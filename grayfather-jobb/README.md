@@ -1,27 +1,32 @@
 # Grayfather Jobb
 
-Svensk jobb-sida för arbetsgivare som söker anställda via Telegram-communityn
+Svensk jobb-sida för arbetsgivare i Telegram-communityn
 `*+:｡.｡-𝖌𝐫áվꊰ𝑎Եħℯ𝐫-｡.｡:+*`.
+
+## Funktioner
+
+- Yrkessegment: undersköterska, snickare, rivare, asbestsanerare, betonghåltagare, isolerare med flera
+- Sök över hela Sverige eller filtrera kommun för kommun
+- Publicera annons och kopiera färdig text till Telegram
+- Telegram Mini App-stöd (aktiveras inne i Telegram)
 
 ## Lokalt
 
 ```bash
+cd grayfather-jobb
 npm install
 env -u DATABASE_URL npm run dev
 ```
 
 Öppna [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
-## Koppla till Telegram
+## Lägga in i Telegram själv
 
-1. Öppna [@BotFather](https://t.me/BotFather) i Telegram.
-2. Skapa bot med `/newbot` (eller välj befintlig).
-3. Spara bot-tokenen som secret `TELEGRAM_BOT_TOKEN` i Cursor.
-4. Sätt kanalens länk som secret `TELEGRAM_CHANNEL_URL` (t.ex. `https://t.me/dittkanalnamn`).
-5. Kör `/newapp` eller `/setmenubutton` i BotFather och peka på den publicerade app-URL:en.
-6. Lägg till boten som admin i din Telegram-sida/kanal om den ska kunna posta.
+1. Publicera/hosta appen (HTTPS-URL).
+2. Öppna [@BotFather](https://t.me/BotFather) → `/newbot` (eller befintlig bot).
+3. `/newapp` eller `/setmenubutton` och peka på app-URL:en.
+4. Valfritt: sätt secrets `TELEGRAM_BOT_TOKEN` och `TELEGRAM_CHANNEL_URL` hos hosten.
 
-## Secrets
+## Branch
 
-- `TELEGRAM_BOT_TOKEN` — validerar Mini App-sessioner när den är satt
-- `TELEGRAM_CHANNEL_URL` — direktlänk till din Grayfather-sida
+Koden ligger på `cursor/grayfather-jobb-4462` under mappen `grayfather-jobb/`.

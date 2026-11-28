@@ -1,11 +1,19 @@
 "use client";
 
-import { FormEvent, useEffect, useState, useTransition } from "react";
+import {
+  FormEvent,
+  useDeferredValue,
+  useEffect,
+  useState,
+  useTransition,
+} from "react";
 import {
   getTelegramInitData,
   getTelegramUsername,
 } from "@/components/TelegramBoot";
+import { MunicipalityField } from "@/components/MunicipalityField";
 import type { Job } from "@/lib/jobs";
+import { JOB_SEGMENTS } from "@/lib/segments";
 
 type JobsResponse = { jobs: Job[]; sample: boolean };
 
@@ -36,9 +44,14 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
   const [telegramText, setTelegramText] = useState("");
   const [copied, setCopied] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [searchQ, setSearchQ] = useState("");
+  const [segmentFilter, setSegmentFilter] = useState("Alla");
+  const [locationFilter, setLocationFilter] = useState("Hela Sverige");
+  const deferredQ = useDeferredValue(searchQ);
   const [form, setForm] = useState({
     company: "",
     title: "",
+    segment: "Snickare",
     location: "",
     employmentType: "Heltid",
     description: "",
@@ -46,8 +59,23 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
     telegramUser: "",
   });
 
-  async function refresh() {
-    const res = await fetch("/api/jobs", { cache: "no-store" });
+  async function refresh(filters?: {
+    q?: string;
+    segment?: string;
+    location?: string;
+  }) {
+    const params = new URLSearchParams();
+    const q = filters?.q ?? deferredQ;
+    const segment = filters?.segment ?? segmentFilter;
+    const location = filters?.location ?? locationFilter;
+    if (q.trim()) params.set("q", q.trim());
+    if (segment && segment !== "Alla") params.set("segment", segment);
+    if (location && location !== "Hela Sverige") {
+      params.set("location", location);
+    }
+    const res = await fetch(`/api/jobs?${params.toString()}`, {
+      cache: "no-store",
+    });
     if (!res.ok) throw new Error("Kunde inte hämta jobb");
     const data = (await res.json()) as JobsResponse;
     setJobs(data.jobs);
@@ -58,7 +86,11 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
     let alive = true;
     (async () => {
       try {
-        await refresh();
+        await refresh({
+          q: deferredQ,
+          segment: segmentFilter,
+          location: locationFilter,
+        });
       } catch {
         if (alive) setError("Kunde inte ladda annonser just nu.");
       } finally {
@@ -68,7 +100,8 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
     return () => {
       alive = false;
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferredQ, segmentFilter, locationFilter]);
 
   useEffect(() => {
     const username = getTelegramUsername();
@@ -112,13 +145,17 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
         setForm({
           company: "",
           title: "",
+          segment: form.segment,
           location: "",
           employmentType: "Heltid",
           description: "",
           contact: "",
           telegramUser: getTelegramUsername(),
         });
-        await refresh();
+        await refresh({ q: "", segment: "Alla", location: "Hela Sverige" });
+        setSearchQ("");
+        setSegmentFilter("Alla");
+        setLocationFilter("Hela Sverige");
         requestAnimationFrame(() => {
           document.getElementById("dela-telegram")?.scrollIntoView({
             behavior: "smooth",
@@ -154,16 +191,56 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
     <>
       <section className="section" id="annonser">
         <div className="section-inner">
-          <p className="eyebrow">Lediga jobb</p>
-          <h2>Annonser från arbetsgivare</h2>
+          <p className="eyebrow">Lediga jobb i Sverige</p>
+          <h2>Sök segment och kommun</h2>
           <p className="lede">
-            {sample
-              ? "Exempelannonser visas tills första riktiga jobbet sparas."
-              : "Senaste annonserna från arbetsgivare i communityn."}
+            Filtrera över hela Sverige eller gå kommun för kommun. Segment täcker
+            bland annat undersköterska, snickare, rivare, asbestsanerare,
+            betonghåltagare och isolerare.
           </p>
+
+          <div className="search-bar">
+            <label>
+              Fritext
+              <input
+                value={searchQ}
+                placeholder="Yrke, företag, ord i texten"
+                onChange={(e) => setSearchQ(e.target.value)}
+              />
+            </label>
+            <label>
+              Segment
+              <select
+                value={segmentFilter}
+                onChange={(e) => setSegmentFilter(e.target.value)}
+              >
+                <option value="Alla">Alla segment</option>
+                {JOB_SEGMENTS.map((segment) => (
+                  <option key={segment} value={segment}>
+                    {segment}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <MunicipalityField
+              id="search-kommun"
+              label="Kommun"
+              value={locationFilter}
+              allowAllSweden
+              onChange={setLocationFilter}
+            />
+          </div>
+
+          {sample ? (
+            <p className="muted">
+              Exempelannonser visas tills första riktiga jobbet sparas.
+            </p>
+          ) : null}
 
           {loading ? (
             <p className="muted">Laddar annonser…</p>
+          ) : jobs.length === 0 ? (
+            <p className="muted">Inga annonser matchar sökningen.</p>
           ) : (
             <ul className="job-list">
               {jobs.map((job, index) => (
@@ -173,6 +250,7 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
                   style={{ animationDelay: `${0.05 * index}s` }}
                 >
                   <div className="job-meta">
+                    <span className="segment-tag">{job.segment}</span>
                     <span>{job.employment_type}</span>
                     <span>{job.location}</span>
                     {job.sample ? <span className="sample">Exempel</span> : null}
@@ -201,7 +279,8 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
           <p className="eyebrow">För arbetsgivare</p>
           <h2>Lägg ut ett jobb</h2>
           <p className="lede">
-            Fyll i annonsen. Kopiera sedan texten och dela den i Telegram-sidan.
+            Välj yrkessegment och kommun. Kopiera sedan texten och dela den i
+            Telegram-sidan.
           </p>
 
           <form className="job-form" onSubmit={onSubmit}>
@@ -231,16 +310,20 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
             </label>
             <div className="row">
               <label>
-                Ort
-                <input
+                Segment
+                <select
                   required
-                  minLength={2}
-                  maxLength={120}
-                  value={form.location}
+                  value={form.segment}
                   onChange={(e) =>
-                    setForm((prev) => ({ ...prev, location: e.target.value }))
+                    setForm((prev) => ({ ...prev, segment: e.target.value }))
                   }
-                />
+                >
+                  {JOB_SEGMENTS.map((segment) => (
+                    <option key={segment} value={segment}>
+                      {segment}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 Anställningsform
@@ -261,6 +344,15 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
                 </select>
               </label>
             </div>
+            <MunicipalityField
+              id="form-kommun"
+              label="Kommun i Sverige"
+              value={form.location}
+              required
+              onChange={(location) =>
+                setForm((prev) => ({ ...prev, location }))
+              }
+            />
             <label>
               Beskrivning
               <textarea
@@ -327,7 +419,11 @@ export function JobBoard({ channelUrl }: { channelUrl: string }) {
             <div className="telegram-box" id="dela-telegram">
               <p className="eyebrow">Dela i Telegram</p>
               <pre>{telegramText}</pre>
-              <button type="button" className="btn primary" onClick={copyTelegram}>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={copyTelegram}
+              >
                 {copied ? "Kopierad" : "Kopiera text"}
               </button>
             </div>
