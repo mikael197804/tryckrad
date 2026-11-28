@@ -140,6 +140,13 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
     if (oddsTop === "2") s2 -= 0.04;
   }
 
+  // Tippsajter: nyckelspelare borta / "kan inte vinna utan" → öppet kort
+  if (m.tipOpenMatch) {
+    s1 = s1 * 0.45 + 1 / 3;
+    sX = sX * 0.45 + 1 / 3;
+    s2 = s2 * 0.45 + 1 / 3;
+  }
+
   [s1, sX, s2] = normalize3(s1, sX, s2);
 
   const singles: { o: Outcome; p: number }[] = [
@@ -165,7 +172,8 @@ export function matchProbabilities(m: MatchAnalysis): MatchProb {
   const hedgeNeed =
     1 - bestSingleP + Math.max(0, bestHalfP - bestSingleP) * 0.95 +
     (bestSingleP < 0.66 ? 0.08 : 0) +
-    (bestSingleP < 0.58 ? 0.1 : 0);
+    (bestSingleP < 0.58 ? 0.1 : 0) +
+    (m.tipOpenMatch ? 0.42 : 0);
 
   return {
     p1: s1,
@@ -426,8 +434,9 @@ function makePicks(
     let undecidedNote: string | undefined;
     if (plan === "hel") {
       outcomes = ["1", "X", "2"];
-      undecidedNote =
-        "Kan inte avgöras – för jämnt/osäkert. Helgarderas (1/X/2).";
+      undecidedNote = m.tipOpenMatch
+        ? `Kan inte avgöras – nyckelspelare borta (${m.tipOpenMatch.playerHint || "tung frånvaro"}). Helgarderas (1/X/2).`
+        : "Kan inte avgöras – för jämnt/osäkert. Helgarderas (1/X/2).";
       reason = `${undecidedNote} ${m.pickReason}`;
     } else if (plan === "halv") {
       // Preferera 1X/X2 när X-risk är hög (vanlig källa till 2 fel)

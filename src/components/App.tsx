@@ -6262,7 +6262,8 @@ export default function App() {
                     <p className="panel-lead">
                       Spikar och varningar från Hurbra, RekatOchKlart, Expressen,
                       Betii m.fl. När minst två källor pekar samma tecken vägs det
-                      in som starkare enkel i systemen.
+                      in som starkare enkel. Om tippare pratar tungt om
+                      nyckelspelare borta räknas matchen som öppen och garderas.
                     </p>
                     {(draw.expertTips?.length ?? 0) > 0 && (
                       <ul className="alert-list expert-tips">
@@ -6273,13 +6274,16 @@ export default function App() {
                                 ? "Spik"
                                 : t.kind === "fade"
                                   ? "Varning"
-                                  : "Gardering"}{" "}
-                              {t.outcome}
+                                  : t.kind === "open"
+                                    ? "Öppet kort"
+                                    : "Gardering"}
+                              {t.kind !== "open" ? ` ${t.outcome}` : ""}
                             </strong>{" "}
                             · match {t.eventNumber} {t.description}
                             {t.voteCount > 1
                               ? ` · ${t.voteCount} källor (${t.sources.join(", ")})`
                               : ` · ${t.sources.join(", ")}`}
+                            {t.kind === "open" ? ` · ${t.note}` : ""}
                           </li>
                         ))}
                       </ul>

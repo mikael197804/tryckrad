@@ -205,6 +205,15 @@ export type MatchAnalysis = {
   score2: number;
   /** Säker vinnare (endast 2 @ ca 2,00) om kriterierna uppfylls */
   safeWinner: SafeWinnerTip | null;
+  /**
+   * Tippsajter pratar tungt om nyckelspelare borta → matchen kan gå hur som helst.
+   * Systemen ska då gardera (hög hedgeNeed), inte torrspika.
+   */
+  tipOpenMatch?: {
+    reason: string;
+    sources: string[];
+    playerHint: string | null;
+  } | null;
 };
 
 export type DrawBundle = {
@@ -255,7 +264,7 @@ export type ExpertSpikeTip = {
   outcome: Outcome;
   sources: string[];
   voteCount: number;
-  kind: "spik" | "fade" | "cover";
+  kind: "spik" | "fade" | "cover" | "open";
   note: string;
 };
 

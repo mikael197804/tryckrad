@@ -12,8 +12,10 @@ export type ExpertTipMention = {
   team: string;
   eventNumber: number | null;
   outcome: Outcome | null;
-  kind: "spik" | "fade" | "cover" | "mention";
+  kind: "spik" | "fade" | "cover" | "mention" | "open";
   snippet: string;
+  /** Om open: spelarnamn eller kort hint från snutten */
+  playerHint?: string | null;
 };
 
 export type ExpertTipSourceReport = {
@@ -30,8 +32,9 @@ export type ExpertSpikeConsensus = {
   outcome: Outcome;
   sources: string[];
   voteCount: number;
-  kind: "spik" | "fade" | "cover";
+  kind: "spik" | "fade" | "cover" | "open";
   note: string;
+  playerHint?: string | null;
 };
 
 export type PoolExpertTipsResult = {
@@ -171,9 +174,53 @@ function dateSlugs(now = new Date()): {
   };
 }
 
+/** Tung frånvaro-narrativ: nyckelspelare borta → matchen kan gå hur som helst. */
+function isKeyPlayerOutOpenNarrative(snippet: string): {
+  hit: boolean;
+  playerHint: string | null;
+} {
+  const s = snippet.toLowerCase();
+  const absence =
+    /\b(missar|borta|skadad|saknas|utesluten|avstängd|out|ruled out|sidelined|injured|unavailable|won't play|will miss)\b/.test(
+      s
+    );
+  const doom =
+    /\b(utan honom|utan henne|utan sin|kan inte vinna|svårt att vinna|omöjligt att vinna|beroende av|nyckelspelare|stjärnan|avgörande spelare|ryggraden|hjärtat i|saknar sin|tung frånvaro|kännbart|kännbar frånvaro|stor frånvaro|saknar .+ i truppen)\b/.test(
+      s
+    ) ||
+    /\b(utan|without)\b.{0,40}\b(vinna|win|seger)\b/.test(s) ||
+    /\b(can't|cannot|hard to)\b.{0,30}\bwin\b/.test(s);
+  if (!(absence && doom) && !(absence && /\b(stjärn|nyckel|första\s*center|första\s*back|målvakt|kapten)\b/.test(s) && /\b(tung|stor|kännbar|avgörande)\b/.test(s))) {
+    // Enkel variant: tippare säger uttryckligen att det kan gå hur som helst p.g.a. frånvaro
+    if (
+      absence &&
+      /\b(hur som helst|öppet kort|svårbedömt|oförutsägbar|lotteri|allt kan hända)\b/.test(s)
+    ) {
+      const player =
+        snippet.match(
+          /\b([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)\b(?:\s+(?:missar|borta|skadad|saknas))/
+        )?.[1] ?? null;
+      return { hit: true, playerHint: player };
+    }
+    return { hit: false, playerHint: null };
+  }
+  const player =
+    snippet.match(
+      /\b([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)\b(?:\s+(?:missar|borta|skadad|saknas|out|ruled))/i
+    )?.[1] ??
+    snippet.match(
+      /(?:utan|without)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
+    )?.[1] ??
+    null;
+  return { hit: true, playerHint: player };
+}
+
 function classifySnippet(
   snippet: string
 ): { kind: ExpertTipMention["kind"]; outcome: Outcome | null } {
+  if (isKeyPlayerOutOpenNarrative(snippet).hit) {
+    return { kind: "open", outcome: null };
+  }
   const s = snippet.toLowerCase();
   let outcome: Outcome | null = null;
   // Tecken i närheten: "tips: 1", "spikar 1", "singeletta", "tvåan"
@@ -304,6 +351,51 @@ function extractHeadlineSpikes(
   return out;
 }
 
+/** Extra sweep: frånvaro + "kan inte vinna" nära lag/spelare i hela artikeln. */
+function extractOpenFromAbsence(
+  text: string,
+  matches: MatchAnalysis[],
+  source: string,
+  url: string,
+  title: string
+): ExpertTipMention[] {
+  const out: ExpertTipMention[] = [];
+  const patterns = [
+    /.{0,80}\b(?:missar|borta|skadad|saknas|utesluten|avstängd)\b.{0,100}\b(?:utan honom|utan henne|kan inte vinna|svårt att vinna|tung frånvaro|kännbar frånvaro|hur som helst|öppet kort)\b.{0,60}/gi,
+    /.{0,80}\b(?:utan honom|utan henne|kan inte vinna|svårt att vinna|tung frånvaro|kännbar frånvaro)\b.{0,100}\b(?:missar|borta|skadad|saknas)\b.{0,60}/gi,
+    /.{0,60}\b(?:stjärnan|nyckelspelaren|kaptenen|första\s*centern|målvakten)\b.{0,40}\b(?:missar|borta|skadad|saknas)\b.{0,80}/gi,
+  ];
+  for (const re of patterns) {
+    for (const m of text.matchAll(re)) {
+      const snippet = m[0].replace(/\s+/g, " ").trim();
+      const open = isKeyPlayerOutOpenNarrative(snippet);
+      if (!open.hit && !/\b(missar|borta|skadad|saknas)\b/i.test(snippet)) {
+        continue;
+      }
+      for (const match of matches) {
+        for (const side of [match.home.name, match.away.name] as const) {
+          const needles = teamNeedles(side);
+          if (!needles.some((n) => normalizeTeam(snippet).includes(n))) {
+            continue;
+          }
+          out.push({
+            source,
+            url,
+            title,
+            team: side,
+            eventNumber: match.eventNumber,
+            outcome: null,
+            kind: "open",
+            snippet: snippet.slice(0, 200),
+            playerHint: open.playerHint,
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function findTeamMentions(
   text: string,
   matches: MatchAnalysis[],
@@ -313,6 +405,7 @@ function findTeamMentions(
 ): ExpertTipMention[] {
   const out: ExpertTipMention[] = [
     ...extractHeadlineSpikes(text, matches, source, url, title),
+    ...extractOpenFromAbsence(text, matches, source, url, title),
   ];
   const lower = text.toLowerCase();
 
@@ -331,10 +424,13 @@ function findTeamMentions(
           const found = re.exec(slice);
           if (!found || found.index == null) break;
           const abs = searchFrom + found.index;
-          const start = Math.max(0, abs - 140);
-          const end = Math.min(text.length, abs + needle.length + 160);
+          const start = Math.max(0, abs - 160);
+          const end = Math.min(text.length, abs + needle.length + 180);
           const snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
-          const { kind, outcome } = classifySnippet(snippet);
+          const openInfo = isKeyPlayerOutOpenNarrative(snippet);
+          const { kind, outcome } = openInfo.hit
+            ? { kind: "open" as const, outcome: null }
+            : classifySnippet(snippet);
           let resolved = outcome;
           if (kind === "spik" && !resolved) {
             resolved = side === m.home.name ? "1" : "2";
@@ -388,6 +484,7 @@ function findTeamMentions(
             outcome: resolved,
             kind,
             snippet: snippet.slice(0, 180),
+            playerHint: kind === "open" ? openInfo.playerHint : null,
           });
           searchFrom = abs + needle.length;
           hit++;
@@ -641,7 +738,50 @@ function buildConsensus(
     });
   }
 
-  out.sort((a, b) => b.voteCount - a.voteCount || a.eventNumber - b.eventNumber);
+  // Nyckelspelare borta → öppet kort (slår spik på samma match)
+  const opens = new Map<
+    number,
+    { sources: Set<string>; playerHint: string | null }
+  >();
+  for (const m of mentions) {
+    if (m.kind !== "open" || m.eventNumber == null) continue;
+    const cur = opens.get(m.eventNumber) ?? {
+      sources: new Set<string>(),
+      playerHint: null as string | null,
+    };
+    cur.sources.add(m.source);
+    if (!cur.playerHint && m.playerHint) cur.playerHint = m.playerHint;
+    opens.set(m.eventNumber, cur);
+  }
+  for (const [eventNumber, data] of opens) {
+    const match = matches.find((m) => m.eventNumber === eventNumber);
+    if (!match) continue;
+    // Ta bort spik/fade på samma match – frånvaro gör kortet öppet
+    const filtered = out.filter((c) => c.eventNumber !== eventNumber);
+    out.length = 0;
+    out.push(...filtered);
+    const who = data.playerHint ? ` (${data.playerHint})` : "";
+    out.push({
+      eventNumber,
+      description: match.description,
+      outcome: match.favourite,
+      sources: [...data.sources],
+      voteCount: data.sources.size,
+      kind: "open",
+      playerHint: data.playerHint,
+      note: `Nyckelspelare borta${who} – tippsajter säger att laget tappar mycket; matchen kan gå hur som helst (${[...data.sources].join(", ")})`,
+    });
+  }
+
+  out.sort((a, b) => {
+    const rank = (k: ExpertSpikeConsensus["kind"]) =>
+      k === "open" ? 3 : k === "spik" ? 2 : 1;
+    return (
+      rank(b.kind) - rank(a.kind) ||
+      b.voteCount - a.voteCount ||
+      a.eventNumber - b.eventNumber
+    );
+  });
   return out;
 }
 
@@ -651,10 +791,18 @@ export function applyExpertTipsToMatches(
   consensus: ExpertSpikeConsensus[]
 ): { matches: MatchAnalysis[]; alerts: string[] } {
   if (!consensus.length) return { matches, alerts: [] };
-  // Lås högst de 3 starkaste spikarna (flest källor)
+  const openEvents = new Set(
+    consensus.filter((c) => c.kind === "open").map((c) => c.eventNumber)
+  );
+  // Lås högst de 3 starkaste spikarna (flest källor) – aldrig på öppna kort
   const lockable = new Set(
     consensus
-      .filter((c) => c.kind === "spik" && c.voteCount >= 2)
+      .filter(
+        (c) =>
+          c.kind === "spik" &&
+          c.voteCount >= 2 &&
+          !openEvents.has(c.eventNumber)
+      )
       .sort((a, b) => b.voteCount - a.voteCount)
       .slice(0, 3)
       .map((c) => c.eventNumber)
@@ -667,9 +815,21 @@ export function applyExpertTipsToMatches(
     if (!tip) return m;
 
     let { score1, scoreX, score2 } = m;
+    let tipOpenMatch: MatchAnalysis["tipOpenMatch"] = m.tipOpenMatch ?? null;
     const boost =
       tip.kind === "spik" ? (tip.voteCount >= 2 ? 0.12 : 0.05) : 0;
-    if (tip.kind === "spik") {
+    if (tip.kind === "open") {
+      // Platta ut – matchen kan gå hur som helst
+      score1 = score1 * 0.4 + 1 / 3;
+      scoreX = scoreX * 0.4 + 1 / 3;
+      score2 = score2 * 0.4 + 1 / 3;
+      tipOpenMatch = {
+        reason: tip.note,
+        sources: tip.sources,
+        playerHint: tip.playerHint ?? null,
+      };
+      alerts.push(`Match ${m.eventNumber}: ${tip.note} – garderas`);
+    } else if (tip.kind === "spik") {
       if (tip.outcome === "1") score1 += boost;
       if (tip.outcome === "X") scoreX += boost;
       if (tip.outcome === "2") score2 += boost;
@@ -690,14 +850,25 @@ export function applyExpertTipsToMatches(
 
     let pick = m.pick;
     let pickReason = m.pickReason;
-    if (tip.kind === "spik" && lockable.has(m.eventNumber)) {
+    if (tip.kind === "open") {
+      pick = ["1", "X", "2"];
+      pickReason = `${tip.note}. ${m.pickReason}`;
+    } else if (tip.kind === "spik" && lockable.has(m.eventNumber)) {
       pick = [tip.outcome];
       pickReason = `${tip.note}. ${m.pickReason}`;
     } else {
       pickReason = `${tip.note}. ${m.pickReason}`;
     }
 
-    return { ...m, score1, scoreX, score2, pick, pickReason };
+    return {
+      ...m,
+      score1,
+      scoreX,
+      score2,
+      pick,
+      pickReason,
+      tipOpenMatch,
+    };
   });
 
   return { matches: next, alerts };
@@ -806,6 +977,10 @@ export async function fetchPoolExpertTips(
     summary.push(
       `Öppna tippsajter – starkaste spikar: ${topSpikes.join(" · ")}`
     );
+  }
+  const opens = consensus.filter((c) => c.kind === "open").slice(0, 3);
+  for (const o of opens) {
+    summary.push(o.note);
   }
   const fades = consensus.filter((c) => c.kind === "fade").slice(0, 2);
   for (const f of fades) {
