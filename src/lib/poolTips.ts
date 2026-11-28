@@ -1,5 +1,6 @@
 /**
- * Hämtar öppna tippsajter (Hurbra, RekatOchKlart, Expressen, Tipshunter, Betii)
+ * Hämtar öppna tippsajter från Sverige, England, världen och Afrika
+ * (Hurbra, RoK, Expressen, Betii, KickOff, PredictZ, Forebet, SoccerTips ZA …)
  * och matchar spikar/varningar mot kupongens lag – samma idé som v75Tips.
  */
 
@@ -119,10 +120,32 @@ const TEAM_ALIASES: Record<string, string[]> = {
   mjolby: ["mjolby"],
   "vita hasten": ["vita hasten", "vh"],
   "aston villa": ["aston villa", "villa"],
-  ipswich: ["ipswich"],
-  leeds: ["leeds"],
-  coventry: ["coventry"],
+  ipswich: ["ipswich", "ipswich town"],
+  leeds: ["leeds", "leeds united"],
+  coventry: ["coventry", "coventry city"],
   orebrosk: ["orebro", "enkoping"],
+  "manchester united": ["manchester united", "man utd", "man united"],
+  brentford: ["brentford"],
+  birmingham: ["birmingham", "birmingham city"],
+  bolton: ["bolton", "bolton wanderers"],
+  derby: ["derby", "derby county"],
+  watford: ["watford"],
+  millwall: ["millwall"],
+  burnley: ["burnley"],
+  "west bromwich": ["west bromwich", "west brom", "wba"],
+  "bristol city": ["bristol city"],
+  "queens park rangers": ["queens park rangers", "qpr"],
+  "sheffield united": ["sheffield united", "sheff utd", "blades"],
+  blackburn: ["blackburn", "blackburn rovers"],
+  charlton: ["charlton", "charlton athletic"],
+  lincoln: ["lincoln", "lincoln city"],
+  wolverhampton: ["wolverhampton", "wolves"],
+  preston: ["preston", "preston north end"],
+  norwich: ["norwich", "norwich city"],
+  "real betis": ["real betis", "betis"],
+  "rayo vallecano": ["rayo vallecano", "rayo"],
+  frosinone: ["frosinone"],
+  parma: ["parma"],
 };
 
 function teamNeedles(name: string): string[] {
@@ -184,11 +207,26 @@ type OpenRosterHit = {
   reasonKind: "absence" | "return" | "newcomer" | null;
 };
 
+function plausiblePlayerHint(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const t = name.trim();
+  if (t.length < 3 || t.length > 36) return null;
+  if (!/^[A-ZÅÄÖ]/.test(t)) return null;
+  if (
+    /^(seger|slog|nyss|laget|match(?:en)?|tips|spel|utan|honom|henne|efter|skada|win|home|away|draw|today|preview)$/i.test(
+      t
+    )
+  ) {
+    return null;
+  }
+  return t;
+}
+
 function extractPlayerHint(
   snippet: string,
   verbs: RegExp
 ): string | null {
-  return (
+  return plausiblePlayerHint(
     snippet.match(
       new RegExp(
         `\\b([A-ZÅÄÖ][\\w'’-]+(?:\\s+[A-ZÅÄÖ][\\w'’-]+)?)\\b(?:\\s+(?:${verbs.source}))`,
@@ -257,7 +295,11 @@ function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
         /\b([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)\b(?:\s+(?:är|kan vara|blir)\s+tillbaka)/i
       )?.[1] ??
       null;
-    return { hit: true, playerHint: player, reasonKind: "return" };
+    return {
+      hit: true,
+      playerHint: plausiblePlayerHint(player),
+      reasonKind: "return",
+    };
   }
 
   if (newcomer) {
@@ -266,10 +308,11 @@ function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
         snippet,
         /debuterar|gör\s+debut|nyförvärv|nysign(?:erad)?|inkallad/
       ) ??
-      snippet.match(
-        /\b(?:nyförvärvet|debutanten)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
-      )?.[1] ??
-      null;
+      plausiblePlayerHint(
+        snippet.match(
+          /\b(?:nyförvärvet|debutanten)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
+        )?.[1] ?? null
+      );
     return { hit: true, playerHint: player, reasonKind: "newcomer" };
   }
 
@@ -289,10 +332,11 @@ function isRosterChangeOpenNarrative(snippet: string): OpenRosterHit {
 
   const player =
     extractPlayerHint(snippet, /missar|borta|skadad|saknas|out|ruled/) ??
-    snippet.match(
-      /(?:utan|without)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
-    )?.[1] ??
-    null;
+    plausiblePlayerHint(
+      snippet.match(
+        /(?:utan|without)\s+([A-ZÅÄÖ][\w'’-]+(?:\s+[A-ZÅÄÖ][\w'’-]+)?)/i
+      )?.[1] ?? null
+    );
   return { hit: true, playerHint: player, reasonKind: "absence" };
 }
 
@@ -304,38 +348,45 @@ function classifySnippet(
   }
   const s = snippet.toLowerCase();
   let outcome: Outcome | null = null;
-  // Tecken i närheten: "tips: 1", "spikar 1", "singeletta", "tvåan"
+  // Tecken: SV + EN ("home win", "away win", "draw", "tips: 1")
   if (
-    /\b(tips|spel|spik|tecken)\s*[:\-]?\s*1\b/.test(s) ||
+    /\b(tips|spel|spik|tecken|pred(?:iction)?|pick)\s*[:\-]?\s*1\b/.test(s) ||
     /\bsingelet+a\b/.test(s) ||
     /\bettan\b/.test(s) ||
-    /\bhemma(seger|laget)\b/.test(s)
+    /\bhemma(seger|laget)\b/.test(s) ||
+    /\bhome\s+win\b/.test(s) ||
+    /\bwin\s+prediction\b.{0,20}\bhome\b/.test(s) ||
+    (/\bai\s+pick\b.{0,40}\bto\s+win\b/.test(s) && !/\baway\b/.test(s))
   ) {
     outcome = "1";
   } else if (
-    /\b(tips|spel|spik|tecken)\s*[:\-]?\s*2\b/.test(s) ||
+    /\b(tips|spel|spik|tecken|pred(?:iction)?|pick)\s*[:\-]?\s*2\b/.test(s) ||
     /\bsingeltv[aå]an\b/.test(s) ||
     /\btv[aå]an\b/.test(s) ||
-    /\bborta(seger|laget)\b/.test(s)
+    /\bborta(seger|laget)\b/.test(s) ||
+    /\baway\s+win\b/.test(s) ||
+    (/\bai\s+pick\b.{0,40}\bto\s+win\b/.test(s) && /\baway\b/.test(s))
   ) {
     outcome = "2";
   } else if (
-    /\b(tips|spel|spik|tecken)\s*[:\-]?\s*x\b/.test(s) ||
-    /\bkryss(et)?\b/.test(s)
+    /\b(tips|spel|spik|tecken|pred(?:iction)?|pick)\s*[:\-]?\s*x\b/.test(s) ||
+    /\bkryss(et)?\b/.test(s) ||
+    /\bdraw\b/.test(s) ||
+    /\bx\s*\d+%\b/.test(s)
   ) {
     outcome = "X";
   }
 
   if (
-    /överstreck|varning|fälla|lämnar?\s+ettan|undvik|inte\s+spika|helgarder|1x2|x2\b|12\b/.test(
+    /överstreck|varning|fälla|lämnar?\s+ettan|undvik|inte\s+spika|helgarder|1x2|x2\b|12\b|avoid|trap|overround/.test(
       s
     ) &&
-    /överstreck|varning|fälla|lämnar?\s+ettan|undvik|helgarder/.test(s)
+    /överstreck|varning|fälla|lämnar?\s+ettan|undvik|helgarder|avoid|trap/.test(s)
   ) {
     return { kind: "fade", outcome };
   }
   if (
-    /spik|kassask[aå]p|bankare|klar\s+favorit|främsta\s+spik|dagens\s+bästa|all\s+in|förtroendet\s+som\s+spik|singlad|spelvärd\s+singel/.test(
+    /spik|kassask[aå]p|bankare|banker|best\s+bet|strong\s+(?:tip|pick)|klar\s+favorit|främsta\s+spik|dagens\s+bästa|all\s+in|förtroendet\s+som\s+spik|singlad|spelvärd\s+singel|win\s+prediction|high\s+confidence|ai\s+pick/.test(
       s
     )
   ) {
@@ -644,6 +695,119 @@ function topptipsetUrls(d: ReturnType<typeof dateSlugs>): string[] {
     "https://tipshunter.com/tag/topptipset/",
     "https://betii.se/topptipset-tips",
   ];
+}
+
+/** England / UK – öppna tippsidor. */
+function englandTipUrls(): string[] {
+  return [
+    "https://www.kickoff.co.uk/english-premier-league-predictions-stats-odds/",
+    "https://www.predictz.com/predictions/today/premier-league/",
+    "https://www.predictz.com/predictions/today/",
+    "https://www.forebet.com/en/football-tips-and-predictions-for-england/premier-league",
+    "https://www.bbc.com/sport/football/premier-league",
+  ];
+}
+
+/** Globala öppna predictions (EU + världen). */
+function worldTipUrls(): string[] {
+  return [
+    "https://www.forebet.com/en/football-tips-and-predictions-for-today",
+    "https://www.predictz.com/predictions/today/",
+    "https://www.goal.com/en/news/betting",
+    "https://www.espn.com/soccer/",
+  ];
+}
+
+/** Afrika – öppna tippsidor (SA, Nigeria m.fl.). */
+function africaTipUrls(): string[] {
+  return [
+    "https://soccertips.co.za/matches-today/",
+    "https://nigerianmatchday.com/premier-league-predictions/",
+    "https://www.kickoff.com/",
+    "https://www.goal.com/en-ng/news/betting",
+  ];
+}
+
+/**
+ * Matcha engelska "Leeds win" / "Aston Villa to win" mot lag på kupongen.
+ */
+function extractEnglishTeamWinSpikes(
+  text: string,
+  matches: MatchAnalysis[],
+  source: string,
+  url: string,
+  title: string
+): ExpertTipMention[] {
+  const out: ExpertTipMention[] = [];
+  for (const match of matches) {
+    for (const side of [match.home.name, match.away.name] as const) {
+      const needles = teamNeedles(side);
+      for (const needle of needles) {
+        if (needle.length < 4) continue;
+        const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const winRe = new RegExp(
+          `(${esc})\\s+(?:win(?:s)?\\s+prediction|to\\s+win|win\\s+prediction|win\\b)`,
+          "i"
+        );
+        const pickRe = new RegExp(
+          `(?:ai\\s+pick|prediction|tip|best\\s+bet)[^\\n.]{0,60}(${esc})`,
+          "i"
+        );
+        const m1 = winRe.exec(text);
+        const m2 = pickRe.exec(text);
+        const hit = m1 || m2;
+        if (!hit) continue;
+        const snippet = hit[0].replace(/\s+/g, " ").trim().slice(0, 180);
+        out.push({
+          source,
+          url,
+          title,
+          team: side,
+          eventNumber: match.eventNumber,
+          outcome: side === match.home.name ? "1" : "2",
+          kind: "spik",
+          snippet,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+async function scrapeInternationalSource(
+  source: string,
+  urls: string[],
+  matches: MatchAnalysis[]
+): Promise<{ mentions: ExpertTipMention[]; report: ExpertTipSourceReport }> {
+  const base = await scrapeFirstOk(urls, source, matches);
+  if (!base.report.ok) return base;
+  // Extra engelsk win-parsning på den sida som lyckades
+  const page = await fetchText(base.report.url);
+  if (!page.ok) return base;
+  const title = titleFromHtml(page.text) || source;
+  const text = stripHtml(page.text);
+  const extra = extractEnglishTeamWinSpikes(
+    text,
+    matches,
+    source,
+    base.report.url,
+    title
+  );
+  const merged = [...base.mentions, ...extra];
+  const seen = new Set<string>();
+  const uniq = merged.filter((x) => {
+    const k = `${x.source}|${x.eventNumber}|${x.kind}|${x.outcome}|${normalizeTeam(x.team)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return {
+    mentions: uniq,
+    report: {
+      ...base.report,
+      note: `${uniq.length} lagträffar (internationellt)`,
+    },
+  };
 }
 
 async function scrapeExpressenHockey(
@@ -1031,7 +1195,7 @@ export async function fetchPoolExpertTips(
       )
     );
   } else {
-    // Fotbollspooler
+    // Fotbollspooler – Sverige + England + världen + Afrika
     jobs.push(
       scrapeFirstOk(
         topptipsetUrls(d).filter((u) => u.includes("rekatochklart")),
@@ -1044,6 +1208,7 @@ export async function fetchPoolExpertTips(
         [
           `https://hurbra.se/topptipset-${d.day}-${d.monthNameSv}-${d.year}/`,
           `https://hurbra.se/stryktipset-${d.day}-${d.monthNameSv}-${d.year}/`,
+          `https://hurbra.se/europatipset-${d.day}-${d.monthNameSv}-${d.year}/`,
         ],
         "Hurbra",
         matches
@@ -1066,6 +1231,46 @@ export async function fetchPoolExpertTips(
               : "https://betii.se/topptipset-tips",
         ],
         "Betii",
+        matches
+      )
+    );
+    jobs.push(
+      scrapeInternationalSource("KickOff UK", englandTipUrls(), matches)
+    );
+    jobs.push(
+      scrapeInternationalSource(
+        "PredictZ",
+        [
+          "https://www.predictz.com/predictions/today/premier-league/",
+          "https://www.predictz.com/predictions/today/",
+        ],
+        matches
+      )
+    );
+    jobs.push(
+      scrapeInternationalSource(
+        "Forebet",
+        [
+          "https://www.forebet.com/en/football-tips-and-predictions-for-england/premier-league",
+          "https://www.forebet.com/en/football-tips-and-predictions-for-today",
+        ],
+        matches
+      )
+    );
+    jobs.push(
+      scrapeInternationalSource("SoccerTips ZA", africaTipUrls(), matches)
+    );
+    jobs.push(
+      scrapeInternationalSource(
+        "NigerianMatchday",
+        ["https://nigerianmatchday.com/premier-league-predictions/"],
+        matches
+      )
+    );
+    jobs.push(
+      scrapeInternationalSource(
+        "World tips",
+        worldTipUrls().filter((u) => !u.includes("espn.com")),
         matches
       )
     );

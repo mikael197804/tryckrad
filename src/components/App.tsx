@@ -6260,11 +6260,11 @@ export default function App() {
                       Öppna tippsajter · konsensus
                     </h2>
                     <p className="panel-lead">
-                      Spikar och varningar från Hurbra, RekatOchKlart, Expressen,
-                      Betii m.fl. När minst två källor pekar samma tecken vägs det
-                      in som starkare enkel. Om tippare lyfter nyckelspelare borta,
-                      tillbaka efter skada eller ny spelare/debut räknas matchen
-                      som öppen och garderas.
+                      Spikar och varningar från Sverige plus England, övriga
+                      världen och Afrika (t.ex. KickOff, PredictZ, Forebet,
+                      SoccerTips ZA, NigerianMatchday). När minst två källor pekar
+                      samma tecken vägs det in som starkare enkel. Nyckelspelare
+                      borta, tillbaka eller debut → öppet kort och gardering.
                     </p>
                     {(draw.expertTips?.length ?? 0) > 0 && (
                       <ul className="alert-list expert-tips">
