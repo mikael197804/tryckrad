@@ -1,6 +1,10 @@
 import { analyzeDraw } from "./analyze";
 import { fetchArticlesForMatches } from "./articles";
 import { loadLearningMemory } from "./learning";
+import {
+  applyExpertTipsToMatches,
+  fetchPoolExpertTips,
+} from "./poolTips";
 import { rememberDaily192 } from "./pp192History";
 import { generateMaltipsetSystems, generateSystems } from "./systems";
 import {
@@ -68,14 +72,37 @@ export async function buildAllDrawBundles(
           leagueSummary,
         } = await analyzeDraw(draw, draws, product, learning);
         const rowPrice = parseRowPrice(draw.rowPrice);
+
+        // Öppna tippsajter → konsensus-spikar innan system byggs
+        let tippedMatches = matches;
+        let expertTips: DrawBundle["expertTips"] = [];
+        let expertTipAlerts: string[] = [];
+        if (product !== "maltipset") {
+          const expert = await fetchPoolExpertTips(product, matches).catch(
+            () => null
+          );
+          if (expert) {
+            expertTips = expert.consensus;
+            expertTipAlerts = expert.summary;
+            const applied = applyExpertTipsToMatches(
+              matches,
+              expert.consensus
+            );
+            tippedMatches = applied.matches;
+            expertTipAlerts = [...expertTipAlerts, ...applied.alerts];
+          }
+        }
+
         const [articles, systems] = await Promise.all([
-          fetchArticlesForMatches(matches, draw.drawNumber, product).catch(
-            () => []
-          ),
+          fetchArticlesForMatches(
+            tippedMatches,
+            draw.drawNumber,
+            product
+          ).catch(() => []),
           Promise.resolve(
             product === "maltipset"
-              ? generateMaltipsetSystems(matches, rowPrice)
-              : generateSystems(matches, {
+              ? generateMaltipsetSystems(tippedMatches, rowPrice)
+              : generateSystems(tippedMatches, {
                   product,
                   netSale: draw.currentNetSale ?? null,
                   rowPrice,
@@ -95,7 +122,7 @@ export async function buildAllDrawBundles(
           netSale: draw.currentNetSale ?? null,
           sport: draw.sport?.name ?? defaultSport(product),
           leagueSummary,
-          matches,
+          matches: tippedMatches,
           articles,
           systems,
           fatigueAlerts: fatigueAlerts ?? [],
@@ -107,6 +134,8 @@ export async function buildAllDrawBundles(
           learningAlerts: learningAlerts ?? [],
           safeWinners: safeWinners ?? [],
           malTip: malTip ?? [],
+          expertTips,
+          expertTipAlerts,
         };
         return bundle;
       } catch (error) {

@@ -239,6 +239,24 @@ export type DrawBundle = {
   safeWinners: SafeWinnerTip[];
   /** Måltipset: de 8 högst rankade matchnumren */
   malTip: number[];
+  /**
+   * Spikar/varningar från öppna tippsajter (Hurbra, RekatOchKlart, Expressen …).
+   * Vägs in i scores/system när ≥2 källor pekar samma tecken.
+   */
+  expertTips?: ExpertSpikeTip[];
+  /** Korta sammanfattningar från öppna tippsajter. */
+  expertTipAlerts?: string[];
+};
+
+/** Konsensus-spik från öppna tippsajter (visas i UI). */
+export type ExpertSpikeTip = {
+  eventNumber: number;
+  description: string;
+  outcome: Outcome;
+  sources: string[];
+  voteCount: number;
+  kind: "spik" | "fade" | "cover";
+  note: string;
 };
 
 export type Article = {

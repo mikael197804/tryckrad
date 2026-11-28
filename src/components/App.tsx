@@ -6253,6 +6253,47 @@ export default function App() {
                     </ul>
                   </>
                 )}
+                {(draw.expertTips?.length ?? 0) > 0 ||
+                (draw.expertTipAlerts?.length ?? 0) > 0 ? (
+                  <>
+                    <h2 style={{ fontSize: "1.05rem" }}>
+                      Öppna tippsajter · konsensus
+                    </h2>
+                    <p className="panel-lead">
+                      Spikar och varningar från Hurbra, RekatOchKlart, Expressen,
+                      Betii m.fl. När minst två källor pekar samma tecken vägs det
+                      in som starkare enkel i systemen.
+                    </p>
+                    {(draw.expertTips?.length ?? 0) > 0 && (
+                      <ul className="alert-list expert-tips">
+                        {draw.expertTips!.map((t) => (
+                          <li key={`${t.eventNumber}-${t.kind}-${t.outcome}`}>
+                            <strong>
+                              {t.kind === "spik"
+                                ? "Spik"
+                                : t.kind === "fade"
+                                  ? "Varning"
+                                  : "Gardering"}{" "}
+                              {t.outcome}
+                            </strong>{" "}
+                            · match {t.eventNumber} {t.description}
+                            {t.voteCount > 1
+                              ? ` · ${t.voteCount} källor (${t.sources.join(", ")})`
+                              : ` · ${t.sources.join(", ")}`}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(draw.expertTipAlerts?.length ?? 0) > 0 &&
+                      !(draw.expertTips?.length ?? 0) && (
+                        <ul className="alert-list expert-tips">
+                          {draw.expertTipAlerts!.map((a) => (
+                            <li key={a}>{a}</li>
+                          ))}
+                        </ul>
+                      )}
+                  </>
+                ) : null}
               </section>
 
               <div className="grid-2 mobile-stack">
